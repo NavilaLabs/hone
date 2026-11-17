@@ -175,9 +175,11 @@ On completion, the tool adds a `review` block to artifacts with lifecycle `decid
 4. Ambiguous strings are quoted: `yes`, `no`, `on`, `off`, `y`, `n`, `True`, `~`, `Null`, and anything a parser could read as a number (`1.5`, `010`, `0x1F`, `1:30`, `9e10`). Everything else may stand without quotes.
 5. A date is a string (`2026-11-16`), never a date type.
 
-The gate `schema-valid` checks the profile first, then the schema. A YAML parser alone is not enough for this, because it does not always report anchors, tags, and duplicate keys. The reference implementation therefore checks the parser's event stream. Unknown fields are preserved (Principle 11). `schema-valid` reports unknown fields without `x-` as a warning, not as an error.
+The gate `schema-valid` checks the profile first, then the schema. A YAML parser alone is not enough for this, because it does not always report anchors, tags, and duplicate keys. The reference implementation therefore checks the parser's event stream. Unknown fields are preserved (Principle 11). `schema-valid` reports unknown fields without `x-` as a warning, not as an error. Unknown means: at the top level, a key that neither the schema of the lifecycle (or of the ticket record) nor `properties` or `patternProperties` at the top of the kind schema names, and in `links`, a key that is not a link type of the core. Deeper levels are not checked. A kind schema that wants them strict sets `additionalProperties: false` itself.
 
 **File shapes.** A `.md` file starts with the line `---`, followed by the front matter and a line `---`. Everything after that is the body (Markdown). A `.yaml` file is the data model itself and has no body.
+
+**Files and paths.** A file is an artifact when its path, relative to the project root, matches `ticket.path` or the `path` of a kind. In a pattern, `{id}` matches the prefix of that kind, a hyphen, and the 8 characters of the random part, `{ticket}` matches a ticket ID, and `{slug}` matches groups of `a-z` and `0-9` separated by single hyphens (`[a-z0-9]+(-[a-z0-9]+)*`, not empty). Every other character matches itself. A file that matches no pattern is not an artifact. The path and the content must agree: `{id}` with `id`, `{ticket}` with `ticket` (with `id` in the ticket record), and the kind of the pattern with `type`. A disagreement is an error of `schema-valid` (`path-mismatch`). A file below the leading directories of a pattern (the part before its first placeholder) that matches no pattern but whose name starts with the prefix of a kind and a hyphen is probably a typo, for example `dec-7k3m2q8-payment.md` with one character missing. `schema-valid` reports it as a warning (`unmatched-file`). Other files, such as a `README.md`, are ignored.
 
 **Schema.** `schemas/artifact.schema.json` (JSON Schema 2020-12) distinguishes the ticket record and the two lifecycles `decided` and `living`. Which lifecycle applies is stated in `kinds.<type>.lifecycle`. The declared status must be one of `kinds.<type>.statuses` (Question 27). `superseded` is computed, reserved, and must never appear in a file (Question 2). Every kind can attach an additional schema through `kinds.<type>.schema`. The presets live with their definitions (`kinds/`) and additional schemas (`schemas/`) in the standard package, in this repository under `schemas/standard/`. `schema-valid` checks an artifact against the schema of its lifecycle, its additional schema, the prefix of its kind (`id_prefix`), and the statuses of its kind. A kind that the configuration does not know is an error.
 
@@ -188,7 +190,7 @@ The gate `schema-valid` checks the profile first, then the schema. A YAML parser
 3. Spaces and tabs at the end of a line are removed.
 4. Leading and trailing line breaks are removed.
 
-Files without a body have `body: ""`. Reformatting the YAML (order, quoting, style), CRLF, trailing whitespace, and changes to the `review` block leave the hash unchanged. Every change to fields or text changes it, including a new line break in the body. Markdown formatters should therefore not rewrap paragraphs (with Prettier, for example, `proseWrap: preserve`). Hashing a Markdown AST is deliberately excluded, because two parsers would hash differently. `schemas/tests/run.py` checks profile, schema, and hash as a reference. It is not an implementation of the protocol.
+Files without a body have `body: ""`. Reformatting the YAML (order, quoting, style), CRLF, trailing whitespace, and changes to the `review` block leave the hash unchanged. Every change to fields or text changes it, including a new line break in the body. Markdown formatters should therefore not rewrap paragraphs (with Prettier, for example, `proseWrap: preserve`). Hashing a Markdown AST is deliberately excluded, because two parsers would hash differently. The test cases for profile, schema, and hash are described in Section 14.
 
 **Core and presets.**
 
@@ -300,6 +302,8 @@ There is a **declared** and an **effective** status.
 
 With the standard statuses: `accepted` stays `accepted` or becomes `superseded`, all others stay as declared.
 
+A superseding artifact counts when its **declared** status is binding, whatever its kind. Its own effective status does not matter. In a chain where B supersedes A and C supersedes B, all three declared `accepted`, A and B are superseded and C stays `accepted`. Whether a status is binding comes from the configuration the gate uses (Section 7). A status that this configuration does not know is not binding.
+
 **The caller determines the checked directory.** An agent hook checks the working state, CI checks the state of the change, a review checks the result. The protocol knows no lines, branches, or "integration". What counts is what is in the directory.
 
 **Only binding artifacts bind agents** and are enforced by the gates. Design-first therefore needs no special rule: a check such as "changed code needs a binding decision" (`change-needs-binding`, Section 7) is a pure state check. If the design is already on the base of the change, it passes. If it is part of the same state, it passes as well.
@@ -351,9 +355,43 @@ A gate is a **deterministic function** over a directory: the input is the checke
 | `steps-complete`           | –                                                     | Every required step of the ticket's profile is done or explicitly skipped                                                                                                                                                                      |
 | `change-needs-binding`     | `anchored`, `binding`                                 | If `changed_paths` hits the anchors of an artifact of kind `anchored`, there is a binding artifact of kind `binding` for it (through `affects`)                                                                                                |
 
-`status` is one status or a list of them (set membership). It must be a status of the kind or `superseded`. Unknown parameters are an error. `schema-valid`, `ids-unique`, and `links-resolve` check the whole checked directory, because a collision or a broken link concerns everyone. All other gates check the ticket. The role of `approvals-valid` must be able to `approve`, and the kind `binding` of `change-needs-binding` must have lifecycle `decided`.
+`status` is one status or a list of them (set membership). It must be a status of the kind or `superseded`. Unknown parameters are an error. `schema-valid`, `ids-unique`, and `links-resolve` check the whole checked directory, because a collision or a broken link concerns everyone. All other gates check the ticket. An artifact belongs to the ticket when its field `ticket` holds the ticket ID, so `artifact-exists` and `status-is` need a kind with lifecycle `decided`. The role of `approvals-valid` must be able to `approve`, and the kind `binding` of `change-needs-binding` must have lifecycle `decided`.
 
 The standard package sets the parameters `{ anchored: module, binding: decision }` for `change-needs-binding`.
+
+**What `check` runs.** `schema-valid`, `ids-unique`, and `links-resolve` are **directory gates**. Each runs at most once per call, if at least one step of the current resolved configuration (`.hone/resolved.json`) contains it, and checks against that configuration. A directory gate concerns the artifacts of all tickets, and an older snapshot does not know the kinds of newer tickets. All other gates are **ticket gates**. They run only when the caller names a ticket, and always against the ticket's snapshot (Section 8): the gates of the step the caller names, or otherwise of every step that the ticket's profile lists as `required`. A directory gate inside a ticket step does not run a second time. The ticket record is found through `ticket.path`, its snapshot through `config`. If `resolved.json` or the snapshot is missing, does not pass the checks of the resolved configuration, or does not match its hash, `check` does not run at all. That is not a finding.
+
+**Findings.** A gate returns findings. A finding has `level` (`error` or `warning`), a `code`, optionally `path` (the file relative to the project root) and `pointer` (a JSON Pointer into the file's data model), and `message` (free text, not normative). A gate fails exactly when it has a finding of level `error`. The codes are fixed and normative, so that a test case can name the expected reason:
+
+| Gate                       | Code                        | Level   | Meaning                                                                            |
+| -------------------------- | --------------------------- | ------- | ---------------------------------------------------------------------------------- |
+| `schema-valid`             | `yaml-profile`              | error   | The file violates the strict YAML profile or the file shape (Section 5)            |
+| `schema-valid`             | `kind-unknown`              | error   | `type` names neither `ticket` nor a kind of the configuration                      |
+| `schema-valid`             | `path-mismatch`             | error   | `id`, `ticket`, or `type` disagrees with the path (Section 5, "Files and paths")   |
+| `schema-valid`             | `id-prefix`                 | error   | `id` does not start with the `id_prefix` of the kind                               |
+| `schema-valid`             | `status`                    | error   | The declared status is not a status of the kind                                    |
+| `schema-valid`             | `schema`                    | error   | The data does not match the schema of its lifecycle and kind                       |
+| `schema-valid`             | `unknown-field`             | warning | A key without `x-` that no schema names (Section 5)                                |
+| `schema-valid`             | `unmatched-file`            | warning | A file looks like an artifact but matches no pattern (Section 5)                   |
+| `ids-unique`               | `id-duplicate`              | error   | Another file carries the same ID. Every file involved gets a finding               |
+| `links-resolve`            | `link-unresolved`           | error   | A link points to an artifact or a ticket record that does not exist                |
+| `artifact-exists`          | `artifact-missing`          | error   | The ticket has no matching artifact                                                |
+| `status-is`                | `status-mismatch`           | error   | An artifact of the ticket has an effective status outside the set                  |
+| `approvals-valid`          | `approvals-missing`         | error   | An artifact has fewer valid approvals than `min` (Section 10)                      |
+| `change-needs-binding`     | `binding-missing`           | error   | An anchored artifact hit by `changed_paths` has no binding artifact through it     |
+| `change-needs-binding`     | `changed-paths-missing`     | error   | The caller supplied no `changed_paths`. An empty list is allowed and passes        |
+| `no-open-blocking-threads` | `process-store-unavailable` | error   | The gate needs the process store, which this call does not have (see below)        |
+| `threads-answered`         | `process-store-unavailable` | error   | As above                                                                           |
+| `steps-complete`           | `process-store-unavailable` | error   | As above                                                                           |
+| any                        | `unsupported`               | error   | The implementation does not provide this gate, for example `exec` or a plugin gate |
+
+A file that violates the YAML profile is reported by `schema-valid` and is invisible to all other gates. Threads and step state are events in the process store (Section 10). Until the event schema exists (Section 16, step 7), `no-open-blocking-threads`, `threads-answered`, and `steps-complete` fail with `process-store-unavailable`, so that nothing passes by mistake.
+
+**Rules of the standard gates**
+
+- `links-resolve` checks the ID links (`supersedes`, `affects`, `verifies`, `depends-on`, `relates`), the field `ticket` (the ticket record must exist), and `context.observed[].module` in the ticket record. It does not check `code` (a language plugin does that), `transcript`, `x-*` links, or fields of a preset such as `parent` of a module.
+- `artifact-exists` and `status-is` use the effective status (Section 6), computed over the whole checked directory.
+- `change-needs-binding` looks at every artifact of kind `anchored` in the checked directory whose anchors hit a changed path. For each one there must be an artifact of kind `binding` anywhere in the checked directory, from this ticket or an earlier one, that lists it in `links.affects` and whose effective status is binding. A superseded decision binds nothing any more. A `path` anchor hits the same file and everything below it, compared by whole path segments. A `glob` anchor knows `*` (any characters within one segment), `**` (any number of whole segments), and `?` (one character within a segment), and nothing else. A `symbol` anchor hits its file, because finding the symbol itself is the job of a language plugin. An anchor with `repo:` hits only changed paths with the same `repo:` prefix. Paths without a prefix belong to the repository of the checked directory.
 
 **Everything else is a plugin** (Section 9): a gate is then a WASM module, included through the same entry.
 
@@ -880,6 +918,7 @@ payload:
 - The approval binds to the **content hash**. If the artifact changes afterwards, it becomes invalid.
 - Who must give how many approvals is defined in the step (`approvals-valid` with role and count). The protocol checks that the author's role may approve according to `actors`.
 - The protocol does not define a proof that this person really approved. A tool can store one as a free field (`proof`) in the event and in the `review` block (for example a signed approval or a confirmation from the server). Without a proof, an approval is trust-based. With `approvals-valid: { require_proof: true }`, a step requires a proof for every approval, checked by a plugin.
+- Without a process store, `approvals-valid` reads the approvals from `review.approved_by`. An entry counts when its `role` is the gate's role, its `hash` is the artifact's current content hash, and `actors` gives the person that role (a person not listed in `actors` gets the roles of `"*"`). Every person counts once, however many entries they have. With `require_proof: true`, an entry counts only if it has a field `proof`. The standard gate checks only that the field exists, and a plugin checks its content. If the step has no output artifact in the ticket, the gate passes, because existence is the job of `artifact-exists`.
 
 ### Comment threads
 
@@ -980,6 +1019,8 @@ This section is **not normative**. It collects what a tool can build on the prot
 | pre-commit / pre-push                                | Fast local feedback                                            |
 | CI                                                   | Binding for the team, because local hooks can be bypassed      |
 
+`hone check` exits with 0 when every gate passed, 1 when a gate failed, and 2 when it could not run. **Agent hook.** `hone hook claude-code` is a `PreToolUse` hook for Claude Code. It reads the hook input from stdin and treats the file an edit tool wants to write as the only changed path. It runs only the `change-needs-binding` gates of the ticket's `required` steps, because that is the purpose of the hook: no code while the decision is not binding. Everything else stays with `hone check` (pre-push, CI). Edits to artifact files are never blocked, otherwise a broken artifact would block the edit that repairs it. The ticket comes from `--ticket` or the environment variable `HONE_TICKET`. Without one, the hook lets the edit through and says so on stderr. A failed gate blocks the edit with exit code 2 and the findings on stderr.
+
 **Ticket ↔ code.** "Which commits belonged to ticket X" is answered by the tool, for example through the ticket ID in branch names or commit trailers. The protocol only contains what is in the artifacts (`context`, `links.code`).
 
 **Index.** For queries, the tool keeps a local index (hone: an embedded database) next to `log/`. It is a cache, built from the logs, and simply rebuilt when its schema changes.
@@ -1068,7 +1109,22 @@ A resolution test case is a directory `schemas/tests/resolve/<case>/`:
 - `overrides.yaml` (optional): the ticket overrides.
 - Either `expected.json`, the resolved document, compared as data, or `expected-error.txt`, one line with the error category, a space, and the location: a JSON Pointer, or a file path relative to the case directory (`project/.hone/…` or `packages/<name>/…`).
 
-A failing case contains exactly one error. An implementation may report several, but the expected one must be among them. Every `expected.json` passes the shape and reference checks of the resolved configuration. The YAML profile and the content hash (Section 5) also have valid and invalid test cases, because two parsers must produce the same data and the same hash.
+A failing case contains exactly one error. An implementation may report several, but the expected one must be among them. Every `expected.json` passes the shape and reference checks of the resolved configuration.
+
+The YAML profile, the schemas, and the content hash (Section 5) have test cases of their own, because two parsers must produce the same data and the same hash. They are single files under `schemas/tests/`, checked by their content without a place in a directory, with the kinds of `schemas/standard/kinds/` and `schemas/tests/kinds/`:
+
+- `valid/`: every file passes `schema-valid` without an error.
+- `invalid/`: every file passes the profile and fails the schema checks. `invalid/expected.txt` has one line per file: the file name, the code (Section 7), and the JSON Pointer.
+- `profile/invalid/`: every file violates the profile. `profile/invalid/expected.txt` has one line per file: the file name and the code `yaml-profile`.
+- `hash/`: content hashes. `valid/decision-accepted.md` carries the hash of its content in its `review` block, and `hash/decision-reformatted.md` is the same content in other YAML notation.
+
+A gate test case is a directory `schemas/tests/check/<case>/`:
+
+- `project/`: the checked directory, including `.hone/resolved.json` and the snapshots the case needs.
+- `input.yaml` (optional): `ticket`, `step`, and `changed_paths` of the call, each optional.
+- `expected.txt`: one line per finding, `<level> <gate> <code> <path> <pointer>`, sorted. `<gate>` is the gate name of a directory gate or `<step>/<label>` of a ticket gate. `<path>` and `<pointer>` are `-` when the finding has none. An empty file means that every gate passed without a finding.
+
+A failing case contains exactly one finding of level `error`. An implementation must report every line of `expected.txt`, and a finding of level `error` exactly when the file contains one. Beyond that, it may report more findings.
 
 **Licenses** (Question 25). Anyone may do anything with it, including closed forks and hosted services.
 
@@ -1110,6 +1166,7 @@ All questions of this draft are decided. The numbers stay stable because the tex
 26. **Scope of the server contract:** Decided. Normative are replication, real-time subscription, bearer authentication, and defined error codes. Permission management, administration, and notifications are left to the server (Section 4).
 27. **Statuses:** Decided. Statuses are configurable per kind (`kinds.<type>.statuses`, a map). The protocol knows only the property `binding`. Every kind with lifecycle `decided` has at least one binding status, `superseded` is reserved. Content enums without protocol semantics (`reach`, thread kinds) are not part of the core (Sections 5 and 6).
 28. **Resolution:** Decided. Fixed layer layout (one file per definition, the file stem is the key), merging with `null-without-target` and replacement on type conflicts, `extends` as `name@major` in depth-first order with the first occurrence counting, `lock.yaml` with package and plugin hashes, kind schemas as layer-relative paths embedded after merging, written-out defaults, ticket overrides as a last patch, the canonical form RFC 8785, and fixed error categories (Section 8). The test cases live in `schemas/tests/resolve/` (Section 14).
+29. **Check:** Decided. Directory gates run against `resolved.json` when a step contains them, ticket gates against the snapshot, either the named step or every `required` step. Artifacts are found through the path patterns, and path and content must agree. A superseding artifact counts by its declared status. Findings carry fixed codes. Gates that need the process store fail until the event schema exists, `exec` and plugin gates fail as `unsupported` until step 8. Approvals count once per person, with the role checked against `actors`. `change-needs-binding` needs `changed_paths` and matches anchors by path segments and simple globs. The agent hook runs only `change-needs-binding` and never blocks edits to artifacts (Sections 5, 6, 7, 10, 12, and 14).
 
 ## 16. Next steps
 
