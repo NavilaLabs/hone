@@ -4,7 +4,7 @@ Sharpen the design before the code.
 
 hone is an open protocol and a reference implementation for recording design artifacts in a project: specs, decisions, modules, test plans, their links, their lifecycle, and the steps that lead from a ticket to code. Every rule can be checked deterministically, without AI, so the same check can block an agent, a pre-push hook, or a CI run.
 
-> **Status:** design phase. The protocol concept ([docs/protocol-concept.md](docs/protocol-concept.md)) and the schemas are in place. The CLI resolves a configuration (`hone resolve`), runs the standard gates (`hone check`), and blocks agent edits of code without a binding decision (`hone hook claude-code`). Gates that need the process store, `exec` gates, and plugins come later.
+> **Status:** design phase. The protocol concept ([docs/protocol-concept.md](docs/protocol-concept.md)) and the schemas are in place. The CLI resolves a configuration (`hone resolve`), runs the standard gates (`hone check`), blocks agent edits of code without a binding decision (`hone hook claude-code`), and offers the same functions to agents as an MCP server (`hone mcp`). Gates that need the process store, `exec` gates, and plugins come later.
 >
 > **Until v1 nothing is stable.** Every part, from the protocol and the schemas to the implementation, may still be changed, replaced, or rebuilt from scratch. There are no compatibility guarantees before v1.
 
@@ -29,6 +29,7 @@ hone is an open protocol and a reference implementation for recording design art
 | `spec/`             | Planned: the normative protocol specification              |
 | `crates/hone-core/` | The Rust reference implementation as a library             |
 | `crates/hone-cli/`  | The CLI (binary `hone`), the base for a later GUI          |
+| `crates/hone-mcp/`  | The MCP server over stdio, started by `hone mcp`           |
 
 Run the tests:
 
@@ -36,7 +37,7 @@ Run the tests:
 cargo test
 ```
 
-`cargo test` covers the resolved configuration, the resolution test cases, the artifact fixtures, the content hash, and the gate test cases (`schemas/tests/check/`).
+`cargo test` covers the resolved configuration, the resolution test cases, the artifact fixtures, the content hash, the gate test cases (`schemas/tests/check/`), and every MCP tool.
 
 ## Checking
 
@@ -67,6 +68,14 @@ git diff --name-only main | hone check --ticket tk-9f2x4a8m --changed-from -
 ```
 
 The ticket comes from `--ticket` or the environment variable `HONE_TICKET` (`HONE_TICKET=tk-9f2x4a8m claude`). Without one, the hook lets every edit through and says so on stderr.
+
+## MCP server
+
+`hone mcp` serves the tools `resolve`, `check`, `check_edit`, `check_artifact`, and `content_hash` over stdio for one project (`--root`, default `.`, and `--packages`). They return the same JSON as `--json`. A failed gate is a normal result with `status: failed`; a tool that could not run, or a call with invalid arguments, returns a result marked `isError`. `check_edit` asks beforehand what the hook would decide, and `check_artifact` checks a draft before it is written. For Claude Code:
+
+```sh
+claude mcp add hone -- hone mcp
+```
 
 ## License
 
