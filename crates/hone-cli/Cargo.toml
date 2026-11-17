@@ -1,0 +1,21 @@
+[package]
+name = "hone-cli"
+description = "Command line interface of the hone reference implementation."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "hone"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+hone-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
