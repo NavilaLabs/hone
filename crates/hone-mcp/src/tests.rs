@@ -447,3 +447,152 @@ async fn content_hash_without_path_is_invalid() {
     .await;
     assert!(message.contains("missing field `path`"), "{message}");
 }
+
+// A fresh copy of a gate test project with its own data directory, written as `author`.
+fn process_case(name: &str, author: Option<(&str, &str)>) -> Project {
+    let root = std::env::temp_dir().join(format!("hone-mcp-{}-{name}", std::process::id()));
+    if root.exists() {
+        std::fs::remove_dir_all(&root).expect("removable");
+    }
+    copy_directory(
+        &check_case("no-open-blocking-threads-process-store-unavailable"),
+        &root.join("project"),
+    );
+    Project {
+        root: root.join("project"),
+        packages: None,
+        data_directory: Some(root.join("data")),
+        author: author.map(|(name, role)| hone_core::Author {
+            name: name.into(),
+            role: role.into(),
+        }),
+    }
+}
+
+fn as_author(project: &Project, name: &str, role: &str) -> Project {
+    Project {
+        author: Some(hone_core::Author {
+            name: name.into(),
+            role: role.into(),
+        }),
+        ..project.clone()
+    }
+}
+
+fn remove(project: &Project) {
+    let root = project.root.parent().expect("temporary root");
+    std::fs::remove_dir_all(root).expect("removable");
+}
+
+#[tokio::test]
+async fn process_tools_write_the_events_the_gates_read() {
+    let bob = process_case("process-flow", Some(("bob", "human")));
+    let alice = as_author(&bob, "alice", "human");
+    let completion = json!({ "ticket": TICKET, "step": "completion" });
+
+    let opened = call(
+        bob.clone(),
+        "thread_open",
+        json!({
+            "ticket": TICKET,
+            "kind": "concern",
+            "blocking": true,
+            "anchor": { "kind": "code", "ref": "src/ledger.rs#Ledger" },
+            "body": "What happens when the queue fails?",
+        }),
+    )
+    .await;
+    assert!(!opened.is_error, "{:?}", opened.content);
+    assert_eq!(
+        opened.content["event"]["author"],
+        json!({ "name": "bob", "role": "human" })
+    );
+    let thread = opened.content["thread"]
+        .as_str()
+        .expect("thread")
+        .to_owned();
+
+    let blocked = call(bob.clone(), "check", completion.clone()).await;
+    assert_eq!(blocked.content["status"], "failed");
+    assert_eq!(gate_codes(&blocked.content), ["error thread-blocking-open"]);
+
+    let reply = json!({ "thread": thread, "body": "Fall back to synchronous processing." });
+    assert!(!call(alice.clone(), "thread_reply", reply).await.is_error);
+    let resolved = call(alice.clone(), "thread_resolve", json!({ "thread": thread })).await;
+    assert_eq!(resolved.content["event"]["type"], "thread.resolved");
+    let passed = call(alice.clone(), "check", completion).await;
+    assert_eq!(passed.content["status"], "passed", "{:?}", passed.content);
+
+    let step = json!({ "ticket": TICKET, "step": "decision", "status": "skipped", "reason": "no new decision" });
+    assert!(!call(alice.clone(), "step_set", step).await.is_error);
+    let reopened = call(bob.clone(), "thread_reopen", json!({ "thread": thread })).await;
+    assert!(!reopened.is_error);
+
+    let events = call(bob.clone(), "events", json!({ "ticket": TICKET })).await;
+    assert!(!events.is_error);
+    assert_eq!(events.content["events"].as_array().map(Vec::len), Some(5));
+    assert_eq!(events.content["threads"][0]["status"], "open");
+    assert_eq!(events.content["threads"][0]["answered"], true);
+    assert_eq!(
+        events.content["steps"]["decision"],
+        json!({ "status": "skipped", "reason": "no new decision" })
+    );
+    remove(&bob);
+}
+
+#[tokio::test]
+async fn writing_without_an_author_is_an_error() {
+    let project = process_case("process-no-author", None);
+    let reply = call(
+        project.clone(),
+        "step_set",
+        json!({ "ticket": TICKET, "step": "decision", "status": "done" }),
+    )
+    .await;
+    assert!(reply.is_error);
+    assert_eq!(reply.content["status"], "invalid");
+    assert!(
+        reply.content["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("--author")),
+        "{:?}",
+        reply.content
+    );
+    remove(&project);
+}
+
+#[tokio::test]
+async fn events_without_a_store_is_an_error() {
+    let project = process_case("process-unavailable", None);
+    let reply = call(project.clone(), "events", json!({ "ticket": TICKET })).await;
+    assert!(reply.is_error);
+    assert_eq!(reply.content["status"], "unavailable");
+    remove(&project);
+}
+
+#[tokio::test]
+async fn step_set_with_an_unknown_step_is_an_error() {
+    let project = process_case("process-unknown-step", Some(("alice", "human")));
+    let reply = call(
+        project.clone(),
+        "step_set",
+        json!({ "ticket": TICKET, "step": "domain", "status": "done" }),
+    )
+    .await;
+    assert!(reply.is_error);
+    assert_eq!(reply.content["status"], "invalid");
+    remove(&project);
+}
+
+#[tokio::test]
+async fn thread_open_without_anchor_is_invalid() {
+    let project = process_case("process-no-anchor", Some(("bob", "human")));
+    let message = invalid_arguments(
+        project.clone(),
+        "thread_open",
+        json!({ "ticket": TICKET, "kind": "concern", "body": "Why?" }),
+    )
+    .await;
+    assert!(message.contains("anchor"), "{message}");
+    remove(&project);
+}

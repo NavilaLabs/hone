@@ -1,0 +1,3 @@
+workspace: ws-123
+project: prj-8m2k4d7q
+extends: [acme/base@1]

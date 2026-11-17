@@ -1,0 +1,3 @@
+workspace: local
+project: prj-8M2K4D7Q
+extends: [acme/base@1]

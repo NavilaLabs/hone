@@ -1,0 +1,4 @@
+{"author":{"name":"alice","role":"human"},"device":"dev-3k9a5h2t","id":"ev-0193a8f0-9b2c-7e4d-a1f3-000000000001","payload":{"status":"done","step":"decision"},"project":"prj-8m2k4d7q","seq":1,"ticket":"tk-9f2x4a8m","type":"step.changed"}
+{"author":{"name":"alice","role":"human"},"device":"dev-3k9a5h2t","id":"ev-0193a8f0-9b2c-7e4d-a1f3-000000000002","payload":{"status":"skipped","step":"specify"},"project":"prj-8m2k4d7q","seq":2,"ticket":"tk-9f2x4a8m","type":"step.changed"}
+{"author":{"name":"alice","role":"human"},"device":"dev-3k9a5h2t","id":"ev-0193a8f0-9b2c-7e4d-a1f3-000000000003","payload":{"status":"done","step":"implementation"},"project":"prj-8m2k4d7q","seq":3,"ticket":"tk-9f2x4a8m","type":"step.changed"}
+{"author":{"name":"alice","role":"human"},"device":"dev-3k9a5h2t","id":"ev-0193a8f0-9b2c-7e4d-a1f3-000000000004","payload":{"status":"done","step":"unknown-step"},"project":"prj-8m2k4d7q","seq":4,"ticket":"tk-9f2x4a8m","type":"step.changed"}

@@ -1,0 +1,15 @@
+{
+  "id": "ev-0193a8f0-9b2c-7e4d-a1f3-5c6d7e8f9a0b",
+  "project": "prj-8m2k4d7q",
+  "ticket": "tk-9f2x4a8m",
+  "device": "dev-3k9a5h2t",
+  "seq": 1,
+  "type": "Thread.Resolved",
+  "author": {
+    "name": "alice",
+    "role": "human"
+  },
+  "payload": {
+    "thread": "th-0193a8f0-9b2c-7e4d-a1f3-5c6d7e8f9a0a"
+  }
+}

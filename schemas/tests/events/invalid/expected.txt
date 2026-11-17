@@ -1,0 +1,20 @@
+after-duplicate.json /after
+after-empty.json /after
+anchor-artifact-without-hash.json "hash" is a required property
+anchor-kind-unknown.json /payload/anchor/kind
+approval-decision-unknown.json /payload/decision
+author-extra-field.json 'email' was unexpected
+author-role-not-a-key.json /author/role
+body-empty.json /payload/body
+date-field.json 'date' was unexpected
+device-wrong-prefix.json /device
+id-uppercase.json /id
+id-version-4.json /id
+message-without-thread.json "thread" is a required property
+seq-zero.json /seq
+sig-present.json 'sig' was unexpected
+step-status-unknown.json /payload/status
+thread-opened-blocking-text.json /payload/blocking
+thread-opened-repeats-thread.json 'thread' was unexpected
+ticket-missing.json "ticket" is a required property
+type-uppercase.json /type

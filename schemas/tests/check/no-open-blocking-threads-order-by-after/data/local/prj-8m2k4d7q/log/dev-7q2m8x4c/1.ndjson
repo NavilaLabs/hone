@@ -1,0 +1,2 @@
+{"after":["ev-0193a8f0-9b2c-7e4d-a1f3-000000000001"],"author":{"name":"alice","role":"human"},"device":"dev-7q2m8x4c","id":"ev-0193a8f0-9b2c-7e4d-a1f3-000000000008","payload":{"thread":"th-0193a8f0-9b2c-7e4d-a1f3-000000000001"},"project":"prj-8m2k4d7q","seq":1,"ticket":"tk-9f2x4a8m","type":"thread.resolved"}
+{"author":{"name":"bob","role":"human"},"device":"dev-7q2m8x4c","id":"ev-0193a8f0-9b2c-7e4d-a1f3-000000000009","payload":{"thread":"th-0193a8f0-9b2c-7e4d-a1f3-000000000001"},"project":"prj-8m2k4d7q","seq":2,"ticket":"tk-9f2x4a8m","type":"thread.reopened"}

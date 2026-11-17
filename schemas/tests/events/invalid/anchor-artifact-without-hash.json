@@ -1,0 +1,22 @@
+{
+  "id": "ev-0193a8f0-9b2c-7e4d-a1f3-5c6d7e8f9a0b",
+  "project": "prj-8m2k4d7q",
+  "ticket": "tk-9f2x4a8m",
+  "device": "dev-3k9a5h2t",
+  "seq": 1,
+  "type": "thread.opened",
+  "author": {
+    "name": "alice",
+    "role": "human"
+  },
+  "payload": {
+    "kind": "concern",
+    "blocking": true,
+    "anchor": {
+      "kind": "artifact",
+      "artifact": "dec-7k3m2q8p",
+      "quote": "We process payments asynchronously"
+    },
+    "body": "What happens when the queue fails?"
+  }
+}

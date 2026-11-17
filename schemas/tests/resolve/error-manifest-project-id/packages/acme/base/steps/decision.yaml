@@ -1,0 +1,7 @@
+acts: [human, critic]
+decides: human
+inputs: [ticket]
+outputs: [decision]
+gates:
+  exists: { gate: artifact-exists, params: { type: decision } }
+  approved: { gate: approvals-valid, params: { role: human } }

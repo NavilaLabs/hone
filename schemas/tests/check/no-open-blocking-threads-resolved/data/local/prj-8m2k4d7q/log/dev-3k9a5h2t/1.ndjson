@@ -1,0 +1,4 @@
+{"author":{"name":"bob","role":"human"},"device":"dev-3k9a5h2t","id":"ev-0193a8f0-9b2c-7e4d-a1f3-000000000001","payload":{"anchor":{"kind":"code","ref":"src/ledger.rs#Ledger"},"blocking":true,"body":"What happens when the queue fails?","kind":"concern"},"project":"prj-8m2k4d7q","seq":1,"ticket":"tk-9f2x4a8m","type":"thread.opened"}
+{"author":{"name":"bob","role":"human"},"device":"dev-3k9a5h2t","id":"ev-0193a8f0-9b2c-7e4d-a1f3-000000000002","payload":{"anchor":{"kind":"code","ref":"src/ledger.rs#Ledger"},"blocking":false,"body":"What happens when the queue fails?","kind":"concern"},"project":"prj-8m2k4d7q","seq":2,"ticket":"tk-9f2x4a8m","type":"thread.opened"}
+{"author":{"name":"alice","role":"human"},"device":"dev-3k9a5h2t","id":"ev-0193a8f0-9b2c-7e4d-a1f3-000000000003","payload":{"thread":"th-0193a8f0-9b2c-7e4d-a1f3-000000000001"},"project":"prj-8m2k4d7q","seq":3,"ticket":"tk-9f2x4a8m","type":"thread.resolved"}
+{"id":"ev-0193a8f0-9b2c-7e4d-a1f3-0000000000
