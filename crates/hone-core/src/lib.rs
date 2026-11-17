@@ -3,7 +3,8 @@
 //!
 //! [`resolve`] builds the resolved configuration (Level 1) of a project from its layers
 //! (concept Section 8). [`Resolved::from_document`] reads an existing resolved document.
-//! [`check`] runs the gates over a checked directory (concept Section 7).
+//! [`write_resolved`] and [`compare_resolved`] keep `.hone/resolved.json` in step with its
+//! sources. [`check`] runs the gates over a checked directory (concept Section 7).
 
 mod anchor;
 mod artifact;
@@ -19,6 +20,7 @@ mod manifest;
 mod merge;
 mod packages;
 mod pointer;
+mod resolved_file;
 mod schema_valid;
 mod source;
 mod validate;
@@ -35,6 +37,7 @@ pub use check::{
 };
 pub use error::{Category, Location, Origin, Problem, ResolveError};
 pub use finding::{Code, Finding, Level};
+pub use resolved_file::{ResolvedFile, ResolvedFileError, compare_resolved, write_resolved};
 pub use source::{NoPackages, PackageDirectory, PackageSource};
 pub use yaml::YamlProfileError;
 

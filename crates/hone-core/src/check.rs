@@ -11,6 +11,7 @@ use crate::artifact;
 use crate::directory::Directory;
 use crate::finding::{Code, Finding, Level};
 use crate::gates::{DIRECTORY_GATES, Scope, TicketCall};
+use crate::resolved_file::read_resolved;
 use crate::schema_valid::ContentRules;
 
 static TICKET_ID: LazyLock<Regex> =
@@ -96,7 +97,7 @@ pub fn check(project_root: &Path, request: &CheckRequest) -> Result<CheckReport,
     if request.ticket.is_none() && request.step.is_some() {
         return Err(error("`step` requires a ticket"));
     }
-    let current = read_resolved(&project_root.join(".hone").join("resolved.json"))?;
+    let current = Resolved::load(project_root)?;
     let current = current.document();
     let mut report = CheckReport::default();
     if request.class != Some(GateClass::Exec) {
@@ -143,7 +144,7 @@ pub fn check_edit(
     ticket: &str,
     path: &str,
 ) -> Result<CheckReport, CheckError> {
-    let current = read_resolved(&project_root.join(".hone").join("resolved.json"))?;
+    let current = Resolved::load(project_root)?;
     let current = current.document();
     let mut report = CheckReport::default();
     if Directory::is_artifact_path(current, path) {
@@ -283,14 +284,6 @@ impl TicketRun<'_> {
         }
         Ok(snapshot)
     }
-}
-
-fn read_resolved(path: &Path) -> Result<Resolved, CheckError> {
-    let bytes = std::fs::read(path).map_err(|io| error(format!("{}: {io}", path.display())))?;
-    let document: Value = serde_json::from_slice(&bytes)
-        .map_err(|json| error(format!("{}: not JSON: {json}", path.display())))?;
-    Resolved::from_document(document)
-        .map_err(|problems| error(format!("{}: {problems}", path.display())))
 }
 
 fn contains_gate(config: &Value, gate: &str) -> bool {
