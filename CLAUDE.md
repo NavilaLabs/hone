@@ -8,7 +8,7 @@ Design phase. The protocol concept is `docs/protocol-concept.md`, the artifact a
 
 Until v1 nothing is stable: every layer (protocol, schemas, implementation) may be changed or rebuilt from scratch. Do not keep a design because it already exists or to preserve compatibility; propose the better design. Decisions already taken are still not reopened silently: name the change and ask.
 
-Run the tests with `cargo test` (resolved configuration, resolution test cases under `schemas/tests/resolve/`) and `uv run --no-project --with pyyaml --with jsonschema --with referencing python schemas/tests/run.py` (artifact fixtures and content hash, until they move to Rust). Do not build new tooling in Python.
+Run the tests with `cargo test`: resolved configuration, resolution test cases (`schemas/tests/resolve/`), artifact fixtures and content hash (`schemas/tests/{valid,invalid,profile,hash}/`), and gate test cases (`schemas/tests/check/`). Do not build new tooling in Python.
 
 ## Protocol versus tool
 

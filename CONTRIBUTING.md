@@ -33,7 +33,7 @@ npm run format        # rewrite
 npm run format:check  # check only
 ```
 
-The artifact fixtures under `schemas/tests/` (`valid/`, `invalid/`, `profile/`) and the YAML files of the resolution test cases (`schemas/tests/resolve/`) are excluded, because the tests check their exact bytes: the YAML profile, the content hash, and the package hashes in `lock.yaml`. Generated `.hone/resolved.json` files and snapshots are excluded too, because their bytes are the canonical form.
+The artifact fixtures under `schemas/tests/` (`valid/`, `invalid/`, `profile/`, `hash/`), the gate test cases (`schemas/tests/check/`), and the YAML files of the resolution test cases (`schemas/tests/resolve/`) are excluded, because the tests check their exact bytes: the YAML profile, the content hash, the approval hashes, and the package hashes in `lock.yaml`. Generated `.hone/resolved.json` files and snapshots are excluded too, because their bytes are the canonical form.
 
 ## Changing the specification
 

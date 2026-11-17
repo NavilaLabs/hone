@@ -4,7 +4,7 @@ Sharpen the design before the code.
 
 hone is an open protocol and a reference implementation for recording design artifacts in a project: specs, decisions, modules, test plans, their links, their lifecycle, and the steps that lead from a ticket to code. Every rule can be checked deterministically, without AI, so the same check can block an agent, a pre-push hook, or a CI run.
 
-> **Status:** design phase. The protocol concept ([docs/protocol-concept.md](docs/protocol-concept.md)) and the schemas are in place. The CLI can resolve a configuration (`hone resolve`), nothing more yet.
+> **Status:** design phase. The protocol concept ([docs/protocol-concept.md](docs/protocol-concept.md)) and the schemas are in place. The CLI resolves a configuration (`hone resolve`), runs the standard gates (`hone check`), and blocks agent edits of code without a binding decision (`hone hook claude-code`). Gates that need the process store, `exec` gates, and plugins come later.
 >
 > **Until v1 nothing is stable.** Every part, from the protocol and the schemas to the implementation, may still be changed, replaced, or rebuilt from scratch. There are no compatibility guarantees before v1.
 
@@ -34,10 +34,39 @@ Run the tests:
 
 ```sh
 cargo test
-uv run --no-project --with pyyaml --with jsonschema --with referencing python schemas/tests/run.py
 ```
 
-`cargo test` covers the resolved configuration and the resolution test cases. `run.py` still checks the artifact fixtures and the content hash until they move to Rust.
+`cargo test` covers the resolved configuration, the resolution test cases, the artifact fixtures, the content hash, and the gate test cases (`schemas/tests/check/`).
+
+## Checking
+
+`hone check` runs the gates over the checked directory. Without `--ticket`, it runs the directory gates (`schema-valid`, `ids-unique`, `links-resolve`) that a step of `.hone/resolved.json` contains. With `--ticket`, it also runs the gates of the ticket's `required` steps against the ticket's snapshot, or of one step with `--step`. It exits with 0 when every gate passed, 1 when a gate failed, and 2 when it could not run.
+
+```sh
+hone check --ticket tk-9f2x4a8m --changed src/payments/fee.rs
+git diff --name-only main | hone check --ticket tk-9f2x4a8m --changed-from -
+```
+
+`--changed <path>` (repeatable) and `--changed-from <file|->` (one path per line, an empty file means no changes) supply the changed paths for `change-needs-binding`. `--class pure|exec` runs only one class of gates, and `--json` prints the result as JSON.
+
+### Claude Code hook
+
+`hone hook claude-code` blocks an edit of code that the ticket's `change-needs-binding` gates reject, for example code anchored by a module without a binding decision. Edits of artifact files are never blocked. In `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [{ "type": "command", "command": "hone hook claude-code" }]
+      }
+    ]
+  }
+}
+```
+
+The ticket comes from `--ticket` or the environment variable `HONE_TICKET` (`HONE_TICKET=tk-9f2x4a8m claude`). Without one, the hook lets every edit through and says so on stderr.
 
 ## License
 
