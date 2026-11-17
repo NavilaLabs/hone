@@ -621,7 +621,7 @@ plugins: # Section 9
 
 ### Frozen per ticket
 
-When a ticket starts, the resolved configuration (with its `overrides`) is stored as a snapshot and recorded in the ticket record by hash (`config: sha256:…`). The snapshot is stored content-addressed under `.hone/snapshots/<hash>.json`. If the configuration does not change, no new snapshot is created, and several tickets share one file.
+When a ticket starts, the resolved configuration (with its `overrides`) is stored as a snapshot and recorded in the ticket record by hash (`config: sha256:…`). The snapshot is stored content-addressed under `.hone/snapshots/<hex>.json`, where `<hex>` is the hash without the prefix `sha256:`, because a colon is not allowed in file names on every system. If the configuration does not change, no new snapshot is created, and several tickets share one file.
 
 - Gates check a ticket **always against its snapshot**. CI needs neither generators nor packages for this.
 - If a ticket deliberately switches to new rules, that is an event (`ticket.config_changed`) and visible in the record.
