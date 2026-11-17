@@ -1,4 +1,5 @@
 mod check;
+mod process;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -34,6 +35,14 @@ enum Command {
     /// Run the gates over the checked directory. Exits with 0 when every gate passed, 1 when a
     /// gate failed, and 2 when the check could not run.
     Check(check::CheckArguments),
+    /// Write comment threads of a ticket to the process store.
+    #[command(subcommand)]
+    Thread(process::Thread),
+    /// Write the state of a step of a ticket to the process store.
+    #[command(subcommand)]
+    Step(process::Step),
+    /// Show the process state of a ticket: events, threads, steps, and invalid events.
+    Events(process::EventsArguments),
     /// Serve the MCP tools of the project over stdio.
     Mcp {
         /// Project root, the directory that contains `.hone/`.
@@ -42,6 +51,12 @@ enum Command {
         /// Directory with one subdirectory per package name, for example `acme/base/`.
         #[arg(long)]
         packages: Option<PathBuf>,
+        /// The handle of the author of every event the server writes.
+        #[arg(long, env = "HONE_AUTHOR", requires = "role")]
+        author: Option<String>,
+        /// The role of that author.
+        #[arg(long, env = "HONE_ROLE", requires = "author")]
+        role: Option<String>,
     },
     /// Run hone as a hook of an agent.
     #[command(subcommand)]
@@ -74,8 +89,25 @@ fn main() -> ExitCode {
             }
         }
         Command::Check(arguments) => check::run_check(&arguments),
-        Command::Mcp { root, packages } => {
-            match hone_mcp::serve_stdio(hone_mcp::Project { root, packages }) {
+        Command::Thread(thread) => process::run_thread(thread),
+        Command::Step(step) => process::run_step(step),
+        Command::Events(arguments) => process::run_events(&arguments),
+        Command::Mcp {
+            root,
+            packages,
+            author,
+            role,
+        } => {
+            let author = author
+                .zip(role)
+                .map(|(name, role)| hone_core::Author { name, role });
+            let project = hone_mcp::Project {
+                root,
+                packages,
+                data_directory: None,
+                author,
+            };
+            match hone_mcp::serve_stdio(project) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("hone mcp: {error}");

@@ -1,0 +1,395 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hone.invalid/schema/1/event.schema.json",
+  "title": "hone protocol 1: event",
+  "description": "One event of the process store (concept Section 4, \"Process store\"), one line of a segment `log/<device>/<number>.ndjson` in the canonical form of RFC 8785. The envelope is strict: further fields exist only as `x-<name>`. A known type has a fixed payload. A custom type is named `x-<name>`, and a type of a newer protocol version is accepted with any payload, kept, and ignored by every computed status. The rules across events (`seq` without gaps, the log the event lies in, the same `id` with different content) are checked by the reader, because JSON Schema cannot express them.",
+  "type": "object",
+  "required": [
+    "id",
+    "project",
+    "ticket",
+    "device",
+    "seq",
+    "type",
+    "author",
+    "payload"
+  ],
+  "properties": {
+    "id": {
+      "description": "`ev-` plus a UUIDv7 (RFC 9562) in lowercase. Its timestamp is the time of writing, the only time of an event.",
+      "$ref": "#/$defs/EventId"
+    },
+    "project": {
+      "$ref": "common.schema.json#/$defs/ProjectId"
+    },
+    "ticket": {
+      "$ref": "common.schema.json#/$defs/TicketId"
+    },
+    "device": {
+      "description": "The writing device. A device has its own ID in every project.",
+      "type": "string",
+      "pattern": "^dev-[0-9a-hjkmnp-tv-z]{8}$"
+    },
+    "seq": {
+      "description": "Sequence number in the device's log: starts at 1 and grows by exactly 1.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "type": {
+      "description": "A type of version 1, `x-<name>`, or a dotted type of a newer version.",
+      "type": "string",
+      "pattern": "^(x-[a-z0-9]+(-[a-z0-9]+)*|[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+)$"
+    },
+    "author": {
+      "description": "Who wrote the event. Without a server trust-based, with a server set by the server.",
+      "type": "object",
+      "required": ["name", "role"],
+      "properties": {
+        "name": {
+          "$ref": "common.schema.json#/$defs/Name"
+        },
+        "role": {
+          "$ref": "common.schema.json#/$defs/Key"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "after": {
+      "description": "Causality only: for every other device, the newest event the writer had read. Omitted rather than empty.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/EventId"
+      }
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x-": {}
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/PayloadOf"
+    }
+  ],
+  "$defs": {
+    "EventId": {
+      "type": "string",
+      "pattern": "^ev-[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "ThreadId": {
+      "description": "`th-` plus the UUID of the event `thread.opened`.",
+      "type": "string",
+      "pattern": "^th-[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "Text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "PayloadOf": {
+      "allOf": [
+        {
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "thread.opened" } }
+          },
+          "then": {
+            "properties": { "payload": { "$ref": "#/$defs/ThreadOpened" } }
+          }
+        },
+        {
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "thread.message" } }
+          },
+          "then": {
+            "properties": { "payload": { "$ref": "#/$defs/ThreadMessage" } }
+          }
+        },
+        {
+          "if": {
+            "required": ["type"],
+            "properties": {
+              "type": { "enum": ["thread.resolved", "thread.reopened"] }
+            }
+          },
+          "then": {
+            "properties": { "payload": { "$ref": "#/$defs/ThreadReference" } }
+          }
+        },
+        {
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "approval.given" } }
+          },
+          "then": {
+            "properties": { "payload": { "$ref": "#/$defs/ApprovalGiven" } }
+          }
+        },
+        {
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "review.confirmed" } }
+          },
+          "then": {
+            "properties": { "payload": { "$ref": "#/$defs/ReviewConfirmed" } }
+          }
+        },
+        {
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "step.changed" } }
+          },
+          "then": {
+            "properties": { "payload": { "$ref": "#/$defs/StepChanged" } }
+          }
+        },
+        {
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "ticket.started" } }
+          },
+          "then": {
+            "properties": { "payload": { "$ref": "#/$defs/TicketStarted" } }
+          }
+        },
+        {
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "ticket.attributes_changed" } }
+          },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/TicketAttributesChanged" }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "ticket.config_changed" } }
+          },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/TicketConfigChanged" }
+            }
+          }
+        }
+      ]
+    },
+    "ThreadOpened": {
+      "description": "Opens a thread. Its ID is `th-` plus the UUID of this event.",
+      "type": "object",
+      "required": ["kind", "blocking", "anchor", "body"],
+      "properties": {
+        "kind": {
+          "description": "A free key. hone/standard suggests question, concern, suggestion, and note.",
+          "$ref": "common.schema.json#/$defs/Key"
+        },
+        "blocking": {
+          "description": "While open, a blocking thread makes `no-open-blocking-threads` fail.",
+          "type": "boolean"
+        },
+        "anchor": {
+          "$ref": "#/$defs/ThreadAnchor"
+        },
+        "body": {
+          "$ref": "#/$defs/Text"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "ThreadAnchor": {
+      "description": "What a thread is attached to (concept Section 10, \"Anchors\").",
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "enum": ["artifact", "code", "change", "transcript"]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["kind"],
+            "properties": { "kind": { "const": "artifact" } }
+          },
+          "then": {
+            "required": ["artifact", "hash"],
+            "properties": {
+              "kind": true,
+              "artifact": { "$ref": "common.schema.json#/$defs/Id" },
+              "hash": {
+                "description": "The content hash of the artifact at the time of the comment.",
+                "$ref": "common.schema.json#/$defs/Hash"
+              },
+              "quote": {
+                "description": "Text to find the spot again.",
+                "$ref": "#/$defs/Text"
+              }
+            },
+            "additionalProperties": false,
+            "patternProperties": { "^x-": {} }
+          }
+        },
+        {
+          "if": {
+            "required": ["kind"],
+            "properties": { "kind": { "const": "code" } }
+          },
+          "then": {
+            "required": ["ref"],
+            "properties": {
+              "kind": true,
+              "ref": { "$ref": "common.schema.json#/$defs/CodeRef" }
+            },
+            "additionalProperties": false,
+            "patternProperties": { "^x-": {} }
+          }
+        },
+        {
+          "if": {
+            "required": ["kind"],
+            "properties": { "kind": { "const": "change" } }
+          },
+          "then": {
+            "required": ["ref"],
+            "properties": {
+              "kind": true,
+              "ref": {
+                "description": "A free description of an external change, for example a pull request and a line range.",
+                "$ref": "#/$defs/Text"
+              }
+            },
+            "additionalProperties": false,
+            "patternProperties": { "^x-": {} }
+          }
+        },
+        {
+          "if": {
+            "required": ["kind"],
+            "properties": { "kind": { "const": "transcript" } }
+          },
+          "then": {
+            "required": ["url"],
+            "properties": {
+              "kind": true,
+              "url": { "$ref": "#/$defs/Text" },
+              "position": {
+                "description": "A position in the transcript, free-form.",
+                "$ref": "#/$defs/Text"
+              }
+            },
+            "additionalProperties": false,
+            "patternProperties": { "^x-": {} }
+          }
+        }
+      ]
+    },
+    "ThreadMessage": {
+      "type": "object",
+      "required": ["thread", "body"],
+      "properties": {
+        "thread": { "$ref": "#/$defs/ThreadId" },
+        "body": { "$ref": "#/$defs/Text" }
+      },
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} }
+    },
+    "ThreadReference": {
+      "description": "Payload of `thread.resolved` and `thread.reopened`.",
+      "type": "object",
+      "required": ["thread"],
+      "properties": {
+        "thread": { "$ref": "#/$defs/ThreadId" }
+      },
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} }
+    },
+    "ApprovalGiven": {
+      "type": "object",
+      "required": ["artifact", "hash", "decision"],
+      "properties": {
+        "artifact": { "$ref": "common.schema.json#/$defs/Id" },
+        "hash": {
+          "description": "The content hash that was approved (without the `review` block).",
+          "$ref": "common.schema.json#/$defs/Hash"
+        },
+        "decision": { "enum": ["approved", "changes-requested"] },
+        "proof": {
+          "description": "A free proof that the person really approved, checked by a plugin."
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} }
+    },
+    "ReviewConfirmed": {
+      "description": "The role from `decides` confirms the condensed `review` block.",
+      "type": "object",
+      "required": ["artifact", "hash"],
+      "properties": {
+        "artifact": { "$ref": "common.schema.json#/$defs/Id" },
+        "hash": { "$ref": "common.schema.json#/$defs/Hash" }
+      },
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} }
+    },
+    "StepChanged": {
+      "description": "The state of a step. The last event in the order decides.",
+      "type": "object",
+      "required": ["step", "status"],
+      "properties": {
+        "step": { "$ref": "common.schema.json#/$defs/Key" },
+        "status": { "enum": ["open", "done", "skipped"] },
+        "reason": { "$ref": "#/$defs/Text" }
+      },
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} }
+    },
+    "TicketStarted": {
+      "type": "object",
+      "required": ["profile", "config"],
+      "properties": {
+        "profile": { "$ref": "common.schema.json#/$defs/Key" },
+        "config": { "$ref": "common.schema.json#/$defs/Hash" }
+      },
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} }
+    },
+    "TicketAttributesChanged": {
+      "type": "object",
+      "required": ["attributes"],
+      "properties": {
+        "attributes": {
+          "description": "The attributes after the change, as in the ticket record.",
+          "type": "object",
+          "additionalProperties": { "type": ["string", "integer", "boolean"] }
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} }
+    },
+    "TicketConfigChanged": {
+      "type": "object",
+      "required": ["config"],
+      "properties": {
+        "config": {
+          "description": "The hash of the new snapshot.",
+          "$ref": "common.schema.json#/$defs/Hash"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} }
+    }
+  }
+}

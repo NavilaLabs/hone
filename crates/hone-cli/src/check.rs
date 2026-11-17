@@ -69,6 +69,7 @@ pub(crate) fn run_check(arguments: &CheckArguments) -> ExitCode {
             Class::Pure => GateClass::Pure,
             Class::Exec => GateClass::Exec,
         }),
+        data_directory: None,
     };
     match hone_core::check(&arguments.root, &request) {
         Ok(report) => {

@@ -21,6 +21,8 @@ fn project(root: PathBuf) -> Project {
     Project {
         root,
         packages: None,
+        data_directory: None,
+        author: None,
     }
 }
 
@@ -36,6 +38,8 @@ fn resolve_case(name: &str) -> Project {
     Project {
         root,
         packages: packages.exists().then_some(packages),
+        data_directory: None,
+        author: None,
     }
 }
 
@@ -133,7 +137,7 @@ fn read_json(path: &Path) -> Value {
 }
 
 #[tokio::test]
-async fn lists_exactly_the_five_tools() {
+async fn lists_exactly_the_tools() {
     let client = connect(project(check_case("pass-ticket"))).await;
     let mut names: Vec<String> = client
         .list_all_tools()
@@ -151,7 +155,13 @@ async fn lists_exactly_the_five_tools() {
             "check_artifact",
             "check_edit",
             "content_hash",
-            "resolve"
+            "events",
+            "resolve",
+            "step_set",
+            "thread_open",
+            "thread_reopen",
+            "thread_reply",
+            "thread_resolve",
         ]
     );
 }

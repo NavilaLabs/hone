@@ -22,6 +22,12 @@ static SEMVER: LazyLock<Regex> = LazyLock::new(|| {
 });
 static HASH: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^sha256:[0-9a-f]{64}$").expect("valid regex"));
+static PROJECT_ID: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^prj-[0-9a-hjkmnp-tv-z]{8}$").expect("valid regex"));
+static WORKSPACE_ID: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(local|ws-[0-9a-hjkmnp-tv-z]{8})$").expect("valid regex"));
+static DEVICE_ID: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^dev-[0-9a-hjkmnp-tv-z]{8}$").expect("valid regex"));
 
 const PROJECT_CONFIG_KEYS: [&str; 4] = ["workspace", "project", "extends", "generate"];
 
@@ -76,6 +82,28 @@ pub(crate) fn read_project_config(hone: &Path) -> Result<Vec<Reference>, Vec<Pro
             ));
         }
     }
+    for (key, pattern, form) in [
+        (
+            "workspace",
+            &*WORKSPACE_ID,
+            "`local` or `ws-` and 8 characters of Crockford Base32",
+        ),
+        (
+            "project",
+            &*PROJECT_ID,
+            "`prj-` and 8 characters of Crockford Base32",
+        ),
+    ] {
+        if let Some(value) = config.get(key)
+            && !value.as_str().is_some_and(|text| pattern.is_match(text))
+        {
+            problems.push(manifest(
+                &origin,
+                "config.yaml",
+                format!("`{key}` must be {form}, found {value}"),
+            ));
+        }
+    }
     match config.get("generate") {
         None => {}
         Some(Value::Array(generators)) if generators.is_empty() => {}
@@ -96,6 +124,33 @@ pub(crate) fn read_project_config(hone: &Path) -> Result<Vec<Reference>, Vec<Pro
     } else {
         Err(problems)
     }
+}
+
+pub(crate) fn read_scope(hone: &Path) -> Result<(String, String), String> {
+    let origin = Origin::Project;
+    let config = match read_map(hone, "config.yaml", &origin) {
+        Ok(Some(config)) => config,
+        Ok(None) => return Err(format!("{}: missing", hone.join("config.yaml").display())),
+        Err(problems) => {
+            let messages: Vec<String> = problems.iter().map(ToString::to_string).collect();
+            return Err(messages.join("; "));
+        }
+    };
+    let field = |key: &str, pattern: &Regex| match config.get(key).and_then(Value::as_str) {
+        Some(text) if pattern.is_match(text) => Ok(text.to_owned()),
+        _ => Err(format!(
+            "{}: no valid `{key}`, which the process store needs",
+            hone.join("config.yaml").display()
+        )),
+    };
+    Ok((
+        field("workspace", &WORKSPACE_ID)?,
+        field("project", &PROJECT_ID)?,
+    ))
+}
+
+pub(crate) fn is_device_id(text: &str) -> bool {
+    DEVICE_ID.is_match(text)
 }
 
 pub(crate) fn read_package_config(

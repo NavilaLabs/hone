@@ -45,6 +45,7 @@ fn request(case: &Path) -> CheckRequest {
                 .collect()
         }),
         class: None,
+        data_directory: Some(case.join("data")),
     }
 }
 

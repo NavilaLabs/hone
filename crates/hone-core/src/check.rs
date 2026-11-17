@@ -1,5 +1,5 @@
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -10,7 +10,8 @@ use crate::Resolved;
 use crate::artifact;
 use crate::directory::Directory;
 use crate::finding::{Code, Finding, Level};
-use crate::gates::{DIRECTORY_GATES, Scope, TicketCall};
+use crate::gates::{DIRECTORY_GATES, PROCESS_GATES, Scope, TicketCall};
+use crate::process::{ProcessError, ProcessStore};
 use crate::resolved_file::read_resolved;
 use crate::schema_valid::ContentRules;
 
@@ -40,6 +41,9 @@ pub struct CheckRequest {
     pub changed_paths: Option<Vec<String>>,
     /// Only gates of this class run. `None` runs both classes.
     pub class: Option<GateClass>,
+    /// The base directory of the process store (see [`ProcessStore::locate`]), or `None` for
+    /// `HONE_DATA_DIR` or the data directory of the platform.
+    pub data_directory: Option<PathBuf>,
 }
 
 /// The result of one gate.
@@ -118,6 +122,7 @@ pub fn check(project_root: &Path, request: &CheckRequest) -> Result<CheckReport,
             ticket,
             step: request.step.as_deref(),
             changed_paths: request.changed_paths.as_deref(),
+            data_directory: request.data_directory.as_deref(),
         };
         run.gates(&mut report, |gate| {
             let class = if gate == "exec" {
@@ -157,6 +162,7 @@ pub fn check_edit(
         ticket,
         step: None,
         changed_paths: Some(&changed),
+        data_directory: None,
     };
     run.gates(&mut report, |gate| gate == "change-needs-binding")?;
     Ok(report)
@@ -197,6 +203,7 @@ struct TicketRun<'a> {
     ticket: &'a str,
     step: Option<&'a str>,
     changed_paths: Option<&'a [String]>,
+    data_directory: Option<&'a Path>,
 }
 
 impl TicketRun<'_> {
@@ -205,8 +212,7 @@ impl TicketRun<'_> {
         report: &mut CheckReport,
         runs: impl Fn(&str) -> bool,
     ) -> Result<(), CheckError> {
-        let record = self.record()?;
-        let snapshot = self.snapshot(&record)?;
+        let (record, snapshot) = read_ticket(self.project_root, self.current, self.ticket)?;
         let snapshot = snapshot.document();
         let profile_name = record["profile"].as_str().unwrap_or_default();
         let Some(profile) = snapshot["profiles"][profile_name]["steps"].as_object() else {
@@ -227,63 +233,94 @@ impl TicketRun<'_> {
                 .map(|(step, _)| step.as_str())
                 .collect(),
         };
+        let selected = |step: &str| {
+            snapshot["steps"][step]["gates"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(label, entry)| (label, entry, entry["gate"].as_str().unwrap_or_default()))
+                .filter(|(_, _, gate)| runs(gate))
+                .collect::<Vec<_>>()
+        };
+        let needs_store = steps.iter().any(|step| {
+            selected(step)
+                .iter()
+                .any(|(_, _, gate)| PROCESS_GATES.contains(gate))
+        });
+        let process = if needs_store { self.process()? } else { None };
         let directory = Directory::scan(self.project_root, snapshot);
         let scope = Scope::new(snapshot, &directory);
         for step in steps {
-            let definition = &snapshot["steps"][step];
             let call = TicketCall {
                 ticket: self.ticket,
-                step: definition,
+                profile,
+                step: &snapshot["steps"][step],
                 changed_paths: self.changed_paths,
+                process: process.as_ref(),
             };
-            for (label, entry) in definition["gates"].as_object().into_iter().flatten() {
-                let gate = entry["gate"].as_str().unwrap_or_default();
-                if runs(gate) {
-                    let findings = scope.ticket_gate(entry, &call);
-                    report
-                        .gates
-                        .push(gate_report(format!("{step}/{label}"), gate, findings));
-                }
+            for (label, entry, gate) in selected(step) {
+                let findings = scope.ticket_gate(entry, &call);
+                report
+                    .gates
+                    .push(gate_report(format!("{step}/{label}"), gate, findings));
             }
         }
         Ok(())
     }
 
-    fn record(&self) -> Result<serde_json::Map<String, Value>, CheckError> {
-        if !TICKET_ID.is_match(self.ticket) {
-            return Err(error(format!("`{}` is not a ticket ID", self.ticket)));
+    fn process(&self) -> Result<Option<crate::TicketEvents>, CheckError> {
+        let store = ProcessStore::locate(self.project_root, self.data_directory)
+            .map_err(|failure| error(failure.to_string()))?;
+        match store.events(self.ticket) {
+            Ok(events) => Ok(Some(events)),
+            Err(ProcessError::Unavailable { .. }) => Ok(None),
+            Err(failure) => Err(error(failure.to_string())),
         }
-        let pattern = self.current["ticket"]["path"].as_str().unwrap_or_default();
-        let path = pattern.replace("{ticket}", self.ticket);
-        let bytes = std::fs::read(self.project_root.join(&path))
-            .map_err(|io| error(format!("{path}: {io}")))?;
-        artifact::parse(&path, &bytes)
-            .map(|content| content.data)
-            .map_err(|violations| error(format!("{path}: {}", violations.join("; "))))
     }
+}
 
-    fn snapshot(&self, record: &serde_json::Map<String, Value>) -> Result<Resolved, CheckError> {
-        let hash = record["config"].as_str().unwrap_or_default();
-        let Some(hex) = hash.strip_prefix("sha256:") else {
-            return Err(error(format!(
-                "the ticket record has no configuration hash (`config: {hash}`)"
-            )));
-        };
-        let path = self
-            .project_root
-            .join(".hone")
-            .join("snapshots")
-            .join(format!("{hex}.json"));
-        let snapshot = read_resolved(&path)?;
-        if snapshot.hash() != hash {
-            return Err(error(format!(
-                "{}: the content has the hash {}, the ticket record names {hash}",
-                path.display(),
-                snapshot.hash()
-            )));
-        }
-        Ok(snapshot)
+pub(crate) fn load_ticket(
+    project_root: &Path,
+    ticket: &str,
+) -> Result<(serde_json::Map<String, Value>, Resolved), CheckError> {
+    let current = Resolved::load(project_root)?;
+    read_ticket(project_root, current.document(), ticket)
+}
+
+fn read_ticket(
+    project_root: &Path,
+    current: &Value,
+    ticket: &str,
+) -> Result<(serde_json::Map<String, Value>, Resolved), CheckError> {
+    if !TICKET_ID.is_match(ticket) {
+        return Err(error(format!("`{ticket}` is not a ticket ID")));
     }
+    let pattern = current["ticket"]["path"].as_str().unwrap_or_default();
+    let path = pattern.replace("{ticket}", ticket);
+    let bytes =
+        std::fs::read(project_root.join(&path)).map_err(|io| error(format!("{path}: {io}")))?;
+    let record = artifact::parse(&path, &bytes)
+        .map(|content| content.data)
+        .map_err(|violations| error(format!("{path}: {}", violations.join("; "))))?;
+    let hash = record["config"].as_str().unwrap_or_default();
+    let Some(hex) = hash.strip_prefix("sha256:") else {
+        return Err(error(format!(
+            "the ticket record has no configuration hash (`config: {hash}`)"
+        )));
+    };
+    let path = project_root
+        .join(".hone")
+        .join("snapshots")
+        .join(format!("{hex}.json"));
+    let snapshot = read_resolved(&path)?;
+    if snapshot.hash() != hash {
+        return Err(error(format!(
+            "{}: the content has the hash {}, the ticket record names {hash}",
+            path.display(),
+            snapshot.hash()
+        )));
+    }
+    Ok((record, snapshot))
 }
 
 fn contains_gate(config: &Value, gate: &str) -> bool {

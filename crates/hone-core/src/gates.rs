@@ -1,14 +1,20 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::anchor;
 use crate::directory::{Artifact, Directory, Place};
 use crate::finding::{Code, Finding};
 use crate::pointer::Pointer;
+use crate::process::{StepStatus, ThreadStatus, TicketEvents};
 use crate::schema_valid;
 
 pub(crate) const DIRECTORY_GATES: [&str; 3] = ["schema-valid", "ids-unique", "links-resolve"];
+pub(crate) const PROCESS_GATES: [&str; 3] = [
+    "no-open-blocking-threads",
+    "threads-answered",
+    "steps-complete",
+];
 const ID_LINKS: [&str; 5] = ["supersedes", "affects", "verifies", "depends-on", "relates"];
 
 pub(crate) struct Scope<'a> {
@@ -19,8 +25,11 @@ pub(crate) struct Scope<'a> {
 
 pub(crate) struct TicketCall<'a> {
     pub(crate) ticket: &'a str,
+    pub(crate) profile: &'a Map<String, Value>,
     pub(crate) step: &'a Value,
     pub(crate) changed_paths: Option<&'a [String]>,
+    // `None` when the process store is unavailable.
+    pub(crate) process: Option<&'a TicketEvents>,
 }
 
 impl<'a> Scope<'a> {
@@ -50,11 +59,28 @@ impl<'a> Scope<'a> {
             "status-is" => self.status_is(params, call.ticket),
             "approvals-valid" => self.approvals_valid(params, call),
             "change-needs-binding" => self.change_needs_binding(params, call.changed_paths),
-            "no-open-blocking-threads" | "threads-answered" | "steps-complete" => {
-                vec![Finding::error(
-                    Code::ProcessStoreUnavailable,
-                    "the gate needs threads or step state from the process store, which is not available",
-                )]
+            gate @ ("no-open-blocking-threads" | "threads-answered" | "steps-complete") => {
+                let Some(process) = call.process else {
+                    return vec![Finding::error(
+                        Code::ProcessStoreUnavailable,
+                        "the gate needs threads or step state from the process store, which is not available",
+                    )];
+                };
+                let mut findings = match gate {
+                    "no-open-blocking-threads" => open_blocking_threads(process),
+                    "threads-answered" => unanswered_threads(process, params),
+                    _ => self.incomplete_steps(process, call.profile),
+                };
+                findings.extend(process.invalid.iter().map(|invalid| {
+                    let line = invalid
+                        .line
+                        .map_or(String::new(), |line| format!(" line {line}"));
+                    Finding::warning(
+                        Code::EventInvalid,
+                        format!("{}{line}: {}", invalid.path, invalid.message),
+                    )
+                }));
+                findings
             }
             "exec" => vec![Finding::error(
                 Code::Unsupported,
@@ -278,6 +304,39 @@ impl<'a> Scope<'a> {
         findings
     }
 
+    fn incomplete_steps(
+        &self,
+        process: &TicketEvents,
+        profile: &Map<String, Value>,
+    ) -> Vec<Finding> {
+        profile
+            .iter()
+            .filter(|(_, strictness)| *strictness == "required")
+            .map(|(step, _)| step)
+            .filter(|step| !self.contains_steps_complete(step))
+            .filter(|step| {
+                process
+                    .steps
+                    .get(step.as_str())
+                    .is_none_or(|state| state.status == StepStatus::Open)
+            })
+            .map(|step| {
+                Finding::error(
+                    Code::StepIncomplete,
+                    format!("the required step `{step}` is neither done nor skipped"),
+                )
+            })
+            .collect()
+    }
+
+    fn contains_steps_complete(&self, step: &str) -> bool {
+        self.config["steps"][step]["gates"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .any(|(_, entry)| entry["gate"] == "steps-complete")
+    }
+
     fn actor_has_role(&self, name: &str, role: &str) -> bool {
         let actors = &self.config["actors"];
         let roles = actors.get(name).or_else(|| actors.get("*"));
@@ -359,4 +418,36 @@ fn in_selection(selection: &Value, status: Option<&str>) -> bool {
         Value::Array(items) => items.iter().any(|item| item.as_str() == status),
         single => single.as_str() == status,
     }
+}
+
+fn open_blocking_threads(process: &TicketEvents) -> Vec<Finding> {
+    process
+        .threads
+        .iter()
+        .filter(|thread| thread.blocking && thread.status == ThreadStatus::Open)
+        .map(|thread| {
+            Finding::error(
+                Code::ThreadBlockingOpen,
+                format!("the blocking thread `{}` is open", thread.thread),
+            )
+        })
+        .collect()
+}
+
+fn unanswered_threads(process: &TicketEvents, params: &Value) -> Vec<Finding> {
+    let role = params["role"].as_str().unwrap_or_default();
+    process
+        .threads
+        .iter()
+        .filter(|thread| thread.opened_by.role == role && !thread.answered)
+        .map(|thread| {
+            Finding::error(
+                Code::ThreadUnanswered,
+                format!(
+                    "the thread `{}` of role `{role}` has no message from anyone but {}",
+                    thread.thread, thread.opened_by.name
+                ),
+            )
+        })
+        .collect()
 }

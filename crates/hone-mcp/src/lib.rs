@@ -4,7 +4,8 @@
 use std::path::PathBuf;
 
 use hone_core::{
-    CheckReport, CheckRequest, GateClass, NoPackages, PackageDirectory, PackageSource, Resolved,
+    Author, Change, CheckReport, CheckRequest, GateClass, NoPackages, PackageDirectory,
+    PackageSource, ProcessError, ProcessStore, Resolved, StepStatus, ThreadAnchor,
 };
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -21,6 +22,12 @@ pub struct Project {
     pub root: PathBuf,
     /// The directory with one subdirectory per package name, or `None` without packages.
     pub packages: Option<PathBuf>,
+    /// The base directory of the process store, or `None` for `HONE_DATA_DIR` or the data
+    /// directory of the platform.
+    pub data_directory: Option<PathBuf>,
+    /// The author of every event the server writes, fixed for the session so that an agent
+    /// cannot choose it per call. Without one, the writing tools fail.
+    pub author: Option<Author>,
 }
 
 /// Serves the MCP tools for `project` over stdin and stdout until the client disconnects.
@@ -106,6 +113,95 @@ struct ArtifactInput {
     content: String,
 }
 
+#[derive(Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct ThreadOpenInput {
+    #[schemars(description = "The ticket the thread belongs to.")]
+    ticket: String,
+    #[schemars(description = "The kind of the thread, a key such as `question` or `concern`.")]
+    kind: String,
+    #[schemars(
+        description = "Whether the thread blocks the gate `no-open-blocking-threads` while it is open."
+    )]
+    #[serde(default)]
+    blocking: bool,
+    #[schemars(description = "What the thread is attached to.")]
+    anchor: AnchorInput,
+    #[schemars(description = "The text of the thread.")]
+    body: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum AnchorInput {
+    /// An artifact by ID. hone takes its content hash from the current file.
+    Artifact {
+        artifact: String,
+        quote: Option<String>,
+    },
+    /// Code as `path#symbol`.
+    Code {
+        #[serde(rename = "ref")]
+        reference: String,
+    },
+    /// An external change, for example a pull request and a line range.
+    Change {
+        #[serde(rename = "ref")]
+        reference: String,
+    },
+    /// A position in an agent transcript.
+    Transcript {
+        url: String,
+        position: Option<String>,
+    },
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct ThreadReplyInput {
+    #[schemars(description = "The thread ID, `th-` plus a UUID.")]
+    thread: String,
+    #[schemars(description = "The text of the message.")]
+    body: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct ThreadInput {
+    #[schemars(description = "The thread ID, `th-` plus a UUID.")]
+    thread: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct StepSetInput {
+    #[schemars(description = "The ticket.")]
+    ticket: String,
+    #[schemars(description = "A step of the ticket's profile.")]
+    step: String,
+    #[schemars(description = "The new state of the step.")]
+    status: StepStatusInput,
+    #[schemars(description = "Why, for example why the step is skipped.")]
+    reason: Option<String>,
+}
+
+#[derive(Clone, Copy, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+#[serde(rename_all = "kebab-case")]
+enum StepStatusInput {
+    Open,
+    Done,
+    Skipped,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct EventsInput {
+    #[schemars(description = "The ticket.")]
+    ticket: String,
+}
+
 #[tool_router]
 impl Server {
     fn new(project: Project) -> Self {
@@ -147,6 +243,7 @@ impl Server {
                 Class::Pure => GateClass::Pure,
                 Class::Exec => GateClass::Exec,
             }),
+            data_directory: self.project.data_directory.clone(),
         };
         report_result(hone_core::check(&self.project.root, &request))
     }
@@ -193,6 +290,91 @@ impl Server {
                 "message": error.to_string(),
                 "violations": error.violations,
             })),
+        }
+    }
+
+    #[tool(
+        description = "Open a comment thread on a ticket, written as the server's author. Returns the written `event` and the `thread` ID."
+    )]
+    fn thread_open(&self, Parameters(input): Parameters<ThreadOpenInput>) -> CallToolResult {
+        let anchor = match input.anchor {
+            AnchorInput::Artifact { artifact, quote } => ThreadAnchor::Artifact { artifact, quote },
+            AnchorInput::Code { reference } => ThreadAnchor::Code { reference },
+            AnchorInput::Change { reference } => ThreadAnchor::Change { reference },
+            AnchorInput::Transcript { url, position } => ThreadAnchor::Transcript { url, position },
+        };
+        self.append(Change::OpenThread {
+            ticket: input.ticket,
+            kind: input.kind,
+            blocking: input.blocking,
+            anchor,
+            body: input.body,
+        })
+    }
+
+    #[tool(description = "Answer in a thread. Returns the written `event`.")]
+    fn thread_reply(&self, Parameters(input): Parameters<ThreadReplyInput>) -> CallToolResult {
+        self.append(Change::Reply {
+            thread: input.thread,
+            body: input.body,
+        })
+    }
+
+    #[tool(description = "Resolve a thread. Returns the written `event`.")]
+    fn thread_resolve(&self, Parameters(input): Parameters<ThreadInput>) -> CallToolResult {
+        self.append(Change::Resolve {
+            thread: input.thread,
+        })
+    }
+
+    #[tool(description = "Reopen a resolved thread. Returns the written `event`.")]
+    fn thread_reopen(&self, Parameters(input): Parameters<ThreadInput>) -> CallToolResult {
+        self.append(Change::Reopen {
+            thread: input.thread,
+        })
+    }
+
+    #[tool(
+        description = "Set the state of a step of a ticket: `open`, `done`, or `skipped` with an optional reason. Returns the written `event`."
+    )]
+    fn step_set(&self, Parameters(input): Parameters<StepSetInput>) -> CallToolResult {
+        self.append(Change::SetStep {
+            ticket: input.ticket,
+            step: input.step,
+            status: match input.status {
+                StepStatusInput::Open => StepStatus::Open,
+                StepStatusInput::Done => StepStatus::Done,
+                StepStatusInput::Skipped => StepStatus::Skipped,
+            },
+            reason: input.reason,
+        })
+    }
+
+    #[tool(
+        description = "Read the process state of a ticket: its `events` in order, the computed `threads` and `steps`, and the `invalid` events."
+    )]
+    fn events(&self, Parameters(input): Parameters<EventsInput>) -> CallToolResult {
+        match self.store().and_then(|store| store.events(&input.ticket)) {
+            Ok(events) => CallToolResult::structured(to_value(&events)),
+            Err(error) => CallToolResult::structured_error(to_value(&error)),
+        }
+    }
+}
+
+impl Server {
+    fn store(&self) -> Result<ProcessStore, ProcessError> {
+        ProcessStore::locate(&self.project.root, self.project.data_directory.as_deref())
+    }
+
+    fn append(&self, change: Change) -> CallToolResult {
+        let Some(author) = &self.project.author else {
+            return CallToolResult::structured_error(to_value(&ProcessError::Invalid {
+                message: "the server has no author: start it with --author and --role".into(),
+            }));
+        };
+        match self.store().and_then(|store| store.append(author, change)) {
+            Ok(appended) => CallToolResult::structured(to_value(&appended)),
+            Err(error) => CallToolResult::structured_error(to_value(&error)),
         }
     }
 }

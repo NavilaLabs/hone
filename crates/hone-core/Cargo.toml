@@ -1,6 +1,6 @@
 [package]
 name = "hone-core"
-description = "Reference implementation of the hone protocol: resolution of the configuration and the standard gates."
+description = "Reference implementation of the hone protocol: resolution of the configuration, the standard gates, and the process store."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+getrandom.workspace = true
 jsonschema.workspace = true
 regex.workspace = true
 ryu-js.workspace = true

@@ -63,8 +63,16 @@ pub enum Code {
     BindingMissing,
     /// The caller supplied no changed paths.
     ChangedPathsMissing,
+    /// A blocking thread of the ticket is open.
+    ThreadBlockingOpen,
+    /// A thread of the ticket opened by the role is not answered.
+    ThreadUnanswered,
+    /// A required step is neither done nor skipped.
+    StepIncomplete,
     /// The gate needs the process store, which the call does not have.
     ProcessStoreUnavailable,
+    /// An event of the ticket, or one whose ticket cannot be read, is invalid.
+    EventInvalid,
     /// The implementation does not provide this gate.
     Unsupported,
 }
@@ -89,7 +97,11 @@ impl Code {
             Code::ApprovalsMissing => "approvals-missing",
             Code::BindingMissing => "binding-missing",
             Code::ChangedPathsMissing => "changed-paths-missing",
+            Code::ThreadBlockingOpen => "thread-blocking-open",
+            Code::ThreadUnanswered => "thread-unanswered",
+            Code::StepIncomplete => "step-incomplete",
             Code::ProcessStoreUnavailable => "process-store-unavailable",
+            Code::EventInvalid => "event-invalid",
             Code::Unsupported => "unsupported",
         }
     }
