@@ -57,10 +57,11 @@
             "role": "human"
           }
         },
-        "module-exists": {
+        "accepted-exists": {
           "gate": "artifact-exists",
           "params": {
-            "type": "module"
+            "type": "decision",
+            "status": "accepted"
           }
         }
       }

@@ -245,7 +245,7 @@ impl<'a> References<'a> {
                 }
             }
             "artifact-exists" | "status-is" => {
-                self.need_kind(&param("type"), &params["type"], false);
+                self.need_kind(&param("type"), &params["type"], true);
                 if let Some(selector) = params.get("status") {
                     self.need_statuses(&param("status"), &params["type"], selector);
                 }

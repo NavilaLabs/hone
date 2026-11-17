@@ -1,3 +1,5 @@
+mod check;
+
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -30,6 +32,12 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Run the gates over the checked directory. Exits with 0 when every gate passed, 1 when a
+    /// gate failed, and 2 when the check could not run.
+    Check(check::CheckArguments),
+    /// Run hone as a hook of an agent.
+    #[command(subcommand)]
+    Hook(check::Hook),
 }
 
 fn main() -> ExitCode {
@@ -48,6 +56,8 @@ fn main() -> ExitCode {
             output.print(json);
             output.exit_code()
         }
+        Command::Check(arguments) => check::run_check(&arguments),
+        Command::Hook(hook) => check::run_hook(&hook),
     }
 }
 

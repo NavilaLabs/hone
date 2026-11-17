@@ -1,16 +1,25 @@
-//! Reference implementation of the hone protocol: resolution of the configuration.
+//! Reference implementation of the hone protocol: resolution of the configuration and the
+//! standard gates.
 //!
 //! [`resolve`] builds the resolved configuration (Level 1) of a project from its layers
 //! (concept Section 8). [`Resolved::from_document`] reads an existing resolved document.
+//! [`check`] runs the gates over a checked directory (concept Section 7).
 
+mod anchor;
+mod artifact;
 mod canonical;
+mod check;
 mod complete;
+mod directory;
 mod error;
+mod finding;
+mod gates;
 mod layer;
 mod manifest;
 mod merge;
 mod packages;
 mod pointer;
+mod schema_valid;
 mod source;
 mod validate;
 mod yaml;
@@ -20,7 +29,12 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 
+pub use check::{
+    CheckError, CheckReport, CheckRequest, GateClass, GateReport, check, check_artifact,
+    check_edit, content_hash,
+};
 pub use error::{Category, Location, Origin, Problem, ResolveError};
+pub use finding::{Code, Finding, Level};
 pub use source::{NoPackages, PackageDirectory, PackageSource};
 pub use yaml::YamlProfileError;
 
