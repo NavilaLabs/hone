@@ -5,6 +5,8 @@ Sharpen the design before the code.
 hone is an open protocol and a reference implementation for recording design artifacts in a project: specs, decisions, modules, test plans, their links, their lifecycle, and the steps that lead from a ticket to code. Every rule can be checked deterministically, without AI, so the same check can block an agent, a pre-push hook, or a CI run.
 
 > **Status:** design phase. The protocol concept ([docs/protocol-concept.md](docs/protocol-concept.md)) and the artifact schemas are in place. There is no usable code yet.
+>
+> **Until v1 nothing is stable.** Every part, from the protocol and the schemas to the implementation, may still be changed, replaced, or rebuilt from scratch. There are no compatibility guarantees before v1.
 
 ## Ideas
 

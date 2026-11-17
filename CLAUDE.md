@@ -6,6 +6,8 @@ hone is an open protocol plus a Rust reference implementation for design artifac
 
 Design phase. The protocol concept is `docs/protocol-concept.md`, the artifact and configuration schemas and the standard presets are in `schemas/`. Do not invent protocol rules: if the concept does not answer a question, ask.
 
+Until v1 nothing is stable: every layer (protocol, schemas, implementation) may be changed or rebuilt from scratch. Do not keep a design because it already exists or to preserve compatibility; propose the better design. Decisions already taken are still not reopened silently: name the change and ask.
+
 Run the schema tests with `uv run --no-project --with pyyaml --with jsonschema --with referencing python schemas/tests/run.py`.
 
 ## Protocol versus tool
