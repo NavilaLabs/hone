@@ -4,7 +4,7 @@ Sharpen the design before the code.
 
 hone is an open protocol and a reference implementation for recording design artifacts in a project: specs, decisions, modules, test plans, their links, their lifecycle, and the steps that lead from a ticket to code. Every rule can be checked deterministically, without AI, so the same check can block an agent, a pre-push hook, or a CI run.
 
-> **Status:** design phase. The protocol concept ([docs/protocol-concept.md](docs/protocol-concept.md)) and the schemas are in place. The CLI resolves a configuration (`hone resolve`), runs the standard gates (`hone check`), blocks agent edits of code without a binding decision (`hone hook claude-code`), and offers the same functions to agents as an MCP server (`hone mcp`). Gates that need the process store, `exec` gates, and plugins come later.
+> **Status:** design phase. The protocol concept ([docs/protocol-concept.md](docs/protocol-concept.md)) and the schemas are in place. The CLI resolves a configuration (`hone resolve`), runs the standard gates (`hone check`), blocks agent edits of code without a binding decision (`hone hook claude-code`), writes comment threads and step state to a local process store (`hone thread`, `hone step`, `hone events`), and offers the same functions to agents as an MCP server (`hone mcp`). `exec` gates, plugins, and replication come later.
 >
 > **Until v1 nothing is stable.** Every part, from the protocol and the schemas to the implementation, may still be changed, replaced, or rebuilt from scratch. There are no compatibility guarantees before v1.
 
@@ -37,7 +37,7 @@ Run the tests:
 cargo test
 ```
 
-`cargo test` covers the resolved configuration, the resolution test cases, the artifact fixtures, the content hash, the gate test cases (`schemas/tests/check/`), and every MCP tool.
+`cargo test` covers the resolved configuration, the resolution test cases, the artifact fixtures, the content hash, the gate test cases (`schemas/tests/check/`), the event fixtures and the process store (`schemas/tests/events/`), and every MCP tool.
 
 ## Checking
 
@@ -69,12 +69,28 @@ git diff --name-only main | hone check --ticket tk-9f2x4a8m --changed-from -
 
 The ticket comes from `--ticket` or the environment variable `HONE_TICKET` (`HONE_TICKET=tk-9f2x4a8m claude`). Without one, the hook lets every edit through and says so on stderr.
 
-## MCP server
+## Process store
 
-`hone mcp` serves the tools `resolve`, `check`, `check_edit`, `check_artifact`, and `content_hash` over stdio for one project (`--root`, default `.`, and `--packages`). They return the same JSON as `--json`. A failed gate is a normal result with `status: failed`; a tool that could not run, or a call with invalid arguments, returns a result marked `isError`. `check_edit` asks beforehand what the hook would decide, and `check_artifact` checks a draft before it is written. For Claude Code:
+Threads and step state are events in a local process store, one append-only log per device and project (concept Section 4). hone keeps it in `$XDG_DATA_HOME/hone/<workspace>/<project>/` (default `~/.local/share/hone/…`, `~/Library/Application Support/hone/…` on macOS, `%APPDATA%\hone\…` on Windows), so all clones and worktrees of a project share it. `HONE_DATA_DIR` replaces the base directory. The IDs come from `workspace` and `project` in `.hone/config.yaml`.
 
 ```sh
-claude mcp add hone -- hone mcp
+export HONE_AUTHOR=bob HONE_ROLE=human
+hone thread open --ticket tk-9f2x4a8m --kind concern --blocking \
+  --anchor-artifact dec-7k3m2q8p --quote "asynchronously" --body "What happens when the queue fails?"
+hone thread reply th-… --body "Fall back to synchronous processing." --author alice
+hone thread resolve th-…
+hone step set --ticket tk-9f2x4a8m domain skipped --reason "no new terms"
+hone events --ticket tk-9f2x4a8m
+```
+
+A thread is anchored with `--anchor-artifact <id>` (hone takes the content hash from the file), `--anchor-code <path#symbol>`, `--anchor-change <reference>`, or `--anchor-transcript <url>`. The role must exist in the ticket's configuration, and `hone step set` accepts only steps of the ticket's profile. The gates `no-open-blocking-threads`, `threads-answered`, and `steps-complete` read this store. Where it does not exist, for example in CI, they fail with `process-store-unavailable`.
+
+## MCP server
+
+`hone mcp` serves the tools `resolve`, `check`, `check_edit`, `check_artifact`, `content_hash`, `thread_open`, `thread_reply`, `thread_resolve`, `thread_reopen`, `step_set`, and `events` over stdio for one project (`--root`, default `.`, and `--packages`). The author of every event it writes is fixed at the start with `--author` and `--role` (or `HONE_AUTHOR` and `HONE_ROLE`), so that an agent cannot write as someone else; without one, the writing tools return an error. They return the same JSON as `--json`. A failed gate is a normal result with `status: failed`; a tool that could not run, or a call with invalid arguments, returns a result marked `isError`. `check_edit` asks beforehand what the hook would decide, and `check_artifact` checks a draft before it is written. For Claude Code:
+
+```sh
+claude mcp add hone -- hone mcp --author critic-bot --role critic
 ```
 
 ## License
