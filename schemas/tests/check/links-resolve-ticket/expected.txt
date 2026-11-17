@@ -1,0 +1,1 @@
+error links-resolve link-unresolved design/decisions/dec-4h7r2x9b-other.md /ticket

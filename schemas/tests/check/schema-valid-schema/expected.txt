@@ -1,0 +1,1 @@
+error schema-valid schema design/decisions/dec-4h7r2x9b-no-authors.md /authors

@@ -1,0 +1,2 @@
+error ids-unique id-duplicate design/modules/mod-4t8w2n6c-copy.yaml /id
+error ids-unique id-duplicate design/modules/mod-4t8w2n6c-fee.yaml /id

@@ -1,0 +1,4 @@
+id: "mod-4t8w2n6c"
+type: "module"
+anchors:
+  - { kind: "glob", ref: "src/**/*.rs" }

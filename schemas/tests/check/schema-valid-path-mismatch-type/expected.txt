@@ -1,0 +1,1 @@
+error schema-valid path-mismatch design/decisions/dec-4h7r2x9b-wrong-type.md /type

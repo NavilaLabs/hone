@@ -7,6 +7,9 @@ package-lock.json
 /schemas/tests/valid/
 /schemas/tests/invalid/
 /schemas/tests/profile/
+/schemas/tests/hash/
+# Gate test cases: approvals in the review blocks carry content hashes, some files are malformed.
+/schemas/tests/check/
 # Resolution test cases: package hashes in lock.yaml cover the exact bytes. expected.json is formatted.
 /schemas/tests/resolve/**/*.yaml
 /schemas/tests/resolve/**/*.json

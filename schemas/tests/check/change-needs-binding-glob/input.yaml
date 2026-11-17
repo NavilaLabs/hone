@@ -1,0 +1,3 @@
+ticket: "tk-9f2x4a8m"
+step: "implementation"
+changed_paths: ["src/payments/queue/worker.rs"]
