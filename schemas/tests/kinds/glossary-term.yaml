@@ -1,0 +1,3 @@
+path: "design/glossary/{id}-{slug}.yaml"
+id_prefix: term
+lifecycle: living

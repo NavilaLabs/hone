@@ -1,0 +1,6 @@
+id: mod-4t8w2n6c
+type: module
+name: FeeCalculator
+interface: {}
+anchors:
+  - { kind: path, ref: "src/payments" }

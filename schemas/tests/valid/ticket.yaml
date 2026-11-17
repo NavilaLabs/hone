@@ -1,0 +1,21 @@
+id: tk-9f2x4a8m
+type: ticket
+project: prj-8m2k4d7q
+external:
+  - { system: jira, key: PAY-123, url: "https://example.invalid/browse/PAY-123" }
+attributes:
+  type: feature
+  size: M
+  risk: high
+profile: full
+config: sha256:b359bb2eda4d9024ca6b07dfe56e0c7a77c10f546ea68480f9d8f002adcb9b1c
+overrides: {}
+context:
+  observed:
+    - { module: mod-4t8w2n6c, source: analysis, confirmed: true }
+    - { module: mod-9c3d6h4v, source: research, confirmed: false }
+    - { anchor: { kind: path, ref: "src/ledger/export.rs" }, source: analysis, confirmed: true }
+completed:
+  steps_done: [ticket, research, decision, interfaces, tests, implementation]
+  steps_skipped:
+    - { step: domain, reason: "no new terms" }

@@ -4,7 +4,7 @@ Sharpen the design before the code.
 
 hone is an open protocol and a reference implementation for recording design artifacts in a project: specs, decisions, modules, test plans, their links, their lifecycle, and the steps that lead from a ticket to code. Every rule can be checked deterministically, without AI, so the same check can block an agent, a pre-push hook, or a CI run.
 
-> **Status:** design phase. The protocol concept and the first artifact schemas are being moved into this repository. There is no usable code yet.
+> **Status:** design phase. The protocol concept ([docs/protocol-concept.md](docs/protocol-concept.md)) and the artifact schemas are in place. There is no usable code yet.
 
 ## Ideas
 
@@ -19,25 +19,32 @@ hone is an open protocol and a reference implementation for recording design art
 
 ## Repository layout
 
-Planned:
+| Path                | Content                                                      |
+| ------------------- | ------------------------------------------------------------ |
+| `docs/`             | The protocol concept, the source for the specification       |
+| `schemas/`          | JSON Schemas with conformance tests (`schemas/tests/run.py`) |
+| `schemas/standard/` | The presets of the package `hone/standard`                   |
+| `spec/`             | Planned: the normative protocol specification                |
+| `crates/`           | Planned: the Rust reference implementation (`hone` CLI)      |
 
-| Path       | Content                                              |
-| ---------- | ---------------------------------------------------- |
-| `spec/`    | The protocol specification (normative text)          |
-| `schemas/` | JSON Schemas for all formats, with conformance tests |
-| `crates/`  | The Rust reference implementation (`hone` CLI)       |
+Run the schema tests:
+
+```sh
+uv run --no-project --with pyyaml --with jsonschema --with referencing python schemas/tests/run.py
+```
 
 ## License
 
 Everything in hone is open source. There is no commercial layer and no open-core boundary. Anyone may do anything with it, including closed forks and hosted services.
 
 - **Code** (CLI, server, user interface, plugins, packages, schemas, tests) is licensed under either of
+
   - Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)), or
   - MIT license ([LICENSE-MIT](LICENSE-MIT)),
 
   at your option.
 
-- **Specification text** (`spec/`) is dedicated to the public domain under CC0 1.0 Universal ([LICENSE-CC0](LICENSE-CC0)).
+- **Specification and concept text** (`spec/`, `docs/`) is dedicated to the public domain under CC0 1.0 Universal ([LICENSE-CC0](LICENSE-CC0)).
 
 ## Contributing
 

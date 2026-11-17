@@ -1,0 +1,3 @@
+path: "design/threat-models/{id}-{slug}.md"
+id_prefix: thr
+lifecycle: decided

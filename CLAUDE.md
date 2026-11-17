@@ -4,7 +4,9 @@ hone is an open protocol plus a Rust reference implementation for design artifac
 
 ## Status
 
-Design phase. The protocol concept and the artifact schemas still live outside this repository (German drafts) and are being moved here in English. Do not invent protocol rules: if the specification does not answer a question, ask.
+Design phase. The protocol concept is `docs/protocol-concept.md`, the artifact schemas and the standard presets are in `schemas/`. Do not invent protocol rules: if the concept does not answer a question, ask.
+
+Run the schema tests with `uv run --no-project --with pyyaml --with jsonschema --with referencing python schemas/tests/run.py`.
 
 ## Protocol versus tool
 
@@ -19,7 +21,7 @@ A rule that needs Git, a specific tracker, a server, or an agent belongs to the 
 
 - English everywhere: code, comments, documentation, commit messages.
 - Every commit carries a DCO sign-off (`git commit -s`).
-- Code is `MIT OR Apache-2.0`. Specification text under `spec/` is CC0 1.0.
+- Code is `MIT OR Apache-2.0`. Specification and concept text under `spec/` and `docs/` is CC0 1.0.
 - Rust: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` must pass.
 - Deep modules with narrow interfaces. Few public symbols that hide a lot of complexity.
 - YAML in artifacts follows the strict YAML profile of the specification (no anchors, aliases, tags, floats, or ambiguous plain scalars).

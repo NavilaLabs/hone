@@ -1,0 +1,6 @@
+id: term-5k2n8r4d
+type: glossary-term
+x-term: Payment order
+x-meaning: An order to the payment provider that is processed asynchronously.
+anchors:
+  - { kind: symbol, ref: "src/payments/order.rs#PaymentOrder" }

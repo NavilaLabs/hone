@@ -1,0 +1,7 @@
+%YAML 1.1
+---
+id: mod-4t8w2n-fee-calculator
+type: module
+name: FeeCalculator
+anchors:
+  - { kind: path, ref: "src/payments" }

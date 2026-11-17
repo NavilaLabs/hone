@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hone.invalid/schema/1/standard/module.schema.json",
+  "title": "hone/standard: module",
+  "description": "Additional schema of the kind `module` (lifecycle `living`). A module is a named boundary in Ousterhout's sense: an interface behind which secrets are hidden. It is not bound to any form (function, class, file, package, subsystem, service). The anchors say where it lives in the code.",
+  "type": "object",
+  "required": ["name", "anchors"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "parent": {
+      "description": "ID of the enclosing module. Modules form a tree or forest.",
+      "$ref": "../common.schema.json#/$defs/Id"
+    },
+    "interface": {
+      "description": "The interface of the module: a reference into code, a short description, or both.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "$ref": "../common.schema.json#/$defs/CodeRef"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "anyOf": [
+        {
+          "required": ["code"]
+        },
+        {
+          "required": ["description"]
+        }
+      ],
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "anchors": {
+      "minItems": 1
+    },
+    "secrets": {
+      "description": "What the module hides.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

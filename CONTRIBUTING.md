@@ -21,7 +21,7 @@ Commits without a sign-off cannot be merged.
 ## Licensing of contributions
 
 - Code contributions are dual licensed under `MIT OR Apache-2.0`.
-- Contributions to the specification text (`spec/`) are dedicated to the public domain under CC0 1.0 Universal.
+- Contributions to the specification and concept text (`spec/`, `docs/`) are dedicated to the public domain under CC0 1.0 Universal.
 
 ## Changing the specification
 

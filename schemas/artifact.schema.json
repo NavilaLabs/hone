@@ -1,0 +1,255 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hone.invalid/schema/1/artifact.schema.json",
+  "title": "hone protocol 1: artifact",
+  "description": "The data model of an artifact (front matter of a .md file or content of a .yaml file). The core knows only one fixed type, the ticket record. For every other kind, the gate schema-valid selects #/$defs/Decided or #/$defs/Living through `kinds.<type>.lifecycle` of the resolved configuration and combines it with `kinds.<type>.schema` through allOf. The top-level schema checks only what is fixed without configuration.",
+  "type": "object",
+  "required": ["id", "type"],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "type": {
+      "$ref": "common.schema.json#/$defs/Key"
+    }
+  },
+  "if": {
+    "required": ["type"],
+    "properties": {
+      "type": {
+        "const": "ticket"
+      }
+    }
+  },
+  "then": {
+    "$ref": "#/$defs/Ticket"
+  },
+  "else": {
+    "properties": {
+      "id": {
+        "$ref": "common.schema.json#/$defs/Id"
+      }
+    }
+  },
+  "$defs": {
+    "Decided": {
+      "description": "Lifecycle `decided`: belongs to a ticket, has a declared status and a content hash, and can be approved. The declared status knows only four values. `superseded` is computed and must never appear in a file.",
+      "type": "object",
+      "required": ["id", "type", "ticket", "status", "created", "authors"],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "type": {
+          "$ref": "common.schema.json#/$defs/Key"
+        },
+        "ticket": {
+          "$ref": "common.schema.json#/$defs/TicketId"
+        },
+        "status": {
+          "enum": ["proposed", "accepted", "rejected", "deprecated"]
+        },
+        "created": {
+          "$ref": "common.schema.json#/$defs/Date"
+        },
+        "authors": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Name"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "reach": {
+          "enum": ["ticket", "cross-cutting"],
+          "default": "ticket"
+        },
+        "anchors": {
+          "$ref": "common.schema.json#/$defs/Anchors"
+        },
+        "links": {
+          "$ref": "common.schema.json#/$defs/Links"
+        },
+        "review": {
+          "$ref": "common.schema.json#/$defs/Review"
+        }
+      },
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "Living": {
+      "description": "Lifecycle `living`: a living definition that evolves with the code. No ticket, no status, no content hash, no approval. It is changed bindingly through an artifact with `affects`.",
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "type": {
+          "$ref": "common.schema.json#/$defs/Key"
+        },
+        "anchors": {
+          "$ref": "common.schema.json#/$defs/Anchors"
+        },
+        "links": {
+          "$ref": "common.schema.json#/$defs/Links"
+        }
+      },
+      "not": {
+        "anyOf": [
+          {
+            "required": ["ticket"]
+          },
+          {
+            "required": ["status"]
+          },
+          {
+            "required": ["review"]
+          }
+        ]
+      },
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "Ticket": {
+      "description": "Ticket record, the only fixed type of the core: the key that connects artifacts, configuration, and external tickets. Mutable, has neither status nor content hash.",
+      "type": "object",
+      "required": ["id", "type", "project", "profile", "config"],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/TicketId"
+        },
+        "type": {
+          "const": "ticket"
+        },
+        "project": {
+          "$ref": "common.schema.json#/$defs/ProjectId"
+        },
+        "external": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["system", "key"],
+            "properties": {
+              "system": {
+                "type": "string",
+                "minLength": 1
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "url": {
+                "type": "string",
+                "format": "uri"
+              }
+            },
+            "patternProperties": {
+              "^x-": {}
+            }
+          }
+        },
+        "attributes": {
+          "description": "Attributes for profile selection. Scalars, so that `when` can test for equality or set membership.",
+          "type": "object",
+          "additionalProperties": {
+            "type": ["string", "integer", "boolean"]
+          }
+        },
+        "profile": {
+          "$ref": "common.schema.json#/$defs/Key"
+        },
+        "config": {
+          "$ref": "common.schema.json#/$defs/Hash"
+        },
+        "overrides": {
+          "type": "object"
+        },
+        "context": {
+          "type": "object",
+          "properties": {
+            "observed": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Observation"
+              }
+            }
+          },
+          "patternProperties": {
+            "^x-": {}
+          }
+        },
+        "completed": {
+          "type": "object",
+          "required": ["steps_done"],
+          "properties": {
+            "steps_done": {
+              "type": "array",
+              "items": {
+                "$ref": "common.schema.json#/$defs/Key"
+              },
+              "uniqueItems": true
+            },
+            "steps_skipped": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["step"],
+                "properties": {
+                  "step": {
+                    "$ref": "common.schema.json#/$defs/Key"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "patternProperties": {
+                  "^x-": {}
+                }
+              }
+            }
+          },
+          "patternProperties": {
+            "^x-": {}
+          }
+        }
+      },
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "Observation": {
+      "description": "What research and analysis observed as affected: either an anchored artifact (`module`, an ID) or code for which none exists yet (`anchor`).",
+      "type": "object",
+      "required": ["source", "confirmed"],
+      "properties": {
+        "module": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "anchor": {
+          "$ref": "common.schema.json#/$defs/Anchor"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "confirmed": {
+          "type": "boolean"
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["module"]
+        },
+        {
+          "required": ["anchor"]
+        }
+      ],
+      "patternProperties": {
+        "^x-": {}
+      }
+    }
+  }
+}

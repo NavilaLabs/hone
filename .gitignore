@@ -3,6 +3,9 @@
 **/*.rs.bk
 *.pdb
 
+# Python caches from the schema tests
+__pycache__/
+
 # Editors and operating systems
 .idea/
 *.swp

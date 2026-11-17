@@ -1,0 +1,4 @@
+path: "design/modules/{id}-{slug}.yaml"
+id_prefix: mod
+lifecycle: living
+schema: schemas/module.schema.json

@@ -1,0 +1,3 @@
+path: "design/decisions/{id}-{slug}.md"
+id_prefix: dec
+lifecycle: decided

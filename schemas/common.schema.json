@@ -1,0 +1,236 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hone.invalid/schema/1/common.schema.json",
+  "title": "hone protocol 1: common definitions",
+  "description": "Building blocks shared by the artifact, configuration, and event schemas. The base URL in $id is a placeholder until the domain is settled.",
+  "$defs": {
+    "Key": {
+      "description": "Identifier in lowercase with hyphens: names of kinds, roles, steps, and profiles.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+    },
+    "Random": {
+      "description": "Random part of an ID: exactly 8 characters of lowercase Crockford Base32 (40 bits). The alphabet omits i, l, o, and u.",
+      "type": "string",
+      "pattern": "^[0-9a-hjkmnp-tv-z]{8}$"
+    },
+    "Id": {
+      "description": "ID of an artifact: prefix of the kind (`kinds.<type>.id_prefix`), hyphen, random part. Never changes. The slug lives only in the file name, never in the ID.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]{1,7}-[0-9a-hjkmnp-tv-z]{8}$"
+    },
+    "TicketId": {
+      "type": "string",
+      "pattern": "^tk-[0-9a-hjkmnp-tv-z]{8}$"
+    },
+    "ProjectId": {
+      "type": "string",
+      "pattern": "^prj-[0-9a-hjkmnp-tv-z]{8}$"
+    },
+    "Hash": {
+      "description": "SHA-256, always with prefix. The prefix also prevents a digits-only value from being read as a number.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "Date": {
+      "description": "Calendar day according to ISO 8601. Always a string, never a date type of the parser.",
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    },
+    "Name": {
+      "description": "Handle of an author or a person. Free-form, not empty.",
+      "type": "string",
+      "minLength": 1
+    },
+    "CodeRef": {
+      "description": "Reference into code: optionally `repo:` (a repository name the tool resolves locally), then a path relative to the repository root (without `:`, so that `repo:` stays unambiguous), optionally with #symbol. Whether it resolves is checked by a language plugin.",
+      "type": "string",
+      "pattern": "^([a-z0-9][a-z0-9._-]*:)?[^/#:][^#:]*(#[^#]+)?$"
+    },
+    "IdList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Id"
+      },
+      "uniqueItems": true
+    },
+    "Anchor": {
+      "description": "Where an artifact lives in code. Every kind may have anchors. Paths are relative to the repository root, optionally prefixed with `repo:`. A symbol anchor has the form path#symbol.",
+      "type": "object",
+      "required": ["kind", "ref"],
+      "properties": {
+        "kind": {
+          "enum": ["path", "glob", "symbol"]
+        },
+        "ref": {
+          "$ref": "#/$defs/CodeRef"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "const": "symbol"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "ref": {
+                "pattern": "#[^#]+$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "enum": ["path", "glob"]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "ref": {
+                "pattern": "^[^#]*$"
+              }
+            }
+          }
+        }
+      ],
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "Anchors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Anchor"
+      }
+    },
+    "Links": {
+      "description": "Forward links only. The tool computes backward links. Custom link types live in the namespace x-<name>. Unknown keys without x- are preserved, and the gate schema-valid reports them as a warning.",
+      "type": "object",
+      "properties": {
+        "supersedes": {
+          "$ref": "#/$defs/IdList"
+        },
+        "affects": {
+          "description": "IDs of anchored artifacts (for example modules) that this artifact deliberately binds.",
+          "$ref": "#/$defs/IdList"
+        },
+        "code": {
+          "description": "References into code, including test code.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CodeRef"
+          },
+          "uniqueItems": true
+        },
+        "verifies": {
+          "description": "IDs of the artifacts whose criteria are checked. Artifact IDs only, test code goes under `code`.",
+          "$ref": "#/$defs/IdList"
+        },
+        "depends-on": {
+          "$ref": "#/$defs/IdList"
+        },
+        "relates": {
+          "$ref": "#/$defs/IdList"
+        },
+        "transcript": {
+          "description": "URLs of agent transcripts. Transcripts are only linked, never stored.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^[a-z][a-z0-9+.-]*://"
+          },
+          "uniqueItems": true
+        }
+      },
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "Approval": {
+      "type": "object",
+      "required": ["name", "role", "hash", "date"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/Name"
+        },
+        "role": {
+          "$ref": "#/$defs/Key"
+        },
+        "hash": {
+          "$ref": "#/$defs/Hash"
+        },
+        "date": {
+          "$ref": "#/$defs/Date"
+        },
+        "proof": {
+          "description": "Free field for a proof (for example a signed approval or a confirmation from the server). The protocol does not define its content. `approvals-valid` with `require_proof: true` requires it."
+        }
+      },
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "SummaryItem": {
+      "description": "An entry of the condensation: a question with an answer, or a rejected alternative with a reason.",
+      "type": "object",
+      "properties": {
+        "q": {
+          "type": "string",
+          "minLength": 1
+        },
+        "a": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rejected": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "anyOf": [
+        {
+          "required": ["q", "a"]
+        },
+        {
+          "required": ["rejected"]
+        }
+      ],
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "Review": {
+      "description": "Condensed review history. Written by the tool on completion and not part of the content hash. With `review_summary: approvals-only`, `summary` is absent.",
+      "type": "object",
+      "required": ["approved_by"],
+      "properties": {
+        "approved_by": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Approval"
+          }
+        },
+        "summary": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SummaryItem"
+          }
+        }
+      },
+      "patternProperties": {
+        "^x-": {}
+      }
+    }
+  }
+}
