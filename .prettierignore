@@ -1,0 +1,9 @@
+/target/
+node_modules/
+package-lock.json
+
+# Artifact fixtures: the YAML profile and the content hash are tested on their exact bytes,
+# and some of them are deliberately malformed.
+/schemas/tests/valid/
+/schemas/tests/invalid/
+/schemas/tests/profile/

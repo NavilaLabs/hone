@@ -1,0 +1,13 @@
+{
+  "name": "hone-tooling",
+  "private": true,
+  "description": "Development tooling for the hone repository. Not a package.",
+  "license": "MIT OR Apache-2.0",
+  "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "3.9.10"
+  }
+}

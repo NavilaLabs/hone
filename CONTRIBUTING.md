@@ -23,6 +23,18 @@ Commits without a sign-off cannot be merged.
 - Code contributions are dual licensed under `MIT OR Apache-2.0`.
 - Contributions to the specification and concept text (`spec/`, `docs/`) are dedicated to the public domain under CC0 1.0 Universal.
 
+## Formatting
+
+Markdown, JSON, and YAML files are formatted with [Prettier](https://prettier.io/), pinned in `package.json`:
+
+```sh
+npm ci
+npm run format        # rewrite
+npm run format:check  # check only
+```
+
+The artifact fixtures under `schemas/tests/` (`valid/`, `invalid/`, `profile/`) are excluded, because the tests check their exact bytes.
+
 ## Changing the specification
 
 Changes to the protocol go through a public RFC: open a pull request that changes the specification and explains the motivation, the alternatives, and the impact on existing implementations. Conformance is shown through the test suite, not through the name.

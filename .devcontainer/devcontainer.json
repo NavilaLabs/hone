@@ -11,7 +11,8 @@
         "rust-lang.rust-analyzer",
         "tamasfe.even-better-toml",
         "vadimcn.vscode-lldb",
-        "redhat.vscode-yaml"
+        "redhat.vscode-yaml",
+        "esbenp.prettier-vscode"
       ],
       "settings": {
         "rust-analyzer.check.command": "clippy"
@@ -22,6 +23,6 @@
     "source=hone-cargo-registry,target=/usr/local/cargo/registry,type=volume",
     "source=hone-target,target=${containerWorkspaceFolder}/target,type=volume"
   ],
-  "postCreateCommand": "sudo chown -R vscode:vscode /usr/local/cargo/registry ${containerWorkspaceFolder}/target && rustup component add clippy rustfmt",
+  "postCreateCommand": "sudo chown -R vscode:vscode /usr/local/cargo/registry ${containerWorkspaceFolder}/target && rustup component add clippy rustfmt && npm ci",
   "remoteUser": "vscode"
 }

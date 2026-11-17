@@ -23,5 +23,6 @@ A rule that needs Git, a specific tracker, a server, or an agent belongs to the 
 - Every commit carries a DCO sign-off (`git commit -s`).
 - Code is `MIT OR Apache-2.0`. Specification and concept text under `spec/` and `docs/` is CC0 1.0.
 - Rust: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` must pass.
+- Markdown, JSON, and YAML are formatted with Prettier (pinned in `package.json`): `npm run format`, checked with `npm run format:check`. Artifact fixtures under `schemas/tests/` are excluded, because their exact bytes are under test.
 - Deep modules with narrow interfaces. Few public symbols that hide a lot of complexity.
 - YAML in artifacts follows the strict YAML profile of the specification (no anchors, aliases, tags, floats, or ambiguous plain scalars).
