@@ -226,3 +226,5 @@ fn to_value(value: &impl serde::Serialize) -> Value {
     serde_json::to_value(value).expect("the results of hone-core are serializable")
 }
 
+#[cfg(test)]
+mod tests;
