@@ -1,0 +1,3 @@
+statuses:
+  draft: { binding: false }
+x-owner: design-team

@@ -1,0 +1,67 @@
+{
+  "protocol": 1,
+  "ticket": {
+    "path": "design/tickets/{ticket}/ticket.yaml"
+  },
+  "kinds": {
+    "decision": {
+      "path": "design/decisions/{id}-{slug}.md",
+      "id_prefix": "dec",
+      "lifecycle": "decided",
+      "statuses": {
+        "proposed": {
+          "binding": false
+        },
+        "accepted": {
+          "binding": true
+        }
+      }
+    }
+  },
+  "roles": {
+    "human": {
+      "kind": "human",
+      "can": ["act", "comment", "approve"]
+    },
+    "critic": {
+      "kind": "ai",
+      "can": ["act", "comment"]
+    },
+    "reviewer": {
+      "kind": "human",
+      "can": ["comment"]
+    }
+  },
+  "actors": {},
+  "steps": {
+    "decision": {
+      "acts": ["human", "critic"],
+      "decides": "human",
+      "inputs": ["ticket"],
+      "outputs": ["decision"],
+      "requires": [],
+      "gates": {
+        "exists": {
+          "gate": "artifact-exists",
+          "params": {
+            "type": "decision"
+          }
+        }
+      }
+    }
+  },
+  "profiles": {
+    "standard": {
+      "steps": {
+        "decision": "optional"
+      },
+      "retention": "archive",
+      "review_summary": "full"
+    }
+  },
+  "select": {
+    "rules": [],
+    "default": "standard"
+  },
+  "x-ticket-note": "hotfix"
+}

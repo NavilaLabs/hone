@@ -1,0 +1,3 @@
+path: "notes/{id}.md"
+id_prefix: note
+lifecycle: living

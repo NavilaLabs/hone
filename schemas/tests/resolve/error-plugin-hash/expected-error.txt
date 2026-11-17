@@ -1,0 +1,1 @@
+plugin-hash project/.hone/plugins/api-check.wasm

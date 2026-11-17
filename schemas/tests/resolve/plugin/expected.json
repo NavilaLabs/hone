@@ -1,0 +1,83 @@
+{
+  "protocol": 1,
+  "ticket": {
+    "path": "design/tickets/{ticket}/ticket.yaml"
+  },
+  "kinds": {
+    "decision": {
+      "path": "design/decisions/{id}-{slug}.md",
+      "id_prefix": "dec",
+      "lifecycle": "decided",
+      "statuses": {
+        "proposed": {
+          "binding": false
+        },
+        "accepted": {
+          "binding": true
+        }
+      }
+    }
+  },
+  "roles": {
+    "human": {
+      "kind": "human",
+      "can": ["act", "comment", "approve"]
+    },
+    "critic": {
+      "kind": "ai",
+      "can": ["act", "comment"]
+    }
+  },
+  "actors": {},
+  "steps": {
+    "decision": {
+      "acts": ["human", "critic"],
+      "decides": "human",
+      "inputs": ["ticket"],
+      "outputs": ["decision"],
+      "requires": [],
+      "gates": {
+        "exists": {
+          "gate": "artifact-exists",
+          "params": {
+            "type": "decision"
+          }
+        },
+        "approved": {
+          "gate": "approvals-valid",
+          "params": {
+            "role": "human"
+          }
+        },
+        "api": {
+          "gate": "api-check"
+        }
+      }
+    }
+  },
+  "profiles": {
+    "standard": {
+      "steps": {
+        "decision": "required"
+      },
+      "retention": "archive",
+      "review_summary": "full"
+    }
+  },
+  "select": {
+    "rules": [],
+    "default": "standard"
+  },
+  "plugins": {
+    "api-check": {
+      "wasm": ".hone/plugins/api-check.wasm",
+      "hash": "sha256:93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476",
+      "capabilities": {
+        "read": ["project"],
+        "net": [],
+        "timeout_ms": 5000,
+        "memory_pages": 256
+      }
+    }
+  }
+}

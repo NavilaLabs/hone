@@ -1,0 +1,11 @@
+profiles:
+  standard:
+    steps:
+      decision: optional
+steps:
+  decision:
+    gates:
+      approved: null
+roles:
+  reviewer: { can: [comment] }
+x-ticket-note: hotfix

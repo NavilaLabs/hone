@@ -1,0 +1,4 @@
+packages:
+  acme/a: { version: "1.2.0", hash: "sha256:a6bdf268f7e75112cc8258e079ab3209fffdbf09cb58415998f6e8ffdff83a63" }
+  acme/b: { version: "1.0.3", hash: "sha256:b2a1dc76ea7b6c8c0112b3e2736f3e7ffe5728e5545925f98ceb3e945d3bad00" }
+  acme/c: { version: "1.0.0", hash: "sha256:027a1cb3a9273109f0055151c345af906b1de40905fae3417e0767bc1446985d" }

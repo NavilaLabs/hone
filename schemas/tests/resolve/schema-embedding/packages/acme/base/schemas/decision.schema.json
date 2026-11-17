@@ -1,0 +1,1 @@
+{"type": "object", "properties": {"reach": {"enum": ["ticket", "cross-cutting"], "default": null}}, "x-weight": 0.5}

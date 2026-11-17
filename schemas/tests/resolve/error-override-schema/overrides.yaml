@@ -1,0 +1,3 @@
+kinds:
+  decision:
+    schema: schemas/other.json

@@ -1,0 +1,6 @@
+packages:
+  acme/base: { version: "1.0.0", hash: "sha256:6cd00d1e7e805ff7cb3e3395f5d8a4f5ad7fa5b9b45ca9d5c23b85b7e4be08e0" }
+plugins:
+  api-check:
+    hash: "sha256:93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476"
+    capabilities: { read: [project, docs], net: [], timeout_ms: 10000, memory_pages: 256 }

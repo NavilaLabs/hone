@@ -1,0 +1,4 @@
+acts: [human]
+decides: null
+gates:
+  approved: null

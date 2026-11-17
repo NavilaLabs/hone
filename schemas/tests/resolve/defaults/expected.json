@@ -1,0 +1,36 @@
+{
+  "protocol": 1,
+  "ticket": {
+    "path": "tickets/{ticket}.yaml"
+  },
+  "kinds": {},
+  "roles": {
+    "human": {
+      "kind": "human",
+      "can": ["act"]
+    }
+  },
+  "actors": {},
+  "steps": {
+    "work": {
+      "acts": [],
+      "inputs": [],
+      "outputs": [],
+      "requires": [],
+      "gates": {}
+    }
+  },
+  "profiles": {
+    "only": {
+      "steps": {
+        "work": "optional"
+      },
+      "retention": "archive",
+      "review_summary": "full"
+    }
+  },
+  "select": {
+    "rules": [],
+    "default": "only"
+  }
+}

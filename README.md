@@ -4,7 +4,7 @@ Sharpen the design before the code.
 
 hone is an open protocol and a reference implementation for recording design artifacts in a project: specs, decisions, modules, test plans, their links, their lifecycle, and the steps that lead from a ticket to code. Every rule can be checked deterministically, without AI, so the same check can block an agent, a pre-push hook, or a CI run.
 
-> **Status:** design phase. The protocol concept ([docs/protocol-concept.md](docs/protocol-concept.md)) and the artifact schemas are in place. There is no usable code yet.
+> **Status:** design phase. The protocol concept ([docs/protocol-concept.md](docs/protocol-concept.md)) and the schemas are in place. The CLI can resolve a configuration (`hone resolve`), nothing more yet.
 >
 > **Until v1 nothing is stable.** Every part, from the protocol and the schemas to the implementation, may still be changed, replaced, or rebuilt from scratch. There are no compatibility guarantees before v1.
 
@@ -21,19 +21,23 @@ hone is an open protocol and a reference implementation for recording design art
 
 ## Repository layout
 
-| Path                | Content                                                      |
-| ------------------- | ------------------------------------------------------------ |
-| `docs/`             | The protocol concept, the source for the specification       |
-| `schemas/`          | JSON Schemas with conformance tests (`schemas/tests/run.py`) |
-| `schemas/standard/` | The presets of the package `hone/standard`                   |
-| `spec/`             | Planned: the normative protocol specification                |
-| `crates/`           | Planned: the Rust reference implementation (`hone` CLI)      |
+| Path                | Content                                                    |
+| ------------------- | ---------------------------------------------------------- |
+| `docs/`             | The protocol concept, the source for the specification     |
+| `schemas/`          | JSON Schemas and conformance test cases (`schemas/tests/`) |
+| `schemas/standard/` | The presets of the package `hone/standard`                 |
+| `spec/`             | Planned: the normative protocol specification              |
+| `crates/hone-core/` | The Rust reference implementation as a library             |
+| `crates/hone-cli/`  | The CLI (binary `hone`), the base for a later GUI          |
 
-Run the schema tests:
+Run the tests:
 
 ```sh
+cargo test
 uv run --no-project --with pyyaml --with jsonschema --with referencing python schemas/tests/run.py
 ```
+
+`cargo test` covers the resolved configuration and the resolution test cases. `run.py` still checks the artifact fixtures and the content hash until they move to Rust.
 
 ## License
 

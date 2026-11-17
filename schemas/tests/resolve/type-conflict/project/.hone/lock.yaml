@@ -1,0 +1,2 @@
+packages:
+  acme/base: { version: "1.0.0", hash: "sha256:0fa1c378b5898754383a2c4a96e8e1d33f26ef369e27f5e1bc9ff66dce422d06" }

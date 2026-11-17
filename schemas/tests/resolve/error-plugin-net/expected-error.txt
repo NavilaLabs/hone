@@ -1,0 +1,1 @@
+plugin-capabilities /plugins/api-check/capabilities/net

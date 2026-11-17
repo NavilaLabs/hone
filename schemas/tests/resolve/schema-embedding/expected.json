@@ -1,0 +1,87 @@
+{
+  "protocol": 1,
+  "ticket": {
+    "path": "design/tickets/{ticket}/ticket.yaml"
+  },
+  "kinds": {
+    "decision": {
+      "path": "docs/decisions/{id}-{slug}.md",
+      "id_prefix": "dec",
+      "lifecycle": "decided",
+      "statuses": {
+        "proposed": {
+          "binding": false
+        },
+        "accepted": {
+          "binding": true
+        }
+      },
+      "schema": {
+        "type": "object",
+        "properties": {
+          "reach": {
+            "enum": ["ticket", "cross-cutting"],
+            "default": null
+          }
+        },
+        "x-weight": 0.5
+      }
+    },
+    "term": {
+      "path": "design/glossary/{id}-{slug}.yaml",
+      "id_prefix": "term",
+      "lifecycle": "living",
+      "schema": {
+        "type": "object",
+        "required": ["name", "definition"]
+      }
+    }
+  },
+  "roles": {
+    "human": {
+      "kind": "human",
+      "can": ["act", "comment", "approve"]
+    },
+    "critic": {
+      "kind": "ai",
+      "can": ["act", "comment"]
+    }
+  },
+  "actors": {},
+  "steps": {
+    "decision": {
+      "acts": ["human", "critic"],
+      "decides": "human",
+      "inputs": ["ticket"],
+      "outputs": ["decision"],
+      "requires": [],
+      "gates": {
+        "exists": {
+          "gate": "artifact-exists",
+          "params": {
+            "type": "decision"
+          }
+        },
+        "approved": {
+          "gate": "approvals-valid",
+          "params": {
+            "role": "human"
+          }
+        }
+      }
+    }
+  },
+  "profiles": {
+    "standard": {
+      "steps": {
+        "decision": "required"
+      },
+      "retention": "archive",
+      "review_summary": "full"
+    }
+  },
+  "select": {
+    "rules": [],
+    "default": "standard"
+  }
+}

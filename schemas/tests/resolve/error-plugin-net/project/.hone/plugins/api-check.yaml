@@ -1,0 +1,1 @@
+capabilities: { read: [project], net: [example.com], timeout_ms: 5000, memory_pages: 256 }

@@ -1,0 +1,8 @@
+path: "design/decisions/{id}-{slug}.md"
+id_prefix: dec
+lifecycle: decided
+statuses:
+  proposed: { binding: false }
+  accepted: { binding: true }
+x-review: weekly
+x-tags: { payments: true }

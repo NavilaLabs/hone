@@ -1,0 +1,9 @@
+path: "design/decisions/{id}-{slug}.md"
+id_prefix: dec
+lifecycle: decided
+statuses:
+  proposed: { binding: false }
+  accepted: { binding: true }
+x-set-by: c
+x-set-by-c-and-a: c
+x-set-by-c: c

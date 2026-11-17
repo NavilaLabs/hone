@@ -7,3 +7,11 @@ package-lock.json
 /schemas/tests/valid/
 /schemas/tests/invalid/
 /schemas/tests/profile/
+# Resolution test cases: package hashes in lock.yaml cover the exact bytes. expected.json is formatted.
+/schemas/tests/resolve/**/*.yaml
+/schemas/tests/resolve/**/*.json
+!/schemas/tests/resolve/*/expected.json
+
+# The resolved configuration and snapshots are the canonical form (RFC 8785) plus a newline.
+**/.hone/resolved.json
+**/.hone/snapshots/

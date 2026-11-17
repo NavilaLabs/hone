@@ -1,0 +1,2 @@
+steps: { decision: optional }
+retention: keep
