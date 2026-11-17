@@ -55,11 +55,13 @@ Data belongs to a scope. The protocol knows three levels:
 | Project   | A unit of configuration, artifacts, and process data. May span several repositories       | `prj-…` |
 | Ticket    | A unit of work in the project                                                             | `tk-…`  |
 
+Scope IDs have the form of artifact IDs (Question 3): the prefix, a hyphen, and 8 characters of lowercase Crockford Base32, for example `prj-8m2k4d7q`. `workspace` is `local` or a `ws-…` ID. A device writing to a project carries a device ID of the same form (`dev-3k9a5h2t`). It identifies the device within one project only: the same machine has a different device ID in every project, so logs of two tenants cannot be linked to one device.
+
 Rules:
 
 - **The project is the unit of replication.** Log and sync belong to exactly one project. Whoever works with many tenants never receives foreign logs, and no client receives another client's data.
 - Every event carries `project`. A server rejects events that do not match its scope.
-- The IDs `workspace` and `project` live in `.hone/config.yaml`. They are not secret and are created by `init`. An ID stays the same across clones, worktrees, and devices. A hash of the path or remote URL would not.
+- The IDs `workspace` and `project` live in `.hone/config.yaml`. They are not secret and are created by `init`. A value that does not have the form above is an error (`manifest`). An ID stays the same across clones, worktrees, and devices. A hash of the path or remote URL would not.
 - Server addresses, identities, and credentials never live in the project (Section 12).
 
 ### Data and its storage
@@ -75,28 +77,49 @@ From artifact storage, the protocol requires only a directory that can be read a
 ### Process store
 
 - **The source of truth is an append-only event log, one log per device and project**, to which only that device appends. There are no competing writers. Merging means reading all logs and taking the union.
-- **Segments.** A device's log consists of segments: `log/<device>/<number>.ndjson`. A segment is closed after a fixed number of events or a fixed size. Closed segments are immutable and may be compressed (`.ndjson.zst`). Events are never rewritten, there is no compaction. Archiving and dropping (Section 10) operate on whole segments of completed tickets.
-- **Every event has a sequence number** (`seq`) in its device's log. The **cursor** of a state is a map `device → last seq` and says exactly what a peer is missing.
-- **Order without a shared clock.** The order is deterministic: topological by `after`, ties broken by `date`, then by `id`. States are causally chained through `after`. Diverging clocks therefore change at most the display, never the computed state.
+- **Segments.** A device's log consists of segments: `log/<device>/<number>.ndjson`. The number is decimal without leading zeros and starts at 1. The segment with the highest number is open, every lower one is closed. A segment is closed after a fixed number of events or a fixed size (the thresholds are up to the tool). Closed segments are immutable and may be compressed (`.ndjson.zst`). Events are never rewritten, there is no compaction. Archiving and dropping (Section 10) operate on whole segments of completed tickets.
+- **Lines.** Every line of a segment is one event as JSON in the canonical form of RFC 8785, ending with `\n`, so that the bytes of an event are unambiguous (a later `sig` signs them). A last line without `\n` in the open segment is an interrupted write: readers ignore it, and the writer cuts it off before it appends again. In a closed segment, it is an error.
+- **Every event has a sequence number** (`seq`) in its device's log. It starts at 1 and grows by exactly 1. A gap is allowed only where whole segments are missing (archived or dropped). The **cursor** of a state is a map `device → last seq` and says exactly what a peer is missing.
+- **Order without a shared clock.** The order is deterministic: topological by `after` and, within one device, by `seq`. Ties are broken by `id`, which is a UUIDv7 and therefore starts with the time of writing (Question 11, Question 31). `after` expresses causality only: it lists, for every other device, the newest event the writer had read when it wrote. What an event refers to (a thread, an artifact) lives in `payload`. Diverging clocks therefore change at most the order of concurrent events, never the order of events that knew each other. A reference in `after` to an event that is not present (a lost or not yet synchronized device) does not count. A cycle cannot arise honestly, and if it does, the events in it are ordered by `id`.
 - **Why no database format as the source of truth.** Database files from two devices cannot be merged without conflicts, neither through a shared folder nor through Git. Appended text files can. For fast queries, an implementation builds an index (for example an embedded database). It is a cache, can be rebuilt from the logs at any time, and is not part of the protocol (Section 12).
-- **Local storage:** `~/.hone/<workspace>/<project>/` (on Linux preferably in the XDG data directory) with `log/` and the sync state. Without a server, the workspace is `local`. All clones and worktrees of a project share this storage, because a ticket lives across branches.
+- **Local storage:** a directory per workspace and project (hone: Section 12) with `log/` and the sync state. Without a server, the workspace is `local`. All clones and worktrees of a project share this storage, because a ticket lives across branches. If the directory does not exist, the process store is unavailable. If it exists but holds no events, the store is empty.
 - **Lost devices.** Whatever a device never synchronized is lost with it. If a device's `seq` ends, that is not an error.
 
 ```yaml
-# an event
-id: ev-0193a8f2-6c1e-7b3d-9f42-8e1a5c7d2b90 # UUIDv7 (RFC 9562)
+# an event (shown as YAML, stored as one line of JSON)
+id: ev-0193a8f2-6c1e-7b3d-9f42-8e1a5c7d2b90 # UUIDv7 (RFC 9562), lowercase
 project: prj-8m2k4d7q
 ticket: tk-9f2x4a8m
 device: dev-3k9a5h2t # writing device
 seq: 118 # sequence number in this device's log
-type: thread.message # thread.* | approval.given | step.changed | step.skipped | ticket.started | ...
+type: thread.message
 author: { name: alice, role: human }
-date: 2026-11-16T10:42:00Z
-after: [ev-0193a8f1-...] # optional: events this one refers to (causality)
-payload: { ... }
+after: [ev-0193a8f1-...] # optional: the newest known event of every other device
+payload: { thread: th-0193a8f0-..., body: "..." }
 ```
 
-Event IDs are UUIDv7: 128 bits, most of them random, available as a library in every language, and sortable by time. The full length is necessary because duplicate IDs are ignored during sync, and a collision would silently swallow an event. The field `sig` is reserved for a later protocol version (signature by the device). Version 1 has no signatures.
+Event IDs are UUIDv7: 128 bits, most of them random, available as a library in every language, and sortable by time. The full length is necessary because duplicate IDs are ignored during sync, and a collision would silently swallow an event. The timestamp of the UUIDv7 is the time of writing. It is the only time of an event, there is no separate `date`, so that two fields cannot contradict each other. The field `sig` is reserved for a later protocol version (signature by the device). Version 1 has no signatures, and an event with `sig` is invalid.
+
+**Envelope.** The fields above are the envelope: `id`, `project`, `ticket`, `device`, `seq`, `type`, `author` (`name`, a handle, and `role`, a role key), and `payload` are required, `after` is optional. Further fields exist only as `x-<name>`. The schema is `schemas/event.schema.json`.
+
+**Types of version 1** and their payloads:
+
+| Type                        | Payload                                                                    | Section |
+| --------------------------- | -------------------------------------------------------------------------- | ------- |
+| `thread.opened`             | `kind`, `blocking`, `anchor`, `body`                                       | 10      |
+| `thread.message`            | `thread`, `body`                                                           | 10      |
+| `thread.resolved`           | `thread`                                                                   | 10      |
+| `thread.reopened`           | `thread`                                                                   | 10      |
+| `approval.given`            | `artifact`, `hash`, `decision` (`approved`, `changes-requested`), `proof?` | 10      |
+| `review.confirmed`          | `artifact`, `hash`                                                         | 10      |
+| `step.changed`              | `step`, `status` (`open`, `done`, `skipped`), `reason?`                    | 5       |
+| `ticket.started`            | `profile`, `config`                                                        | 8       |
+| `ticket.attributes_changed` | `attributes`                                                               | 8       |
+| `ticket.config_changed`     | `config`                                                                   | 8       |
+
+A known type has a fixed payload schema. Custom types are named `x-<name>` and have a free payload. A type that is neither known nor `x-…` (for example from a newer protocol version) is kept and ordered, but ignored by every computed status.
+
+**Reading.** An event that violates the schema, lies in the log of another device, belongs to another project, breaks the rules of `seq`, or has the `id` of another event with different content is invalid. It is not read, and the reader reports it. The same event twice (same `id`, same content) counts once.
 
 ### Replication
 
@@ -274,7 +297,7 @@ context: # result of research and analysis, not input
       }
 ```
 
-The **state of the steps** (open, done, skipped, with an optional reason) changes constantly and therefore lives in the process store. On completion, the tool records the result in the ticket record, so that skipping stays visible to the team:
+The **state of the steps** (open, done, skipped, with an optional reason) changes constantly and therefore lives in the process store. It is the event `step.changed` with `step`, `status` (`open`, `done`, or `skipped`), and an optional `reason`. A correction is simply a later event. On completion, the tool records the result in the ticket record, so that skipping stays visible to the team:
 
 ```yaml
 completed:
@@ -352,7 +375,7 @@ A gate is a **deterministic function** over a directory: the input is the checke
 | `no-open-blocking-threads` | –                                                     | No blocking threads of the ticket are open                                                                                                                                                                                                     |
 | `threads-answered`         | `role`                                                | All threads opened by role `role` (for example `critic`) are answered                                                                                                                                                                          |
 | `approvals-valid`          | `role`, `min?` (1), `require_proof?` (false), `type?` | Every artifact of the step's `outputs` with lifecycle `decided` (only kind `type`, if given) has at least `min` approvals of role `role` whose hash matches the content. With `require_proof: true`, every approval needs a proof (Section 10) |
-| `steps-complete`           | –                                                     | Every required step of the ticket's profile is done or explicitly skipped                                                                                                                                                                      |
+| `steps-complete`           | –                                                     | Every required step of the ticket's profile is done or explicitly skipped, except the steps that contain `steps-complete` themselves                                                                                                           |
 | `change-needs-binding`     | `anchored`, `binding`                                 | If `changed_paths` hits the anchors of an artifact of kind `anchored`, there is a binding artifact of kind `binding` for it (through `affects`)                                                                                                |
 
 `status` is one status or a list of them (set membership). It must be a status of the kind or `superseded`. Unknown parameters are an error. `schema-valid`, `ids-unique`, and `links-resolve` check the whole checked directory, because a collision or a broken link concerns everyone. All other gates check the ticket. An artifact belongs to the ticket when its field `ticket` holds the ticket ID, so `artifact-exists` and `status-is` need a kind with lifecycle `decided`. The role of `approvals-valid` must be able to `approve`, and the kind `binding` of `change-needs-binding` must have lifecycle `decided`.
@@ -380,12 +403,14 @@ The standard package sets the parameters `{ anchored: module, binding: decision 
 | `approvals-valid`          | `approvals-missing`         | error   | An artifact has fewer valid approvals than `min` (Section 10)                      |
 | `change-needs-binding`     | `binding-missing`           | error   | An anchored artifact hit by `changed_paths` has no binding artifact through it     |
 | `change-needs-binding`     | `changed-paths-missing`     | error   | The caller supplied no `changed_paths`. An empty list is allowed and passes        |
-| `no-open-blocking-threads` | `process-store-unavailable` | error   | The gate needs the process store, which this call does not have (see below)        |
-| `threads-answered`         | `process-store-unavailable` | error   | As above                                                                           |
-| `steps-complete`           | `process-store-unavailable` | error   | As above                                                                           |
+| `no-open-blocking-threads` | `thread-blocking-open`      | error   | A blocking thread of the ticket is open                                            |
+| `threads-answered`         | `thread-unanswered`         | error   | A thread of the ticket opened by the role is not answered (Section 10)             |
+| `steps-complete`           | `step-incomplete`           | error   | A required step is neither done nor skipped                                        |
+| the three above            | `process-store-unavailable` | error   | The gate needs the process store, which this call does not have (see below)        |
+| the three above            | `event-invalid`             | warning | An event of the ticket (or one whose ticket cannot be read) is invalid (Section 4) |
 | any                        | `unsupported`               | error   | The implementation does not provide this gate, for example `exec` or a plugin gate |
 
-A file that violates the YAML profile is reported by `schema-valid` and is invisible to all other gates. Threads and step state are events in the process store (Section 10). Until the event schema exists (Section 16, step 7), `no-open-blocking-threads`, `threads-answered`, and `steps-complete` fail with `process-store-unavailable`, so that nothing passes by mistake.
+A file that violates the YAML profile is reported by `schema-valid` and is invisible to all other gates. Threads and step state are events in the process store (Section 10). `no-open-blocking-threads`, `threads-answered`, and `steps-complete` read the events of the ticket from it. Without a process store (the directory does not exist, for example in CI) they fail with `process-store-unavailable`, so that nothing passes by mistake: no threads would otherwise look like no open threads. An invalid event is not read and is reported as a warning, so that an immutable broken segment of one device cannot block a project forever. The state of a step is the `status` of its last `step.changed` in the order (Section 4), and `open` without one. A `step.changed` for a step that the profile does not list is kept and ignored.
 
 **Rules of the standard gates**
 
@@ -908,7 +933,6 @@ project: prj-8m2k4d7q
 ticket: tk-9f2x4a8m
 type: approval.given
 author: { name: alice, role: architect }
-date: 2026-11-16T14:05:00Z
 payload:
   artifact: dec-7k3m2q8p
   hash: sha256:3f1c... # content that was approved (without the `review` block)
@@ -918,7 +942,7 @@ payload:
 - The approval binds to the **content hash**. If the artifact changes afterwards, it becomes invalid.
 - Who must give how many approvals is defined in the step (`approvals-valid` with role and count). The protocol checks that the author's role may approve according to `actors`.
 - The protocol does not define a proof that this person really approved. A tool can store one as a free field (`proof`) in the event and in the `review` block (for example a signed approval or a confirmation from the server). Without a proof, an approval is trust-based. With `approvals-valid: { require_proof: true }`, a step requires a proof for every approval, checked by a plugin.
-- Without a process store, `approvals-valid` reads the approvals from `review.approved_by`. An entry counts when its `role` is the gate's role, its `hash` is the artifact's current content hash, and `actors` gives the person that role (a person not listed in `actors` gets the roles of `"*"`). Every person counts once, however many entries they have. With `require_proof: true`, an entry counts only if it has a field `proof`. The standard gate checks only that the field exists, and a plugin checks its content. If the step has no output artifact in the ticket, the gate passes, because existence is the job of `artifact-exists`.
+- `approvals-valid` reads the approvals from `review.approved_by`, with or without a process store, so that a local check and CI give the same result (Question 31). The events `approval.given` are the raw data from which the tool condenses the block. An entry counts when its `role` is the gate's role, its `hash` is the artifact's current content hash, and `actors` gives the person that role (a person not listed in `actors` gets the roles of `"*"`). Every person counts once, however many entries they have. With `require_proof: true`, an entry counts only if it has a field `proof`. The standard gate checks only that the field exists, and a plugin checks its content. If the step has no output artifact in the ticket, the gate passes, because existence is the job of `artifact-exists`.
 
 ### Comment threads
 
@@ -935,7 +959,7 @@ Review consists mainly of questions, objections, and answers, and that is often 
 
 If the content changes, the thread becomes **outdated** (the hash no longer matches), but it stays visible and must still be closed explicitly.
 
-**Events.** A thread consists of the events `thread.opened`, `thread.message`, `thread.resolved`, and `thread.reopened`. The status (`open` or `resolved`) is computed.
+**Events.** A thread consists of the events `thread.opened`, `thread.message`, `thread.resolved`, and `thread.reopened`. The status (`open` or `resolved`) is computed. The thread ID is `th-` plus the UUID of the opening event (here `th-0193a8f0-9b2c-7e4d-a1f3-5c6d7e8f9a0b`). `thread.opened` does not repeat it, the other three events name it in `payload.thread`.
 
 ```yaml
 id: ev-0193a8f0-9b2c-7e4d-a1f3-5c6d7e8f9a0b
@@ -943,9 +967,7 @@ project: prj-8m2k4d7q
 ticket: tk-9f2x4a8m
 type: thread.opened
 author: { name: bob, role: human }
-date: 2026-11-16T10:12:00Z
 payload:
-  thread: th-0193a8f0-9b2c-7e4d-a1f3-5c6d7e8f9a0b # th- + UUID of the opening event
   kind: concern # a free key; hone/standard suggests question | concern | suggestion | note
   blocking: true
   anchor:
@@ -958,7 +980,9 @@ payload:
 
 **Rules**
 
+- **Status.** A thread is open after `thread.opened`. The last of its `thread.resolved` and `thread.reopened` in the order (Section 4) decides whether it is `resolved` or open again. A message does not change the status. Anyone may resolve or reopen. Events of a thread whose opening event is not present count for no status.
 - **Blocking threads** (`blocking: true`) make the gate `no-open-blocking-threads` fail while they are open.
+- **Answered.** A thread is answered when it has at least one `thread.message` whose author `name` differs from the author of `thread.opened`. Resolving without a message does not answer, because a silent "done" documents no why. The gate `threads-answered` fails for every thread of the ticket, opened by its role, that is not answered.
 - **Approvals and threads are independent:** an approval stays valid as long as the hash matches. An open blocking thread blocks anyway.
 - **Roles are labelled.** Authors carry a role (`human`, `critic`, ...). Whether it is an AI is stated in the role definition (`kind: ai`). This shows what comes from an AI.
 - **The critic's questions are threads.** The questions and red flags of a step are created as threads on the artifact, answers are messages. The why documents itself this way, and `threads-answered` can be a gate. (The examiner's comprehension questions are not review and stay out of this.)
@@ -1023,7 +1047,9 @@ This section is **not normative**. It collects what a tool can build on the prot
 
 **Ticket ↔ code.** "Which commits belonged to ticket X" is answered by the tool, for example through the ticket ID in branch names or commit trailers. The protocol only contains what is in the artifacts (`context`, `links.code`).
 
-**Index.** For queries, the tool keeps a local index (hone: an embedded database) next to `log/`. It is a cache, built from the logs, and simply rebuilt when its schema changes.
+**Local process store.** hone keeps it under `$XDG_DATA_HOME/hone/<workspace>/<project>/` on Linux (default `~/.local/share/hone/…`), `~/Library/Application Support/hone/…` on macOS, and `%APPDATA%\hone\…` on Windows. The environment variable `HONE_DATA_DIR` replaces the base directory (tests, CI). The directory is created on the first write. Next to `log/` it holds `device`, the device ID of this machine in this project, created at random on the first write, and a lock file, so that two hone processes on one device never hand out the same `seq`. A segment is closed after 1000 events or 1 MiB, whichever comes first. hone does not read compressed segments yet. That comes with archiving (Section 16, step 10).
+
+**Index.** For queries, the tool can keep a local index next to `log/`. It is a cache, built from the logs, and simply rebuilt when its schema changes. hone has none yet: every call reads the logs and orders them in memory, which takes milliseconds for thousands of events. An index (for example an embedded database) follows when queries need it, such as the user interface or large projects.
 
 **Repository names.** Which location belongs to `repo:` in `repo:path#symbol` is bound locally by the device, as with contexts.
 
@@ -1065,6 +1091,18 @@ The implementation depends on the platform: one branch per unit, pull requests, 
 | `content_hash`   | `path`, `content` (both required)                         | `hash`                                                                                   |
 
 `check_artifact` and `content_hash` take the content as text, so that an agent checks a draft before it writes the file. Results map to MCP like the exit codes of the command line: a failed gate is a normal result with `status: failed`, because it is an answer and not an error. A tool that could not run (exit code 2, a failed resolution, content outside the YAML profile for `content_hash`) returns a result marked `isError` with `status` (`error`, `failed`, or `io-error`) and `message`, `problems` (resolution), or `violations` (`content_hash`). Invalid arguments, such as a missing `path` or `step` without `ticket`, are also a result marked `isError` and not a protocol error, so that the agent reads the reason and corrects the call (the behaviour of the MCP specification and of `rmcp`). Writing and comparing `resolved.json` and reading it for `check_artifact` live in `hone-core`, so that the command line and the MCP server cannot drift apart.
+
+**Process commands** (Question 31). The command line writes the events that the gates read and shows the process state of a ticket:
+
+| Command                                                                      | Event or result                                                                          |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `hone thread open --ticket <tk> --kind <key> [--blocking] <anchor> --body …` | `thread.opened`, prints the thread ID                                                    |
+| `hone thread reply <th> --body …`                                            | `thread.message`                                                                         |
+| `hone thread resolve <th>` / `hone thread reopen <th>`                       | `thread.resolved` / `thread.reopened`                                                    |
+| `hone step set --ticket <tk> <step> open\|done\|skipped [--reason …]`        | `step.changed`                                                                           |
+| `hone events --ticket <tk>`                                                  | The ticket's events in order, the computed thread and step state, and the invalid events |
+
+The anchor is one of `--anchor-artifact <id> [--quote …]` (hone computes the content hash of the artifact's current file), `--anchor-code <path#symbol>`, `--anchor-change <reference>`, or `--anchor-transcript <url> [--position …]`. A reply, resolution, or reopening takes the ticket from the opening event, which must be present. `hone step set` accepts only steps of the ticket's profile, so that a typo does not end up in an immutable log. The author comes from `--author <handle>` and `--role <role>`, by default from `HONE_AUTHOR` and `HONE_ROLE`. The role must exist in the ticket's snapshot, the handle is free, because without a server authorship is trust-based (Section 4). hone fills `after` itself. The MCP server offers the same functions as the tools `thread_open`, `thread_reply`, `thread_resolve`, `thread_reopen`, `step_set`, and `events`, with the same JSON as `--json`. Its author is fixed at the start (`hone mcp --author critic-bot --role critic`) and cannot be chosen per call, so that an agent does not write as a human. Without an author, the writing tools return a result marked `isError`. Approvals, `review.confirmed`, and the `ticket.*` events have a schema, but no command yet: they belong to condensation and the start of a ticket (Section 16, step 10).
 
 **Further integrations:** trackers (GitHub Issues, Jira, Linear: read tickets, write status back), review platforms (synchronize threads and approvals), agents (AGENTS.md, MCP, ACP: provide context, report drift). Language-specific tooling will be described in its own document.
 
@@ -1160,7 +1198,7 @@ All questions of this draft are decided. The numbers stay stable because the tex
 8. **Snapshots:** Decided. Only snapshots no ticket record refers to are deleted, not even a completed one (Section 8).
 9. **Attributes for selection:** Decided. Trackers or analysis suggest, a human sets. Changes are events and visible in the record. Abuse is made visible, not prevented (Section 8).
 10. **Actors in the repository:** Decided. Handles instead of real names, optionally a generator from an external source (Section 8).
-11. **Log format:** Decided. Segments per device, deterministic order (`after`, then `date`, then `id`), no compaction, archiving at segment level. Lost devices are not an error. Only the fully written event schema remains open (Section 16).
+11. **Log format:** Decided. Segments per device, deterministic order (`after` and `seq`, then `id`, see Question 31), no compaction, archiving at segment level. Lost devices are not an error. The event schema is Question 31 (Section 4).
 12. **Condensation:** Decided. The AI drafts, the role from `decides` confirms through the event `review.confirmed`. Trust comes from the diff review, optionally `require_proof` enforces a proof. The hash additionally normalizes NFC and trailing whitespace, but not line breaks (Sections 5 and 10).
 13. **Role of reports:** Decided. JSON output of `check` and `report`, the format will be standardized later. Not an event in the process store (Section 12).
 14. **Visibility:** Decided. Profile setting `review_summary: full | approvals-only` (Section 10).
@@ -1180,6 +1218,7 @@ All questions of this draft are decided. The numbers stay stable because the tex
 28. **Resolution:** Decided. Fixed layer layout (one file per definition, the file stem is the key), merging with `null-without-target` and replacement on type conflicts, `extends` as `name@major` in depth-first order with the first occurrence counting, `lock.yaml` with package and plugin hashes, kind schemas as layer-relative paths embedded after merging, written-out defaults, ticket overrides as a last patch, the canonical form RFC 8785, and fixed error categories (Section 8). The test cases live in `schemas/tests/resolve/` (Section 14).
 29. **Check:** Decided. Directory gates run against `resolved.json` when a step contains them, ticket gates against the snapshot, either the named step or every `required` step. Artifacts are found through the path patterns, and path and content must agree. A superseding artifact counts by its declared status. Findings carry fixed codes. Gates that need the process store fail until the event schema exists, `exec` and plugin gates fail as `unsupported` until step 8. Approvals count once per person, with the role checked against `actors`. `change-needs-binding` needs `changed_paths` and matches anchors by path segments and simple globs. The agent hook runs only `change-needs-binding` and never blocks edits to artifacts (Sections 5, 6, 7, 10, 12, and 14).
 30. **MCP server:** Decided. One project per server (`hone mcp --root --packages`), the SDK `rmcp`, the tools `resolve`, `check`, `check_edit`, `check_artifact`, and `content_hash` without a prefix, with the same JSON as `--json`. A failed gate and an out-of-date `resolved.json` are normal results, "could not run" and invalid arguments are `isError`, never a protocol error. `check_artifact` and `content_hash` take path and content. Writing and comparing `resolved.json` moves into `hone-core` (Section 12).
+31. **Event schema and local process store:** Decided. Scope IDs and the device ID are a prefix plus 8 characters of Crockford Base32, the device ID is created per project, so that a device cannot be linked across tenants. An event has no `date`: the UUIDv7 `id` carries the time of writing, and the order is topological by `after` and `seq`, then by `id`. `after` expresses causality only (the newest known event of every other device), references live in `payload`. The envelope is strict (only `x-` fields extra, `sig` reserved and absent), known types have fixed payloads (Section 4), unknown types are kept and ignored. Lines are RFC 8785 JSON, an interrupted last line of the open segment is ignored, invalid events are not read and are reported. Segments are numbered from 1, the highest is open. `step.changed` replaces `step.skipped`, the thread ID is derived from the opening event, a thread is answered by a message of another author, and `steps-complete` ignores the steps that contain it. The three process-store gates check for real, report invalid events as warnings, and fail with `process-store-unavailable` without a store. `approvals-valid` stays on the `review` block. hone stores locally in the XDG data directory (`HONE_DATA_DIR` overrides it), has no index yet, keeps the code in `hone-core`, and offers process commands for threads, steps, and events on the command line and over MCP, with the MCP author fixed at the start (Sections 4, 5, 7, 10, and 12).
 
 ## 16. Next steps
 
