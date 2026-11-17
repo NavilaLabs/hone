@@ -136,7 +136,7 @@ Every artifact is a file. The core knows exactly one fixed type, the **ticket re
 **`spec`, `decision`, `test-plan`, and `module` are presets, not protocol types.** They come with the package `hone/standard` because almost every team needs them. A project can delete, rename, or change them or replace them with its own kinds, exactly as it adds its own kinds such as `threat-model`. The protocol itself knows no design concept, only the mechanisms the presets are built on:
 
 - **Lifecycle** (`kinds.<type>.lifecycle`):
-  - `decided`: The artifact belongs to a ticket, has a status (Section 6) and a content hash, and can be approved. Required fields are `id`, `type`, `ticket`, `status`, `created`, and `authors`. Examples: `spec`, `decision`, `test-plan`.
+  - `decided`: The artifact belongs to a ticket, has a status from `kinds.<type>.statuses` (Section 6) and a content hash, and can be approved. Required fields are `id`, `type`, `ticket`, `status`, `created`, and `authors`. Examples: `spec`, `decision`, `test-plan`.
   - `living`: A living definition without ticket, status, or content hash that evolves with the code. Example: `module`.
 - **Anchors** (`anchors`): Every kind may have anchors that locate code (`kind: path | glob | symbol`). A language plugin can resolve them (Section 9).
 - **Links** (see below).
@@ -179,7 +179,7 @@ The gate `schema-valid` checks the profile first, then the schema. A YAML parser
 
 **File shapes.** A `.md` file starts with the line `---`, followed by the front matter and a line `---`. Everything after that is the body (Markdown). A `.yaml` file is the data model itself and has no body.
 
-**Schema.** `schemas/artifact.schema.json` (JSON Schema 2020-12) distinguishes the ticket record and the two lifecycles `decided` and `living`. Which lifecycle applies is stated in `kinds.<type>.lifecycle`. The declared status knows only `proposed`, `accepted`, `rejected`, and `deprecated`. `superseded` is computed and must never appear in a file (Question 2). `kinds.<type>.statuses` may only restrict this set. Every kind can attach an additional schema through `kinds.<type>.schema`. The presets live with their definitions (`kinds/`) and additional schemas (`schemas/`) in the standard package, in this repository under `schemas/standard/`. `schema-valid` checks an artifact against the schema of its lifecycle, its additional schema, and the prefix of its kind (`id_prefix`). A kind that the configuration does not know is an error.
+**Schema.** `schemas/artifact.schema.json` (JSON Schema 2020-12) distinguishes the ticket record and the two lifecycles `decided` and `living`. Which lifecycle applies is stated in `kinds.<type>.lifecycle`. The declared status must be one of `kinds.<type>.statuses` (Question 27). `superseded` is computed, reserved, and must never appear in a file (Question 2). Every kind can attach an additional schema through `kinds.<type>.schema`. The presets live with their definitions (`kinds/`) and additional schemas (`schemas/`) in the standard package, in this repository under `schemas/standard/`. `schema-valid` checks an artifact against the schema of its lifecycle, its additional schema, the prefix of its kind (`id_prefix`), and the statuses of its kind. A kind that the configuration does not know is an error.
 
 **Content hash.** Applies only to artifacts with lifecycle `decided`. The ticket record and artifacts with lifecycle `living` are mutable and have none. `sha256:` plus SHA-256 over the canonical form (RFC 8785) of the object `{ "meta": <front matter without review>, "body": <body> }`. The body is normalized first:
 
@@ -287,21 +287,24 @@ The ticket record is the **key** that connects everything: artifacts, configurat
 
 There is a **declared** and an **effective** status.
 
-- _Declared:_ what the author writes into the file (`proposed`, `accepted`, `rejected`, `deprecated`).
+- _Declared:_ what the author writes into the file, one of the statuses of the kind (`kinds.<type>.statuses`).
 - _Effective:_ what the tool computes from the declared status and the links **in the checked directory**.
 
-| Declared              | Superseded by an accepted artifact in the directory | Effective              |
-| --------------------- | --------------------------------------------------- | ---------------------- |
-| proposed              | –                                                   | proposed               |
-| accepted              | no                                                  | **accepted (binding)** |
-| accepted              | yes                                                 | superseded             |
-| rejected / deprecated | –                                                   | rejected / deprecated  |
+**Statuses are configurable per kind** (Question 27). The protocol knows only one property of a status: whether it is **binding** (`binding: true`). Every kind with lifecycle `decided` has at least one binding status. The name `superseded` is reserved, because that status is computed. The standard package sets `proposed`, `accepted` (binding), `rejected`, and `deprecated`. A project can add its own (`draft`) or remove one (`deprecated: null`).
+
+| Declared           | Superseded by a binding artifact in the directory | Effective                |
+| ------------------ | ------------------------------------------------- | ------------------------ |
+| binding status     | no                                                | **the status (binding)** |
+| binding status     | yes                                               | superseded               |
+| non-binding status | –                                                 | the status               |
+
+With the standard statuses: `accepted` stays `accepted` or becomes `superseded`, all others stay as declared.
 
 **The caller determines the checked directory.** An agent hook checks the working state, CI checks the state of the change, a review checks the result. The protocol knows no lines, branches, or "integration". What counts is what is in the directory.
 
 **Only binding artifacts bind agents** and are enforced by the gates. Design-first therefore needs no special rule: a check such as "changed code needs a binding decision" (`change-needs-binding`, Section 7) is a pure state check. If the design is already on the base of the change, it passes. If it is part of the same state, it passes as well.
 
-Accepted artifacts are not changed in content. A change is a new artifact that replaces the old one through `supersedes`. The old one is **not touched** for this. The status "superseded" is only computed and never written into the file, so that hash and approvals stay valid. The tool makes it readable (`explain`, user interface, editor hints).
+Artifacts with a binding status are not changed in content. A change is a new artifact that replaces the old one through `supersedes`. The old one is **not touched** for this. The status "superseded" is only computed and never written into the file, so that hash and approvals stay valid. The tool makes it readable (`explain`, user interface, editor hints).
 
 Status exists only for kinds with lifecycle `decided`. Artifacts with lifecycle `living` (such as modules) have no status.
 
@@ -310,19 +313,22 @@ Status exists only for kinds with lifecycle `decided`. Artifacts with lifecycle 
 ### Step definition
 
 ```yaml
-id: decision
-title: Decision
+# steps.decision in the resolved configuration; the key is the name
+title: Decision # optional
 acts: [human, critic] # roles that work (roles: Section 8)
-decides: architect # role that decides
-inputs: [spec, domain] # artifact kinds
+decides: architect # optional: role that decides and confirms the condensation
+inputs: [spec] # artifact kinds, `ticket` stands for the ticket record
 outputs: [decision]
-gates: # deterministic checks
-  - { gate: artifact-exists, params: { type: decision } }
-  - { gate: links-resolve }
-  - { gate: approvals-valid, params: { role: architect, min: 1 } }
+requires: [] # further steps that must come first
+gates: # deterministic checks, a map by label
+  decision-exists: { gate: artifact-exists, params: { type: decision } }
+  links: { gate: links-resolve }
+  approved: { gate: approvals-valid, params: { role: architect, min: 1 } }
 ```
 
 A step describes inputs, outputs, participants (as roles, never as people), and checks. It contains **no** instructions for a specific agent.
+
+**Gates are a map by label**, so that a higher layer can add a single gate (for example a plugin gate on a standard step) or remove one (`links: null`) without repeating the others. The same gate may appear several times under different labels. A gate entry is `{ gate, params }`. `gate` names a standard gate, `exec` (Section 9), or a plugin from `plugins`. A plugin must not carry the name of a standard gate or `exec`.
 
 **The order follows from inputs and outputs.** A step is ready when its inputs are done or skipped. Whoever wants a fixed order adds `requires: [<step>]`. Cycles are an error. Adding a step means inserting a node, not rewriting a list.
 
@@ -332,18 +338,20 @@ A gate is a **deterministic function** over a directory: the input is the checke
 
 **Standard gates** belong to the protocol. Every implementation ships them natively:
 
-| Gate                       | Checks                                                                                                                                          |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `artifact-exists`          | There is an artifact of the kind (optionally with a status) in the ticket                                                                       |
-| `status-is`                | An artifact has the effective status X                                                                                                          |
-| `schema-valid`             | Front matter matches the schema of the kind                                                                                                     |
-| `ids-unique`               | No two files carry the same ID                                                                                                                  |
-| `links-resolve`            | All links point to existing artifacts                                                                                                           |
-| `no-open-blocking-threads` | No blocking threads are open                                                                                                                    |
-| `threads-answered`         | All threads of a role (for example `critic`) are answered                                                                                       |
-| `approvals-valid`          | Approvals of role R, at least N, hash matches the content. With `require_proof: true`, every approval needs a proof (Section 10)                |
-| `steps-complete`           | Every required step is done or explicitly skipped                                                                                               |
-| `change-needs-binding`     | If `changed_paths` hits the anchors of an artifact of kind `anchored`, there is a binding artifact of kind `binding` for it (through `affects`) |
+| Gate                       | Parameters                                            | Checks                                                                                                                                                                                                                                         |
+| -------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `artifact-exists`          | `type`, `status?`                                     | The ticket has at least one artifact of kind `type`, with `status` one whose effective status is in the set                                                                                                                                    |
+| `status-is`                | `type`, `status`                                      | Every artifact of kind `type` in the ticket has an effective status in the set. Passes if there is none (existence is `artifact-exists`)                                                                                                       |
+| `schema-valid`             | –                                                     | Every artifact matches the schema of its lifecycle and kind, its prefix, and the statuses of its kind                                                                                                                                          |
+| `ids-unique`               | –                                                     | No two files carry the same ID                                                                                                                                                                                                                 |
+| `links-resolve`            | –                                                     | All links point to existing artifacts                                                                                                                                                                                                          |
+| `no-open-blocking-threads` | –                                                     | No blocking threads of the ticket are open                                                                                                                                                                                                     |
+| `threads-answered`         | `role`                                                | All threads opened by role `role` (for example `critic`) are answered                                                                                                                                                                          |
+| `approvals-valid`          | `role`, `min?` (1), `require_proof?` (false), `type?` | Every artifact of the step's `outputs` with lifecycle `decided` (only kind `type`, if given) has at least `min` approvals of role `role` whose hash matches the content. With `require_proof: true`, every approval needs a proof (Section 10) |
+| `steps-complete`           | –                                                     | Every required step of the ticket's profile is done or explicitly skipped                                                                                                                                                                      |
+| `change-needs-binding`     | `anchored`, `binding`                                 | If `changed_paths` hits the anchors of an artifact of kind `anchored`, there is a binding artifact of kind `binding` for it (through `affects`)                                                                                                |
+
+`status` is one status or a list of them (set membership). It must be a status of the kind or `superseded`. Unknown parameters are an error. `schema-valid`, `ids-unique`, and `links-resolve` check the whole checked directory, because a collision or a broken link concerns everyone. All other gates check the ticket. The role of `approvals-valid` must be able to `approve`, and the kind `binding` of `change-needs-binding` must have lifecycle `decided`.
 
 The standard package sets the parameters `{ anchored: module, binding: decision }` for `change-needs-binding`.
 
@@ -354,7 +362,9 @@ The standard package sets the parameters `{ anchored: module, binding: decision 
 A profile selects steps and their strictness. The steps are a **map**, so that layers can merge them key by key (Section 8).
 
 ```yaml
-id: medium
+# profiles.medium in the resolved configuration
+retention: archive # keep | archive | drop (Section 10)
+review_summary: full # full | approvals-only (Section 10)
 steps:
   ticket: required
   research: required
@@ -371,6 +381,8 @@ steps:
 Rules:
 
 - `required` means: do it **or** skip it explicitly. If neither happened, the gate `steps-complete` fails.
+- Steps that the profile does not list are not part of the flow.
+- A profile selects only steps and their strictness. There is no strictness per gate: whoever needs other gates uses another step or a plugin.
 - The selection rules (Section 8) choose the profile for a ticket. The user can change the result per ticket.
 
 ## 8. Configuration: Level 1 and Level 2
@@ -387,32 +399,54 @@ Rule of thumb: **Whoever only reads the configuration needs only data (Level 1).
 
 ### Level 1: the resolved configuration
 
-The protocol reads only this document (`.hone/resolved.json`, generated, not edited by hand; shown here as YAML for readability). It contains everything needed to evaluate a ticket and nothing that executes code.
+The protocol reads only this document (`.hone/resolved.json`, generated, not edited by hand; shown here as YAML for readability). It contains everything needed to evaluate a ticket and nothing that executes code. Its schema is `schemas/config.schema.json`. The document contains no `null`, every default is written out, and unknown keys are an error except in the namespace `x-<name>`. Definitions are maps whose key is the name, so there is no inner `id`.
 
 ```yaml
 protocol: 1
 
+ticket: # the only fixed type of the core; only the placeholder {ticket}
+  path: "design/tickets/{ticket}/ticket.yaml"
+
 kinds: # kinds of artifacts (spec, decision, test-plan, module come from hone/standard)
+  spec:
+    path: "design/tickets/{ticket}/{id}-{slug}.md" # {ticket} only for lifecycle decided
+    id_prefix: spec
+    lifecycle: decided
+    statuses:
+      proposed: { binding: false }
+      accepted: { binding: true }
+      rejected: { binding: false }
+      deprecated: { binding: false }
   decision:
     path: "design/decisions/{id}-{slug}.md" # {slug} may change, {id} never
     id_prefix: dec
     lifecycle: decided # decided | living
-    schema: schemas/decision.json # JSON Schema
-    statuses: [proposed, accepted, rejected, deprecated]
+    statuses: # a map, so that a layer can add or remove a single status
+      proposed: { binding: false }
+      accepted: { binding: true } # binding: binds agents and gates, can supersede
+      rejected: { binding: false }
+      deprecated: { binding: false }
+    schema: # JSON Schema, embedded by resolve
+      type: object
+      properties:
+        reach: { enum: [ticket, cross-cutting], default: ticket }
   module:
     path: "design/modules/{id}-{slug}.yaml"
     id_prefix: mod
-    lifecycle: living
-    schema: schemas/module.json
-  threat-model: # custom kind, no protocol change needed
+    lifecycle: living # no ticket, no statuses
+    schema: { type: object, required: [name, anchors] } # shortened
+  threat-model: # custom kind with its own statuses, no protocol change needed
     path: "design/threat-models/{id}-{slug}.md"
     id_prefix: thr
     lifecycle: decided
-    schema: schemas/threat-model.json
+    statuses:
+      draft: { binding: false }
+      accepted: { binding: true }
+      withdrawn: { binding: false }
 
 roles: # what someone may do in the process
-  human: { can: [act, comment, approve] }
-  architect: { can: [act, comment, approve] }
+  human: { kind: human, can: [act, comment, approve] }
+  architect: { kind: human, can: [act, comment, approve] }
   critic: { kind: ai, can: [act, comment] }
 
 actors: # who has which roles (handles, not real names)
@@ -421,49 +455,131 @@ actors: # who has which roles (handles, not real names)
   "*": [human] # fallback for unknown people
 
 steps: # Section 7
+  specify:
+    title: Specification
+    acts: [human]
+    decides: human
+    inputs: [ticket]
+    outputs: [spec]
+    requires: []
+    gates:
+      spec-exists: { gate: artifact-exists, params: { type: spec } }
+      spec-approved: { gate: approvals-valid, params: { role: human } }
   decision:
-    {
-      acts: [human, critic],
-      decides: architect,
-      inputs: [spec],
-      outputs: [decision],
-      gates: [...],
-    }
+    title: Decision
+    acts: [human, critic]
+    decides: architect
+    inputs: [spec]
+    outputs: [decision]
+    requires: []
+    gates: # a map by label, so that a layer can add or remove a single gate
+      decision-exists: { gate: artifact-exists, params: { type: decision } }
+      links: { gate: links-resolve }
+      critic-answered: { gate: threads-answered, params: { role: critic } }
+      approved: { gate: approvals-valid, params: { role: architect, min: 1 } }
+  threat-model:
+    title: Threat model
+    acts: [human]
+    decides: architect
+    inputs: [spec]
+    outputs: [threat-model]
+    requires: []
+    gates:
+      threat-model-accepted:
+        {
+          gate: artifact-exists,
+          params: { type: threat-model, status: accepted },
+        }
+  interfaces:
+    title: Interfaces
+    acts: [human]
+    inputs: [decision]
+    outputs: [module]
+    requires: []
+    gates:
+      compiles:
+        { gate: exec, params: { command: ["cargo", "check", "--workspace"] } }
+      public-api: { gate: public-api-has-decision } # plugin gate
+  implementation:
+    title: Implementation
+    acts: [human]
+    inputs: [module]
+    outputs: []
+    requires: []
+    gates:
+      binding:
+        {
+          gate: change-needs-binding,
+          params: { anchored: module, binding: decision },
+        }
+      tests:
+        {
+          gate: exec,
+          params: { command: ["cargo", "test"], env: ["CARGO_HOME"] },
+        }
+  completion:
+    title: Completion
+    acts: [human]
+    decides: architect
+    inputs: []
+    outputs: []
+    requires: [implementation]
+    gates:
+      complete: { gate: steps-complete }
+      no-blockers: { gate: no-open-blocking-threads }
 
 profiles:
   quick-fix:
-    {
-      steps:
-        { ticket: required, implementation: required, completion: required },
-    }
-  standard: { steps: { ... } }
-  full: { steps: { ... }, retention: archive, review_summary: full } # Section 10
+    steps: { implementation: required, completion: required }
+    retention: drop
+    review_summary: full
+  standard:
+    steps:
+      specify: required
+      decision: optional
+      interfaces: required
+      implementation: required
+      completion: required
+    retention: archive
+    review_summary: full
+  full:
+    steps:
+      specify: required
+      decision: required
+      threat-model: required
+      interfaces: required
+      implementation: required
+      completion: required
+    retention: keep # Section 10
+    review_summary: approvals-only
 
-select: # profile selection, first matching rule wins
-  - { when: { type: bugfix, size: S }, profile: quick-fix }
-  - { when: { type: feature, risk: high }, profile: full }
-  - { default: standard }
+select: # profile selection, the first matching rule wins, otherwise default
+  rules:
+    - { when: { type: bugfix, size: S }, profile: quick-fix }
+    - { when: { type: feature, risk: [high, critical] }, profile: full }
+  default: standard
 
 plugins: # Section 9
   public-api-has-decision:
-    wasm: plugins/public-api-has-decision.wasm
-    sha256: 9a1f...
+    wasm: .hone/plugins/public-api-has-decision.wasm # relative to the project root
+    hash: sha256:d83e964ad830a888709a27907868418c04d8847563a35859e04a1681db24b733
     capabilities:
       { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }
 ```
 
 **Roles and actors are separate.** Steps and gates name only roles. Actors are mappings, and where they come from is replaceable (file, generator from CODEOWNERS or an identity provider, tool adapter). Splitting people up means adding or removing entries. The fallback `"*"` makes sure unknown people break nothing. Actors are **handles** (the same as in version control), not real names. Whoever wants more distance generates them from an external source (Question 10).
 
-**Selection rules are deliberately simple:** `when` compares ticket attributes (`attributes` in the ticket record) for equality or set membership. There is no expression language. Whoever needs more sets attributes beforehand with a generator or in the user interface.
+**Selection rules are deliberately simple:** `select` holds a list `rules` and a `default`. `when` compares ticket attributes (`attributes` in the ticket record): a scalar for equality, a list for set membership, and every attribute of `when` must match. The first matching rule wins, otherwise `default`. There is no expression language. `default` is its own key, so that a layer can change it without replacing the rules. Whoever needs more sets attributes beforehand with a generator or in the user interface.
 
 **Origin of attributes** (Question 9). Trackers or analysis may suggest attributes, a human sets them. If someone changes them after the start, that is an event (`ticket.attributes_changed`) and appears in the record on completion. The protocol does not prevent someone from entering `risk: low` to avoid gates. It makes it visible, as with skipping (Principle 8). Whoever wants more writes a plugin gate, for example "the risk must match the analysis".
 
 **Properties of the resolved configuration**
 
 - **Canonical:** fixed key order, so the hash (`sha256:…`) is a stable identity of the content.
-- **Self-contained:** no includes, no references to other files except schemas and plugins with a hash.
+- **Self-contained:** no includes and no references to other files except plugins with a hash. `resolve` embeds the schemas of the kinds, so that a snapshot needs no package.
+- **Explicit:** no `null`, every default is written out, unknown keys are an error except `x-<name>`. Whoever reads the document needs to know no defaults.
 - **Origin lives next to it, not inside it:** `resolved.origin.json` records for every definition which layer and file it comes from. This feeds `hone explain`. The hash depends only on the content.
-- **Validated:** every reference must resolve (roles in steps, gates, plugins, schemas), otherwise `resolve` fails.
+- **Validated:** every reference must resolve (roles, kinds, steps, profiles, gates, plugins, statuses in gate parameters), prefixes are unique, and `requires` has no cycles, otherwise `resolve` fails. `schemas/config.schema.json` checks the shape, the references are listed in its description.
 
 ### Frozen per ticket
 
@@ -530,8 +646,8 @@ extends: [hone/standard@1]
 ```yaml
 # .hone/config.yaml
 generate:
-  - plugin: plugins/actors-from-codeowners.wasm
-    sha256: 7c20...
+  - plugin: .hone/plugins/actors-from-codeowners.wasm
+    hash: sha256:7c20...
     capabilities: { read: [".github/CODEOWNERS"], net: [] }
     into: actors # only this part of the tree may be set
 ```
@@ -595,12 +711,17 @@ Custom entry points are allowed in the namespace `x-<name>`.
 Capabilities are part of the configuration next to the plugin and are granted by the tool. A plugin cannot grant itself any.
 
 ```yaml
-capabilities:
-  read: [project] # files of the checked directory, read-only
+# plugins.public-api-has-decision in the resolved configuration
+wasm: .hone/plugins/public-api-has-decision.wasm # relative to the project root
+hash: sha256:9a1f... # SHA-256 of the module, same format as every other hash
+capabilities: # all four are required
+  read: [project] # `project` (the checked directory) or paths relative to the project root, read-only
   net: [] # allowed hosts, empty = none
   timeout_ms: 5000
-  memory_pages: 256
+  memory_pages: 256 # WASM pages of 64 KiB
 ```
+
+The resolved configuration contains only the plugins that `check` runs (gates and language plugins). They are pure, so `net` must be `[]` there. Generators are listed in `.hone/config.yaml` and are not part of the resolved configuration.
 
 Rules:
 
@@ -614,8 +735,17 @@ Rules:
 A plugin in the sandbox cannot start a compiler or a test runner. "Interfaces compile" and "tests exist and fail" need the toolchain of the target language. The host can do this, because `hone check` runs as a normal program with the permissions of the calling person. For this there is a second gate type that is data, not code:
 
 ```yaml
-- { gate: exec, params: { command: ["cargo", "check", "--workspace"] } }
+compiles: # a gate entry in a step
+  gate: exec
+  params:
+    command: ["cargo", "check", "--workspace"] # required: argv list, no shell
+    cwd: crates/core # optional, relative to the project root, default: the project root
+    env: ["CARGO_HOME"] # optional: environment variables passed through, default: none
+    timeout_ms: 600000 # optional
+    evaluate: cargo-findings # optional: plugin that turns the result into findings
 ```
+
+Without `evaluate`, exit code 0 passes. `exec` belongs to the class `exec`, every other gate to the class `pure`. There is no separate field for the class.
 
 Rules:
 
@@ -678,7 +808,7 @@ author: { name: bob, role: human }
 date: 2026-11-16T10:12:00Z
 payload:
   thread: th-0193a8f0-9b2c-7e4d-a1f3-5c6d7e8f9a0b # th- + UUID of the opening event
-  kind: concern # question | concern | suggestion | note
+  kind: concern # a free key; hone/standard suggests question | concern | suggestion | note
   blocking: true
   anchor:
     kind: artifact
@@ -868,12 +998,13 @@ All questions of this draft are decided. The numbers stay stable because the tex
 24. **Terms in the schema:** Decided. The artifact field `scope` is now called `reach`. `verifies` takes only artifact IDs, test code is linked through `code` (Section 5).
 25. **Licenses and contributions:** Decided. Code under `MIT OR Apache-2.0`, specification text under CC0 1.0, contributions through DCO (Section 14).
 26. **Scope of the server contract:** Decided. Normative are replication, real-time subscription, bearer authentication, and defined error codes. Permission management, administration, and notifications are left to the server (Section 4).
+27. **Statuses:** Decided. Statuses are configurable per kind (`kinds.<type>.statuses`, a map). The protocol knows only the property `binding`. Every kind with lifecycle `decided` has at least one binding status, `superseded` is reserved. Content enums without protocol semantics (`reach`, thread kinds) are not part of the core (Sections 5 and 6).
 
 ## 16. Next steps
 
 1. Done: format (Question 1) and the artifact schema with tests (`schemas/`), adapted to all decisions (ID format, `reach`, lifecycles instead of fixed types, presets under `schemas/standard/`, module with `interface`, `context.observed`, hash normalization).
 2. Done: README, license files (`LICENSE-MIT`, `LICENSE-APACHE`, `LICENSE-CC0`), and `CONTRIBUTING.md` with DCO.
-3. Write the schema of the resolved configuration (including `kinds.<type>.lifecycle` and the placeholders `{id}`, `{slug}`, and `{ticket}` in `kinds.<type>.path`).
+3. Done: the schema of the resolved configuration (`schemas/config.schema.json`) with valid, invalid, and reference test cases, configurable statuses (Question 27), and the Level 1 example as a test case.
 4. Build `resolve`: layers, merging, test cases. This is the core of Level 2 and pins down Level 1.
 5. Build `check` with the standard gates (including `ids-unique` and `change-needs-binding`) and connect it as an agent hook. With that, the tool can be used alone right away, without a team and without Git integration.
 6. Define scope IDs and the event schema (UUIDv7, `seq`, `after`, reserved `sig`), build the local backend (segments per device, index as cache).

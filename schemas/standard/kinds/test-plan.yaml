@@ -1,3 +1,8 @@
 path: "design/test-plans/{id}-{slug}.md"
 id_prefix: tp
 lifecycle: decided
+statuses:
+  proposed: { binding: false }
+  accepted: { binding: true }
+  rejected: { binding: false }
+  deprecated: { binding: false }

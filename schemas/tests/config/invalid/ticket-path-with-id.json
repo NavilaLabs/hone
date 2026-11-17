@@ -1,0 +1,115 @@
+{
+  "protocol": 1,
+  "ticket": {
+    "path": "design/{ticket}/{id}.yaml"
+  },
+  "kinds": {
+    "decision": {
+      "path": "design/decisions/{id}-{slug}.md",
+      "id_prefix": "dec",
+      "lifecycle": "decided",
+      "statuses": {
+        "proposed": {
+          "binding": false
+        },
+        "accepted": {
+          "binding": true
+        }
+      }
+    },
+    "module": {
+      "path": "design/modules/{id}-{slug}.yaml",
+      "id_prefix": "mod",
+      "lifecycle": "living"
+    }
+  },
+  "roles": {
+    "human": {
+      "kind": "human",
+      "can": ["act", "comment", "approve"]
+    },
+    "critic": {
+      "kind": "ai",
+      "can": ["act", "comment"]
+    }
+  },
+  "actors": {
+    "alice": ["human"],
+    "*": ["human"]
+  },
+  "steps": {
+    "decision": {
+      "acts": ["human", "critic"],
+      "decides": "human",
+      "inputs": ["ticket"],
+      "outputs": ["decision"],
+      "requires": [],
+      "gates": {
+        "exists": {
+          "gate": "artifact-exists",
+          "params": {
+            "type": "decision"
+          }
+        },
+        "approved": {
+          "gate": "approvals-valid",
+          "params": {
+            "role": "human"
+          }
+        }
+      }
+    },
+    "implementation": {
+      "acts": ["human"],
+      "inputs": ["decision"],
+      "outputs": [],
+      "requires": ["decision"],
+      "gates": {
+        "binding": {
+          "gate": "change-needs-binding",
+          "params": {
+            "anchored": "module",
+            "binding": "decision"
+          }
+        },
+        "api": {
+          "gate": "api-check"
+        }
+      }
+    }
+  },
+  "profiles": {
+    "standard": {
+      "steps": {
+        "decision": "required",
+        "implementation": "required"
+      },
+      "retention": "archive",
+      "review_summary": "full"
+    }
+  },
+  "select": {
+    "rules": [
+      {
+        "when": {
+          "type": "bugfix"
+        },
+        "profile": "standard"
+      }
+    ],
+    "default": "standard"
+  },
+  "plugins": {
+    "api-check": {
+      "wasm": ".hone/plugins/api-check.wasm",
+      "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "capabilities": {
+        "read": ["project"],
+        "net": [],
+        "timeout_ms": 5000,
+        "memory_pages": 256
+      }
+    }
+  },
+  "x-why": "Only {ticket}."
+}

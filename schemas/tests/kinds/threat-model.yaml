@@ -1,3 +1,7 @@
 path: "design/threat-models/{id}-{slug}.md"
 id_prefix: thr
 lifecycle: decided
+statuses:
+  draft: { binding: false }
+  accepted: { binding: true }
+  withdrawn: { binding: false }

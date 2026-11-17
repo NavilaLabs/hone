@@ -1,3 +1,9 @@
 path: "design/decisions/{id}-{slug}.md"
 id_prefix: dec
 lifecycle: decided
+schema: schemas/decision.schema.json
+statuses:
+  proposed: { binding: false }
+  accepted: { binding: true }
+  rejected: { binding: false }
+  deprecated: { binding: false }

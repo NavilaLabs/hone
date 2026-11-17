@@ -33,7 +33,7 @@
   },
   "$defs": {
     "Decided": {
-      "description": "Lifecycle `decided`: belongs to a ticket, has a declared status and a content hash, and can be approved. The declared status knows only four values. `superseded` is computed and must never appear in a file.",
+      "description": "Lifecycle `decided`: belongs to a ticket, has a declared status and a content hash, and can be approved. The declared status must be one of `kinds.<type>.statuses` in the resolved configuration, which the gate schema-valid checks. `superseded` is computed and reserved, so it never appears in a file.",
       "type": "object",
       "required": ["id", "type", "ticket", "status", "created", "authors"],
       "properties": {
@@ -47,7 +47,10 @@
           "$ref": "common.schema.json#/$defs/TicketId"
         },
         "status": {
-          "enum": ["proposed", "accepted", "rejected", "deprecated"]
+          "$ref": "common.schema.json#/$defs/Key",
+          "not": {
+            "const": "superseded"
+          }
         },
         "created": {
           "$ref": "common.schema.json#/$defs/Date"
@@ -59,10 +62,6 @@
           },
           "minItems": 1,
           "uniqueItems": true
-        },
-        "reach": {
-          "enum": ["ticket", "cross-cutting"],
-          "default": "ticket"
         },
         "anchors": {
           "$ref": "common.schema.json#/$defs/Anchors"

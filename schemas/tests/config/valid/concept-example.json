@@ -1,0 +1,293 @@
+{
+  "protocol": 1,
+  "ticket": {
+    "path": "design/tickets/{ticket}/ticket.yaml"
+  },
+  "kinds": {
+    "spec": {
+      "path": "design/tickets/{ticket}/{id}-{slug}.md",
+      "id_prefix": "spec",
+      "lifecycle": "decided",
+      "statuses": {
+        "proposed": {
+          "binding": false
+        },
+        "accepted": {
+          "binding": true
+        },
+        "rejected": {
+          "binding": false
+        },
+        "deprecated": {
+          "binding": false
+        }
+      }
+    },
+    "decision": {
+      "path": "design/decisions/{id}-{slug}.md",
+      "id_prefix": "dec",
+      "lifecycle": "decided",
+      "statuses": {
+        "proposed": {
+          "binding": false
+        },
+        "accepted": {
+          "binding": true
+        },
+        "rejected": {
+          "binding": false
+        },
+        "deprecated": {
+          "binding": false
+        }
+      },
+      "schema": {
+        "type": "object",
+        "properties": {
+          "reach": {
+            "enum": ["ticket", "cross-cutting"],
+            "default": "ticket"
+          }
+        }
+      }
+    },
+    "module": {
+      "path": "design/modules/{id}-{slug}.yaml",
+      "id_prefix": "mod",
+      "lifecycle": "living",
+      "schema": {
+        "type": "object",
+        "required": ["name", "anchors"]
+      }
+    },
+    "threat-model": {
+      "path": "design/threat-models/{id}-{slug}.md",
+      "id_prefix": "thr",
+      "lifecycle": "decided",
+      "statuses": {
+        "draft": {
+          "binding": false
+        },
+        "accepted": {
+          "binding": true
+        },
+        "withdrawn": {
+          "binding": false
+        }
+      }
+    }
+  },
+  "roles": {
+    "human": {
+      "kind": "human",
+      "can": ["act", "comment", "approve"]
+    },
+    "architect": {
+      "kind": "human",
+      "can": ["act", "comment", "approve"]
+    },
+    "critic": {
+      "kind": "ai",
+      "can": ["act", "comment"]
+    }
+  },
+  "actors": {
+    "alice": ["human", "architect"],
+    "bob": ["human"],
+    "*": ["human"]
+  },
+  "steps": {
+    "specify": {
+      "title": "Specification",
+      "acts": ["human"],
+      "decides": "human",
+      "inputs": ["ticket"],
+      "outputs": ["spec"],
+      "requires": [],
+      "gates": {
+        "spec-exists": {
+          "gate": "artifact-exists",
+          "params": {
+            "type": "spec"
+          }
+        },
+        "spec-approved": {
+          "gate": "approvals-valid",
+          "params": {
+            "role": "human"
+          }
+        }
+      }
+    },
+    "decision": {
+      "title": "Decision",
+      "acts": ["human", "critic"],
+      "decides": "architect",
+      "inputs": ["spec"],
+      "outputs": ["decision"],
+      "requires": [],
+      "gates": {
+        "decision-exists": {
+          "gate": "artifact-exists",
+          "params": {
+            "type": "decision"
+          }
+        },
+        "links": {
+          "gate": "links-resolve"
+        },
+        "critic-answered": {
+          "gate": "threads-answered",
+          "params": {
+            "role": "critic"
+          }
+        },
+        "approved": {
+          "gate": "approvals-valid",
+          "params": {
+            "role": "architect",
+            "min": 1
+          }
+        }
+      }
+    },
+    "threat-model": {
+      "title": "Threat model",
+      "acts": ["human"],
+      "decides": "architect",
+      "inputs": ["spec"],
+      "outputs": ["threat-model"],
+      "requires": [],
+      "gates": {
+        "threat-model-accepted": {
+          "gate": "artifact-exists",
+          "params": {
+            "type": "threat-model",
+            "status": "accepted"
+          }
+        }
+      }
+    },
+    "interfaces": {
+      "title": "Interfaces",
+      "acts": ["human"],
+      "inputs": ["decision"],
+      "outputs": ["module"],
+      "requires": [],
+      "gates": {
+        "compiles": {
+          "gate": "exec",
+          "params": {
+            "command": ["cargo", "check", "--workspace"]
+          }
+        },
+        "public-api": {
+          "gate": "public-api-has-decision"
+        }
+      }
+    },
+    "implementation": {
+      "title": "Implementation",
+      "acts": ["human"],
+      "inputs": ["module"],
+      "outputs": [],
+      "requires": [],
+      "gates": {
+        "binding": {
+          "gate": "change-needs-binding",
+          "params": {
+            "anchored": "module",
+            "binding": "decision"
+          }
+        },
+        "tests": {
+          "gate": "exec",
+          "params": {
+            "command": ["cargo", "test"],
+            "env": ["CARGO_HOME"]
+          }
+        }
+      }
+    },
+    "completion": {
+      "title": "Completion",
+      "acts": ["human"],
+      "decides": "architect",
+      "inputs": [],
+      "outputs": [],
+      "requires": ["implementation"],
+      "gates": {
+        "complete": {
+          "gate": "steps-complete"
+        },
+        "no-blockers": {
+          "gate": "no-open-blocking-threads"
+        }
+      }
+    }
+  },
+  "profiles": {
+    "quick-fix": {
+      "steps": {
+        "implementation": "required",
+        "completion": "required"
+      },
+      "retention": "drop",
+      "review_summary": "full"
+    },
+    "standard": {
+      "steps": {
+        "specify": "required",
+        "decision": "optional",
+        "interfaces": "required",
+        "implementation": "required",
+        "completion": "required"
+      },
+      "retention": "archive",
+      "review_summary": "full"
+    },
+    "full": {
+      "steps": {
+        "specify": "required",
+        "decision": "required",
+        "threat-model": "required",
+        "interfaces": "required",
+        "implementation": "required",
+        "completion": "required"
+      },
+      "retention": "keep",
+      "review_summary": "approvals-only"
+    }
+  },
+  "select": {
+    "rules": [
+      {
+        "when": {
+          "type": "bugfix",
+          "size": "S"
+        },
+        "profile": "quick-fix"
+      },
+      {
+        "when": {
+          "type": "feature",
+          "risk": ["high", "critical"]
+        },
+        "profile": "full"
+      }
+    ],
+    "default": "standard"
+  },
+  "plugins": {
+    "public-api-has-decision": {
+      "wasm": ".hone/plugins/public-api-has-decision.wasm",
+      "hash": "sha256:d83e964ad830a888709a27907868418c04d8847563a35859e04a1681db24b733",
+      "capabilities": {
+        "read": ["project"],
+        "net": [],
+        "timeout_ms": 5000,
+        "memory_pages": 256
+      }
+    }
+  }
+}

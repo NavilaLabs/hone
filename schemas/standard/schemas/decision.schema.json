@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hone.invalid/schema/1/standard/decision.schema.json",
+  "title": "hone/standard: decision",
+  "description": "Additional schema of the kind `decision` (lifecycle `decided`).",
+  "type": "object",
+  "properties": {
+    "reach": {
+      "description": "Whether the decision binds only its ticket or cuts across the project.",
+      "enum": ["ticket", "cross-cutting"],
+      "default": "ticket"
+    }
+  }
+}

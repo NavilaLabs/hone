@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Reference check for the artifact format (protocol 1).
+"""Reference check for the artifact format and the resolved configuration (protocol 1).
 
 A helper for the specification, not an implementation of the protocol. It shows that the
-YAML profile, the schema, and the content hash from the concept (docs/protocol-concept.md,
-Section 5) work together. Dependencies: PyYAML, jsonschema, referencing.
+YAML profile, the schemas, the content hash, and the references of the resolved
+configuration from the concept (docs/protocol-concept.md, Sections 5 and 8) work together.
+Dependencies: PyYAML, jsonschema, referencing.
 
 Usage: python3 schemas/tests/run.py
 Kinds come from two layers, as with `resolve`:
@@ -13,6 +14,9 @@ Directories under schemas/tests/:
   valid/           profile and schema must pass
   invalid/         profile passes, the schema must fail
   profile/invalid/ the YAML profile must fail
+  config/valid/        resolved configurations: schema and references must pass
+  config/invalid/      the configuration schema must fail
+  config/invalid-refs/ the schema passes, the reference check must fail
 """
 import hashlib
 import json
@@ -32,6 +36,8 @@ ROOT = Path(__file__).resolve().parent.parent
 TESTS = ROOT / "tests"
 MAX_INT = 2**53 - 1
 ARTIFACT_ID = "https://hone.invalid/schema/1/artifact.schema.json"
+CONFIG_ID = "https://hone.invalid/schema/1/config.schema.json"
+CONCEPT = ROOT.parent / "docs" / "protocol-concept.md"
 LIFECYCLE_DEFS = {"decided": "#/$defs/Decided", "living": "#/$defs/Living"}
 
 
@@ -201,24 +207,22 @@ def content_hash(meta, body):
 def load_kinds():
     """Kinds from the standard package and the project layer, the higher layer wins.
 
-    Returns {name: definition}. A relative `schema` path is resolved to the schema's $id.
+    Returns {name: definition} as in the resolved configuration: a relative `schema` path
+    is replaced by the embedded schema.
     """
     kinds = {}
     for layer in (ROOT / "standard", TESTS):
         for path in sorted((layer / "kinds").glob("*.yaml")):
             definition, _ = parse_artifact(path)
             if "schema" in definition:
-                schema = json.loads((layer / definition["schema"]).read_text(encoding="utf-8"))
-                definition["schema"] = schema["$id"]
+                definition["schema"] = json.loads((layer / definition["schema"]).read_text(encoding="utf-8"))
             kinds[path.stem] = definition
     return kinds
 
 
 def make_registry():
     registry = Registry()
-    files = [ROOT / "common.schema.json", ROOT / "artifact.schema.json"]
-    files += sorted((ROOT / "standard" / "schemas").glob("*.schema.json"))
-    for path in files:
+    for path in (ROOT / "common.schema.json", ROOT / "artifact.schema.json", ROOT / "config.schema.json"):
         schema = json.loads(path.read_text(encoding="utf-8"))
         Draft202012Validator.check_schema(schema)
         registry = registry.with_resource(schema["$id"], Resource.from_contents(schema))
@@ -241,7 +245,7 @@ class SchemaValid:
                 kind = self.kinds[kind_name]
                 parts = [{"$ref": ARTIFACT_ID}, {"$ref": ARTIFACT_ID + LIFECYCLE_DEFS[kind["lifecycle"]]}]
                 if "schema" in kind:
-                    parts.append({"$ref": kind["schema"]})
+                    parts.append(kind["schema"])
             schema = {"$schema": "https://json-schema.org/draft/2020-12/schema", "allOf": parts}
             self.validators[kind_name] = Draft202012Validator(
                 schema, registry=self.registry, format_checker=Draft202012Validator.FORMAT_CHECKER)
@@ -255,12 +259,133 @@ class SchemaValid:
             prefix = self.kinds[kind_name]["id_prefix"] + "-"
             if not str(meta.get("id", "")).startswith(prefix):
                 return f"id: must start with `{prefix}` (id_prefix of the kind)"
+            statuses = self.kinds[kind_name].get("statuses", {})
+            if "status" in meta and statuses and meta["status"] not in statuses:
+                return f"status: `{meta['status']}` is not a status of the kind `{kind_name}`"
         errs = sorted(self._validator(kind_name).iter_errors(meta), key=lambda e: list(e.absolute_path))
         if not errs:
             return None
         e = errs[0]
         where = "/".join(str(p) for p in e.absolute_path) or "(root)"
         return f"{where}: {e.message[:110]}"
+
+
+STANDARD_GATES = {"artifact-exists", "status-is", "schema-valid", "ids-unique", "links-resolve",
+                  "no-open-blocking-threads", "threads-answered", "approvals-valid", "steps-complete",
+                  "change-needs-binding"}
+
+
+def reference_errors(config):
+    """The references of a resolved configuration that JSON Schema cannot check."""
+    errs = []
+    kinds, roles, steps = config["kinds"], config["roles"], config["steps"]
+    plugins = config.get("plugins", {})
+
+    def need_role(where, role, capability=None):
+        if role not in roles:
+            errs.append(f"{where}: unknown role `{role}`")
+        elif capability and capability not in roles[role]["can"]:
+            errs.append(f"{where}: role `{role}` cannot `{capability}`")
+
+    def need_kind(where, kind, allow_ticket=False, decided=False):
+        if allow_ticket and kind == "ticket":
+            return
+        if kind not in kinds:
+            errs.append(f"{where}: unknown kind `{kind}`")
+        elif decided and kinds[kind]["lifecycle"] != "decided":
+            errs.append(f"{where}: kind `{kind}` must have lifecycle `decided`")
+
+    def need_statuses(where, kind, selector):
+        if kind not in kinds:
+            return
+        if kinds[kind]["lifecycle"] != "decided":
+            errs.append(f"{where}: kind `{kind}` has no statuses (lifecycle `living`)")
+            return
+        for status in selector if isinstance(selector, list) else [selector]:
+            if status != "superseded" and status not in kinds[kind]["statuses"]:
+                errs.append(f"{where}: `{status}` is not a status of the kind `{kind}`")
+
+    def check_gate(where, entry):
+        name, params = entry["gate"], entry.get("params", {})
+        if name == "exec":
+            if "evaluate" in params and params["evaluate"] not in plugins:
+                errs.append(f"{where}/evaluate: unknown plugin `{params['evaluate']}`")
+        elif name in ("artifact-exists", "status-is"):
+            need_kind(f"{where}/type", params["type"])
+            if "status" in params:
+                need_statuses(f"{where}/status", params["type"], params["status"])
+        elif name == "threads-answered":
+            need_role(f"{where}/role", params["role"])
+        elif name == "approvals-valid":
+            need_role(f"{where}/role", params["role"], "approve")
+            if "type" in params:
+                need_kind(f"{where}/type", params["type"], decided=True)
+        elif name == "change-needs-binding":
+            need_kind(f"{where}/anchored", params["anchored"])
+            need_kind(f"{where}/binding", params["binding"], decided=True)
+        elif name not in STANDARD_GATES and name not in plugins:
+            errs.append(f"{where}: unknown gate `{name}`")
+
+    prefixes = {}
+    for name, kind in kinds.items():
+        other = prefixes.setdefault(kind["id_prefix"], name)
+        if other != name:
+            errs.append(f"kinds/{name}/id_prefix: `{kind['id_prefix']}` is already used by `{other}`")
+    for handle, assigned in config["actors"].items():
+        for role in assigned:
+            need_role(f"actors/{handle}", role)
+    for name, step in steps.items():
+        where = f"steps/{name}"
+        for role in step["acts"]:
+            need_role(f"{where}/acts", role)
+        if "decides" in step:
+            need_role(f"{where}/decides", step["decides"])
+        for field in ("inputs", "outputs"):
+            for kind in step[field]:
+                need_kind(f"{where}/{field}", kind, allow_ticket=True)
+        for required in step["requires"]:
+            if required not in steps:
+                errs.append(f"{where}/requires: unknown step `{required}`")
+        for label, entry in step["gates"].items():
+            check_gate(f"{where}/gates/{label}", entry)
+
+    state = {}
+
+    def visit(name, path):
+        state[name] = "open"
+        for required in steps[name]["requires"]:
+            if state.get(required) == "open":
+                errs.append("steps: cycle in requires: " + " -> ".join(path + [required]))
+            elif required in steps and required not in state:
+                visit(required, path + [required])
+        state[name] = "done"
+
+    for name in steps:
+        if name not in state:
+            visit(name, [name])
+
+    for name, profile in config["profiles"].items():
+        for step in profile["steps"]:
+            if step not in steps:
+                errs.append(f"profiles/{name}/steps: unknown step `{step}`")
+    for i, rule in enumerate(config["select"]["rules"]):
+        if rule["profile"] not in config["profiles"]:
+            errs.append(f"select/rules/{i}/profile: unknown profile `{rule['profile']}`")
+    if config["select"]["default"] not in config["profiles"]:
+        errs.append(f"select/default: unknown profile `{config['select']['default']}`")
+    return errs
+
+
+def concept_example():
+    """The Level 1 example of the concept, parsed with the YAML profile."""
+    text = CONCEPT.read_text(encoding="utf-8")
+    section = text[text.index("### Level 1: the resolved configuration"):]
+    start = section.index("```yaml\n") + len("```yaml\n")
+    block = section[start:section.index("```\n", start)]
+    errs = lint(block)
+    if errs:
+        raise ProfileError("; ".join(errs))
+    return yaml.load(block, Loader=ProfileLoader)
 
 
 def main():
@@ -271,7 +396,25 @@ def main():
         failed += 0 if ok else 1
         print(f"  {'ok  ' if ok else 'FAIL'} {label}" + (f"  -> {detail}" if detail else ""))
 
-    validator = SchemaValid(load_kinds())
+    kinds = load_kinds()
+    validator = SchemaValid(kinds)
+    registry = validator.registry
+    config_schema = registry.contents(CONFIG_ID)
+    config_validator = Draft202012Validator(config_schema, registry=registry)
+    kind_validator = Draft202012Validator({"$ref": CONFIG_ID + "#/$defs/Kind"}, registry=registry)
+
+    def first_config_error(v, data):
+        errs = sorted(v.iter_errors(data), key=lambda e: list(e.absolute_path))
+        if not errs:
+            return None
+        e = errs[0]
+        return f"{'/'.join(str(p) for p in e.absolute_path) or '(root)'}: {e.message[:110]}"
+
+    print("kinds/")
+    for name, definition in kinds.items():
+        err = first_config_error(kind_validator, definition)
+        report(err is None, name, err or "")
+
     print("valid/")
     for p in sorted((TESTS / "valid").iterdir()):
         try:
@@ -330,6 +473,37 @@ def main():
     first_break = body.index(" ", body.index("Synchronous processing"))
     rewrapped = body[:first_break] + "\n" + body[first_break + 1:]
     report(content_hash(meta, rewrapped) != h, "a new line break inside a paragraph changes the hash")
+
+    print("config/valid/")
+    for p in sorted((TESTS / "config" / "valid").iterdir()):
+        config = json.loads(p.read_text(encoding="utf-8"))
+        err = first_config_error(config_validator, config)
+        if err is None:
+            refs = reference_errors(config)
+            err = refs[0] if refs else None
+        report(err is None, p.name, err or "")
+
+    print("config/invalid/")
+    for p in sorted((TESTS / "config" / "invalid").iterdir()):
+        err = first_config_error(config_validator, json.loads(p.read_text(encoding="utf-8")))
+        report(err is not None, p.name, err or "was wrongly accepted")
+
+    print("config/invalid-refs/")
+    for p in sorted((TESTS / "config" / "invalid-refs").iterdir()):
+        config = json.loads(p.read_text(encoding="utf-8"))
+        err = first_config_error(config_validator, config)
+        if err is not None:
+            report(False, p.name, f"already fails the schema: {err}")
+            continue
+        refs = reference_errors(config)
+        report(bool(refs), p.name, refs[0] if refs else "was wrongly accepted")
+
+    print("concept")
+    fixture = json.loads((TESTS / "config" / "valid" / "concept-example.json").read_text(encoding="utf-8"))
+    try:
+        report(concept_example() == fixture, "the Level 1 example in Section 8 equals config/valid/concept-example.json")
+    except ProfileError as e:
+        report(False, "the Level 1 example in Section 8 follows the YAML profile", str(e))
 
     print(f"\n{'ALL OK' if failed == 0 else str(failed) + ' FAILED'}")
     return 1 if failed else 0
