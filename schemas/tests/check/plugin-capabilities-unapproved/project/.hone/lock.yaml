@@ -1,0 +1,4 @@
+plugins:
+  public-api-has-decision:
+    hash: "sha256:8cdfdb733f07bf16997d89ca97acd1cfa7f58f499a4a46850d35a54c39e09bc5"
+    capabilities: { read: [src], net: [], timeout_ms: 5000, memory_pages: 256 }

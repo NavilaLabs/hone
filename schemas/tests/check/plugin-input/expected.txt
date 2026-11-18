@@ -1,0 +1,9 @@
+warning interfaces/probe artifact-accepted design/decisions/dec-2b4c6d8f-payment-sync.md -
+warning interfaces/probe artifact-accepted design/tickets/tk-9f2x4a8m/spec-3b8n1c5w-async.md -
+warning interfaces/probe artifact-none design/modules/mod-4t8w2n6c-fee.yaml -
+warning interfaces/probe artifact-none design/tickets/tk-9f2x4a8m/ticket.yaml -
+warning interfaces/probe artifact-superseded design/decisions/dec-7k3m2q8p-payment-async.md -
+warning interfaces/probe base-present - -
+warning interfaces/probe changed src/payments/fee.rs -
+warning interfaces/probe step-interfaces - -
+warning interfaces/probe ticket-tk-9f2x4a8m - -

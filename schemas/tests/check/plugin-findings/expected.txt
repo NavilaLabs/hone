@@ -1,0 +1,2 @@
+error interfaces/probe custom-code src/payments/fee.rs /fee/0
+warning interfaces/probe custom-note - -

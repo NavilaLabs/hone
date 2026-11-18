@@ -239,6 +239,36 @@ async fn check_failed_gate_is_a_normal_result() {
 }
 
 #[tokio::test]
+async fn check_takes_the_lockfile_relative_to_the_root() {
+    let case = "exec-unapproved-base-lock";
+    let arguments = json!({ "ticket": TICKET, "step": "interfaces" });
+    let own = call(project(check_case(case)), "check", arguments.clone()).await;
+    assert_eq!(own.content["status"], "passed", "{:?}", own.content);
+    let mut arguments = arguments;
+    arguments["lock"] = json!("../lock.yaml");
+    let base = call(project(check_case(case)), "check", arguments).await;
+    assert!(!base.is_error);
+    assert_eq!(gate_codes(&base.content), ["error exec-unapproved"]);
+}
+
+#[tokio::test]
+async fn check_takes_the_base_relative_to_the_root() {
+    let arguments = json!({
+        "ticket": TICKET,
+        "step": "interfaces",
+        "changed_paths": ["src/payments/fee.rs"],
+        "base": "../base",
+    });
+    let reply = call(
+        project(check_case("plugin-public-api-unbound")),
+        "check",
+        arguments,
+    )
+    .await;
+    assert_eq!(gate_codes(&reply.content), ["error public-api-unbound"]);
+}
+
+#[tokio::test]
 async fn check_that_cannot_run_is_an_error() {
     let reply = call(project(schemas().join("tests/check")), "check", json!({})).await;
     assert!(reply.is_error);
