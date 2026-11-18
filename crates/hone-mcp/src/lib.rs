@@ -28,6 +28,9 @@ pub struct Project {
     /// The author of every event the server writes, fixed for the session so that an agent
     /// cannot choose it per call. Without one, the writing tools fail.
     pub author: Option<Author>,
+    /// The shared folder of the tool `sync`, fixed for the session so that an agent cannot
+    /// sync into an arbitrary path. Without one, `sync` fails.
+    pub sync_folder: Option<PathBuf>,
 }
 
 /// Serves the MCP tools for `project` over stdin and stdout until the client disconnects.
@@ -366,6 +369,21 @@ impl Server {
     fn events(&self, Parameters(input): Parameters<EventsInput>) -> CallToolResult {
         match self.store().and_then(|store| store.events(&input.ticket)) {
             Ok(events) => CallToolResult::structured(to_value(&events)),
+            Err(error) => CallToolResult::structured_error(to_value(&error)),
+        }
+    }
+
+    #[tool(
+        description = "Sync the process store with the shared folder the server was started with: the events `received` and `sent` per device, and the `problems` (fork, id-conflict, invalid-event, unsafe-path)."
+    )]
+    fn sync(&self) -> CallToolResult {
+        let Some(folder) = &self.project.sync_folder else {
+            return CallToolResult::structured_error(to_value(&ProcessError::Invalid {
+                message: "the server has no shared folder: start it with --sync-folder".into(),
+            }));
+        };
+        match self.store().and_then(|store| store.sync(folder)) {
+            Ok(report) => CallToolResult::structured(to_value(&report)),
             Err(error) => CallToolResult::structured_error(to_value(&error)),
         }
     }

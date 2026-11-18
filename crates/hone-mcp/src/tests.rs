@@ -23,6 +23,7 @@ fn project(root: PathBuf) -> Project {
         packages: None,
         data_directory: None,
         author: None,
+        sync_folder: None,
     }
 }
 
@@ -40,6 +41,7 @@ fn resolve_case(name: &str) -> Project {
         packages: packages.exists().then_some(packages),
         data_directory: None,
         author: None,
+        sync_folder: None,
     }
 }
 
@@ -158,6 +160,7 @@ async fn lists_exactly_the_tools() {
             "events",
             "resolve",
             "step_set",
+            "sync",
             "thread_open",
             "thread_reopen",
             "thread_reply",
@@ -496,6 +499,7 @@ fn process_case(name: &str, author: Option<(&str, &str)>) -> Project {
             name: name.into(),
             role: role.into(),
         }),
+        sync_folder: None,
     }
 }
 

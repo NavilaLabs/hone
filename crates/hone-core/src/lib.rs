@@ -26,6 +26,7 @@ mod merge;
 mod packages;
 mod pointer;
 mod process;
+mod replication;
 mod resolved_file;
 mod schema_valid;
 mod source;
@@ -43,11 +44,12 @@ pub use check::{
 };
 pub use error::{Category, Location, Origin, Problem, ResolveError};
 pub use finding::{Code, Finding, Level};
-pub use log::InvalidEvent;
+pub use log::{Cursor, InvalidEvent};
 pub use process::{
     Appended, Author, Change, ProcessError, ProcessStore, StepState, StepStatus, ThreadAnchor,
     ThreadState, ThreadStatus, TicketEvents,
 };
+pub use replication::{SyncCode, SyncProblem, SyncReport};
 pub use resolved_file::{ResolvedFile, ResolvedFileError, compare_resolved, write_resolved};
 pub use source::{NoPackages, PackageDirectory, PackageSource};
 pub use yaml::YamlProfileError;

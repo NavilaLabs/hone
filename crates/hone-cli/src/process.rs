@@ -3,8 +3,8 @@ use std::process::ExitCode;
 
 use clap::{Args, Subcommand, ValueEnum};
 use hone_core::{
-    Appended, Author, Change, ProcessError, ProcessStore, StepStatus, ThreadAnchor, ThreadStatus,
-    TicketEvents,
+    Appended, Author, Change, ProcessError, ProcessStore, StepStatus, SyncReport, ThreadAnchor,
+    ThreadStatus, TicketEvents,
 };
 use serde::Serialize;
 
@@ -235,6 +235,53 @@ pub(crate) fn run_events(arguments: &EventsArguments) -> ExitCode {
     let outcome =
         ProcessStore::locate(&target.root, None).and_then(|store| store.events(&arguments.ticket));
     finish(target.json, outcome, print_events)
+}
+
+#[derive(Args)]
+pub(crate) struct SyncArguments {
+    #[command(flatten)]
+    target: Target,
+    /// The shared folder: below it, `<workspace>/<project>/log/`.
+    #[arg(long, env = "HONE_SYNC_FOLDER")]
+    folder: PathBuf,
+}
+
+pub(crate) fn run_sync(arguments: &SyncArguments) -> ExitCode {
+    let target = &arguments.target;
+    let outcome =
+        ProcessStore::locate(&target.root, None).and_then(|store| store.sync(&arguments.folder));
+    match (&outcome, target.json) {
+        (Ok(report), true) => println!("{}", to_json(report)),
+        (Ok(report), false) => print_sync(report),
+        (Err(error), true) => println!("{}", to_json(error)),
+        (Err(error), false) => eprintln!("{error}"),
+    }
+    match outcome {
+        Ok(report) if report.problems.is_empty() => ExitCode::SUCCESS,
+        Ok(_) => ExitCode::FAILURE,
+        Err(_) => ExitCode::from(2),
+    }
+}
+
+fn print_sync(report: &SyncReport) {
+    for (device, count) in &report.received {
+        println!("received {count} from {device}");
+    }
+    for (device, count) in &report.sent {
+        println!("sent {count} of {device}");
+    }
+    for problem in &report.problems {
+        let code = serde_json::to_value(problem.code).expect("serializable");
+        let line = problem
+            .line
+            .map_or_else(String::new, |line| format!(":{line}"));
+        eprintln!(
+            "{} {}{line}: {}",
+            code.as_str().unwrap_or_default(),
+            problem.path.display(),
+            problem.message
+        );
+    }
 }
 
 fn append(target: &Target, writer: &Writer, change: Change) -> ExitCode {

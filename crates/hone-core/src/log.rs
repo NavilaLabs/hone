@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::fs::File;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -8,6 +10,9 @@ use serde_json::Value;
 
 use crate::canonical;
 use crate::event;
+
+const SEGMENT_MAX_EVENTS: usize = 1000;
+const SEGMENT_MAX_BYTES: usize = 1024 * 1024;
 
 static SEGMENT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([1-9][0-9]*)\.ndjson$").expect("valid regex"));
@@ -36,11 +41,16 @@ pub(crate) struct OpenSegment {
     pub(crate) next_seq: Option<u64>,
 }
 
+/// The highest contiguous `seq` per device (concept Section 4, "Replication").
+pub type Cursor = BTreeMap<String, u64>;
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Log {
     pub(crate) events: Vec<Value>,
     pub(crate) invalid: Vec<InvalidEvent>,
     pub(crate) open_segments: BTreeMap<String, OpenSegment>,
+    pub(crate) locations: BTreeMap<String, (String, usize)>,
+    pub(crate) unsafe_paths: BTreeSet<String>,
 }
 
 impl Log {
@@ -62,6 +72,58 @@ impl Log {
         heads.sort();
         heads
     }
+
+    pub(crate) fn chains(&self) -> BTreeMap<&str, Vec<&Value>> {
+        let mut chains: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
+        for event in &self.events {
+            chains
+                .entry(event["device"].as_str().unwrap_or_default())
+                .or_default()
+                .push(event);
+        }
+        for chain in chains.values_mut() {
+            chain.sort_by_key(|event| event["seq"].as_u64());
+        }
+        chains
+    }
+
+    pub(crate) fn cursor(&self) -> Cursor {
+        self.chains()
+            .into_iter()
+            .map(|(device, chain)| (device.to_owned(), contiguous_end(&chain)))
+            .collect()
+    }
+
+    pub(crate) fn after(&self, cursor: &Cursor) -> Vec<Value> {
+        let mut events = Vec::new();
+        for (device, chain) in self.chains() {
+            let from = cursor.get(device).copied().unwrap_or(0);
+            let to = contiguous_end(&chain);
+            events.extend(
+                chain
+                    .into_iter()
+                    .filter(|event| {
+                        event["seq"]
+                            .as_u64()
+                            .is_some_and(|seq| seq > from && seq <= to)
+                    })
+                    .cloned(),
+            );
+        }
+        events
+    }
+}
+
+fn contiguous_end(chain: &[&Value]) -> u64 {
+    let mut end = None;
+    for seq in chain.iter().filter_map(|event| event["seq"].as_u64()) {
+        match end {
+            None => end = Some(seq),
+            Some(last) if seq == last + 1 => end = Some(seq),
+            Some(_) => break,
+        }
+    }
+    end.unwrap_or(0)
 }
 
 struct Candidate {
@@ -71,21 +133,132 @@ struct Candidate {
     line_number: usize,
 }
 
-pub(crate) fn read(store: &Path, project: &str) -> std::io::Result<Log> {
+pub(crate) fn read(store: &Path, project: &str, root: &Path) -> std::io::Result<Log> {
+    // Every directory and segment must stay below `root`: in an untrusted store, a symbolic
+    // link can point anywhere.
     let mut log = Log::default();
     let mut candidates = Vec::new();
     let directory = store.join("log");
     if !directory.exists() {
         return Ok(log);
     }
+    if !log.permitted(&directory, "log", root) {
+        return Ok(log);
+    }
     for device in sorted_entries(&directory)? {
-        if directory.join(&device).is_dir() {
-            read_device(&directory, &device, project, &mut log, &mut candidates)?;
+        let path = directory.join(&device);
+        if path.is_dir() && log.permitted(&path, &format!("log/{device}"), root) {
+            read_device(
+                &directory,
+                &device,
+                project,
+                root,
+                &mut log,
+                &mut candidates,
+            )?;
         }
     }
-    log.events = order(remove_conflicts(candidates, &mut log.invalid));
+    log.events = order(remove_conflicts(candidates, &mut log));
     log.invalid.sort();
     Ok(log)
+}
+
+impl Log {
+    fn permitted(&mut self, path: &Path, relative: &str, root: &Path) -> bool {
+        if below(path, root) {
+            return true;
+        }
+        self.unsafe_paths.insert(relative.to_owned());
+        self.invalid.push(InvalidEvent {
+            path: relative.to_owned(),
+            line: None,
+            ticket: None,
+            message: "the path leads outside the store".into(),
+        });
+        false
+    }
+}
+
+pub(crate) fn below(path: &Path, root: &Path) -> bool {
+    match (path.canonicalize(), root.canonicalize()) {
+        (Ok(path), Ok(root)) => path.starts_with(root),
+        _ => false,
+    }
+}
+
+pub(crate) fn segment_numbers(directory: &Path) -> std::io::Result<Vec<u64>> {
+    let mut numbers: Vec<u64> = sorted_entries(directory)?
+        .iter()
+        .filter_map(|name| SEGMENT.captures(name))
+        .filter_map(|captures| captures[1].parse().ok())
+        .collect();
+    numbers.sort_unstable();
+    Ok(numbers)
+}
+
+pub(crate) fn append_lines(
+    log_directory: &Path,
+    device: &str,
+    open: &mut OpenSegment,
+    lines: &[String],
+) -> std::io::Result<()> {
+    if lines.is_empty() {
+        return Ok(());
+    }
+    let device_directory = log_directory.join(device);
+    std::fs::create_dir_all(&device_directory)?;
+    let segment = |number: u64| device_directory.join(format!("{number}.ndjson"));
+    if open.number == 0 {
+        open.number = 1;
+    } else if open.bytes > open.complete_bytes {
+        File::options()
+            .write(true)
+            .open(segment(open.number))?
+            .set_len(open.complete_bytes as u64)?;
+        open.bytes = open.complete_bytes;
+    }
+    let mut file: Option<(u64, File)> = None;
+    for line in lines {
+        if open.lines >= SEGMENT_MAX_EVENTS || open.complete_bytes >= SEGMENT_MAX_BYTES {
+            open.number += 1;
+            open.lines = 0;
+            open.bytes = 0;
+            open.complete_bytes = 0;
+        }
+        if file
+            .as_ref()
+            .is_none_or(|(number, _)| *number != open.number)
+        {
+            if let Some((_, previous)) = file.take() {
+                previous.sync_data()?;
+            }
+            let opened = File::options()
+                .create(true)
+                .append(true)
+                .open(segment(open.number))?;
+            file = Some((open.number, opened));
+        }
+        let mut bytes = line.clone().into_bytes();
+        bytes.push(b'\n');
+        if let Some((_, handle)) = file.as_mut() {
+            handle.write_all(&bytes)?;
+        }
+        open.lines += 1;
+        open.complete_bytes += bytes.len();
+        open.bytes = open.complete_bytes;
+        open.next_seq = open.next_seq.map(|seq| seq + 1);
+    }
+    if let Some((_, handle)) = file {
+        handle.sync_data()?;
+    }
+    Ok(())
+}
+
+pub(crate) fn segment_path(store: &Path, device: &str, number: u64) -> PathBuf {
+    store
+        .join("log")
+        .join(device)
+        .join(format!("{number}.ndjson"))
 }
 
 fn sorted_entries(directory: &Path) -> std::io::Result<Vec<String>> {
@@ -103,6 +276,7 @@ fn read_device(
     log_directory: &Path,
     device: &str,
     project: &str,
+    root: &Path,
     log: &mut Log,
     candidates: &mut Vec<Candidate>,
 ) -> std::io::Result<()> {
@@ -110,7 +284,13 @@ fn read_device(
     let mut numbers = Vec::new();
     for name in sorted_entries(&directory)? {
         if let Some(captures) = SEGMENT.captures(&name) {
-            if let Ok(number) = captures[1].parse::<u64>() {
+            if let Ok(number) = captures[1].parse::<u64>()
+                && log.permitted(
+                    &directory.join(&name),
+                    &format!("log/{device}/{name}"),
+                    root,
+                )
+            {
                 numbers.push(number);
             }
         } else if name.ends_with(".ndjson.zst") {
@@ -226,7 +406,7 @@ fn read_device(
     Ok(())
 }
 
-fn remove_conflicts(candidates: Vec<Candidate>, invalid: &mut Vec<InvalidEvent>) -> Vec<Value> {
+fn remove_conflicts(candidates: Vec<Candidate>, log: &mut Log) -> Vec<Value> {
     let mut by_id: BTreeMap<String, Vec<Candidate>> = BTreeMap::new();
     for candidate in candidates {
         let id = candidate.event["id"]
@@ -238,11 +418,13 @@ fn remove_conflicts(candidates: Vec<Candidate>, invalid: &mut Vec<InvalidEvent>)
     let mut events = Vec::new();
     for (id, mut copies) in by_id {
         if copies.iter().all(|copy| copy.line == copies[0].line) {
-            events.push(copies.swap_remove(0).event);
+            let kept = copies.swap_remove(0);
+            log.locations.insert(id, (kept.path, kept.line_number));
+            events.push(kept.event);
             continue;
         }
         for copy in copies {
-            invalid.push(InvalidEvent {
+            log.invalid.push(InvalidEvent {
                 path: copy.path,
                 line: Some(copy.line_number),
                 ticket: copy.event["ticket"].as_str().map(str::to_owned),

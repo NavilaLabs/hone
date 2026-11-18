@@ -43,6 +43,9 @@ enum Command {
     Step(process::Step),
     /// Show the process state of a ticket: events, threads, steps, and invalid events.
     Events(process::EventsArguments),
+    /// Sync the process store with a shared folder. Exits with 0 when the sync found no problem,
+    /// 1 when it reported problems, and 2 when it could not run.
+    Sync(process::SyncArguments),
     /// Serve the MCP tools of the project over stdio.
     Mcp {
         /// Project root, the directory that contains `.hone/`.
@@ -57,6 +60,9 @@ enum Command {
         /// The role of that author.
         #[arg(long, env = "HONE_ROLE", requires = "author")]
         role: Option<String>,
+        /// The shared folder of the tool `sync`.
+        #[arg(long, env = "HONE_SYNC_FOLDER")]
+        sync_folder: Option<PathBuf>,
     },
     /// Run hone as a hook of an agent.
     #[command(subcommand)]
@@ -92,11 +98,13 @@ fn main() -> ExitCode {
         Command::Thread(thread) => process::run_thread(thread),
         Command::Step(step) => process::run_step(step),
         Command::Events(arguments) => process::run_events(&arguments),
+        Command::Sync(arguments) => process::run_sync(&arguments),
         Command::Mcp {
             root,
             packages,
             author,
             role,
+            sync_folder,
         } => {
             let author = author
                 .zip(role)
@@ -106,6 +114,7 @@ fn main() -> ExitCode {
                 packages,
                 data_directory: None,
                 author,
+                sync_folder,
             };
             match hone_mcp::serve_stdio(project) {
                 Ok(()) => ExitCode::SUCCESS,

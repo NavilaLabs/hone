@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::File;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -13,12 +12,10 @@ use crate::directory::Directory;
 use crate::event::{
     self, STEP_CHANGED, THREAD_MESSAGE, THREAD_OPENED, THREAD_REOPENED, THREAD_RESOLVED,
 };
-use crate::log::{self, InvalidEvent, Log};
+use crate::log::{self, Cursor, InvalidEvent, Log};
 use crate::manifest;
+use crate::replication::{self, SyncReport};
 use crate::{CheckError, Resolved};
-
-const SEGMENT_MAX_EVENTS: usize = 1000;
-const SEGMENT_MAX_BYTES: usize = 1024 * 1024;
 
 /// The local process store of one project (concept Section 4, "Process store"): one log per
 /// device, read in a deterministic order. hone keeps it in the data directory of the platform
@@ -26,6 +23,7 @@ const SEGMENT_MAX_BYTES: usize = 1024 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessStore {
     project_root: PathBuf,
+    workspace: String,
     project: String,
     directory: PathBuf,
 }
@@ -200,7 +198,7 @@ pub struct TicketEvents {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "kebab-case")]
 pub enum ProcessError {
-    /// The store directory does not exist, for example in CI.
+    /// The store directory or the shared folder does not exist, for example in CI.
     Unavailable {
         /// The directory that was looked for.
         message: String,
@@ -261,7 +259,8 @@ impl ProcessStore {
         };
         Ok(Self {
             project_root: project_root.to_path_buf(),
-            directory: base.join(workspace).join(&project),
+            directory: base.join(&workspace).join(&project),
+            workspace,
             project,
         })
     }
@@ -279,12 +278,60 @@ impl ProcessStore {
     /// Returns [`ProcessError::Unavailable`] if the store directory does not exist and
     /// [`ProcessError::IoError`] if a segment cannot be read.
     pub fn events(&self, ticket: &str) -> Result<TicketEvents, ProcessError> {
-        if !self.directory.is_dir() {
+        Ok(ticket_events(&self.load_existing()?, ticket))
+    }
+
+    /// The cursor of the store (concept Section 4, "Replication"): for every device, the
+    /// highest `seq` up to which its valid events are contiguous.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProcessError::Unavailable`] if the store directory does not exist and
+    /// [`ProcessError::IoError`] if a segment cannot be read.
+    pub fn cursor(&self) -> Result<Cursor, ProcessError> {
+        Ok(self.load_existing()?.cursor())
+    }
+
+    /// `read(cursor)` of the replication contract: every valid event with a `seq` above the
+    /// cursor's value for its device, up to the store's own cursor. The events of one device
+    /// come in ascending `seq`, the devices in the order of their IDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProcessError::Unavailable`] if the store directory does not exist and
+    /// [`ProcessError::IoError`] if a segment cannot be read.
+    pub fn read(&self, cursor: &Cursor) -> Result<Vec<Value>, ProcessError> {
+        Ok(self.load_existing()?.after(cursor))
+    }
+
+    /// Syncs the store with the shared folder `folder` (concept Section 4, "Shared folder"):
+    /// imports the missing events of every device from `<folder>/<workspace>/<project>/`, then
+    /// writes the missing part of this device's own log there. The local store is created if
+    /// it does not exist. Forks, conflicts, invalid lines, and unsafe paths are reported, not
+    /// raised.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProcessError::Unavailable`] if `folder` is not a directory, without creating
+    /// anything, and [`ProcessError::IoError`] if a store cannot be read or written.
+    pub fn sync(&self, folder: &Path) -> Result<SyncReport, ProcessError> {
+        if !folder.is_dir() {
             return Err(ProcessError::Unavailable {
-                message: format!("no process store at {}", self.directory.display()),
+                message: format!("no shared folder at {}", folder.display()),
             });
         }
-        Ok(ticket_events(&self.read()?, ticket))
+        let _lock = self.lock()?;
+        let own = self.existing_device()?;
+        replication::sync_folder(
+            &self.directory,
+            &self.workspace,
+            &self.project,
+            own.as_deref(),
+            folder,
+        )
+        .map_err(|error| ProcessError::IoError {
+            message: format!("{}: {error}", folder.display()),
+        })
     }
 
     /// Writes `change` as one event of this device by `author`, after checking it against the
@@ -303,7 +350,7 @@ impl ProcessStore {
             kind,
             payload,
             thread,
-        } = self.prepare(&self.read()?, change)?;
+        } = self.prepare(&self.load()?, change)?;
         let snapshot = load_ticket(&self.project_root, &ticket)?.1;
         if snapshot.document()["roles"].get(&author.role).is_none() {
             return Err(invalid(format!(
@@ -336,17 +383,10 @@ impl ProcessStore {
             return Err(invalid(violation));
         }
 
-        std::fs::create_dir_all(self.directory.join("log")).map_err(|error| self.io(&error))?;
-        let lock = File::options()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(self.directory.join("lock"))
-            .map_err(|error| self.io(&error))?;
-        lock.lock().map_err(|error| self.io(&error))?;
+        let _lock = self.lock()?;
         let device = self.device()?;
-        let log = self.read()?;
-        let open = log.open_segments.get(&device).cloned().unwrap_or_default();
+        let log = self.load()?;
+        let mut open = log.open_segments.get(&device).cloned().unwrap_or_default();
         let seq = match open.next_seq {
             Some(seq) => seq,
             None if open.lines == 0 => 1,
@@ -360,13 +400,42 @@ impl ProcessStore {
             }
         };
         let event = build(&device, seq, log.heads(&device));
-        self.write_line(&device, &open, &event)?;
+        log::append_lines(
+            &self.directory.join("log"),
+            &device,
+            &mut open,
+            &[canonical::to_canonical(&event)],
+        )
+        .map_err(|error| self.io(&error))?;
         let thread = thread.or_else(|| (kind == THREAD_OPENED).then(|| event::thread_of(&id)));
         Ok(Appended { event, thread })
     }
 
-    fn read(&self) -> Result<Log, ProcessError> {
-        log::read(&self.directory, &self.project).map_err(|error| self.io(&error))
+    fn load(&self) -> Result<Log, ProcessError> {
+        log::read(&self.directory, &self.project, &self.directory).map_err(|error| self.io(&error))
+    }
+
+    fn load_existing(&self) -> Result<Log, ProcessError> {
+        if !self.directory.is_dir() {
+            return Err(ProcessError::Unavailable {
+                message: format!("no process store at {}", self.directory.display()),
+            });
+        }
+        self.load()
+    }
+
+    fn lock(&self) -> Result<File, ProcessError> {
+        // Held until the file is dropped, so that two hone processes never hand out the same
+        // `seq` or import while the other appends.
+        std::fs::create_dir_all(self.directory.join("log")).map_err(|error| self.io(&error))?;
+        let lock = File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(self.directory.join("lock"))
+            .map_err(|error| self.io(&error))?;
+        lock.lock().map_err(|error| self.io(&error))?;
+        Ok(lock)
     }
 
     fn io(&self, error: &std::io::Error) -> ProcessError {
@@ -376,18 +445,24 @@ impl ProcessStore {
     }
 
     fn device(&self) -> Result<String, ProcessError> {
+        if let Some(device) = self.existing_device()? {
+            return Ok(device);
+        }
+        let device = event::new_device_id();
+        std::fs::write(self.directory.join("device"), format!("{device}\n"))
+            .map_err(|error| self.io(&error))?;
+        Ok(device)
+    }
+
+    fn existing_device(&self) -> Result<Option<String>, ProcessError> {
         let path = self.directory.join("device");
         let device = match std::fs::read_to_string(&path) {
             Ok(text) => text.trim().to_owned(),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let device = event::new_device_id();
-                std::fs::write(&path, format!("{device}\n")).map_err(|error| self.io(&error))?;
-                device
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(self.io(&error)),
         };
         if manifest::is_device_id(&device) {
-            Ok(device)
+            Ok(Some(device))
         } else {
             Err(ProcessError::IoError {
                 message: format!("{}: `{device}` is not a device ID", path.display()),
@@ -495,43 +570,6 @@ impl ProcessStore {
                 value
             }
         })
-    }
-
-    fn write_line(
-        &self,
-        device: &str,
-        open: &log::OpenSegment,
-        event: &Value,
-    ) -> Result<(), ProcessError> {
-        let device_directory = self.directory.join("log").join(device);
-        std::fs::create_dir_all(&device_directory).map_err(|error| self.io(&error))?;
-        let segment = |number: u64| device_directory.join(format!("{number}.ndjson"));
-        let number = if open.number == 0 {
-            1
-        } else {
-            if open.bytes > open.complete_bytes {
-                File::options()
-                    .write(true)
-                    .open(segment(open.number))
-                    .and_then(|file| file.set_len(open.complete_bytes as u64))
-                    .map_err(|error| self.io(&error))?;
-            }
-            if open.lines >= SEGMENT_MAX_EVENTS || open.complete_bytes >= SEGMENT_MAX_BYTES {
-                open.number + 1
-            } else {
-                open.number
-            }
-        };
-        let mut line = canonical::to_canonical(event).into_bytes();
-        line.push(b'\n');
-        let mut file = File::options()
-            .create(true)
-            .append(true)
-            .open(segment(number))
-            .map_err(|error| self.io(&error))?;
-        file.write_all(&line)
-            .and_then(|()| file.sync_data())
-            .map_err(|error| self.io(&error))
     }
 }
 
