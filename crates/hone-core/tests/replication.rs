@@ -444,4 +444,44 @@ mod links {
         assert_eq!(codes(&report), [SyncCode::UnsafePath]);
         assert!(report.received.is_empty(), "{report:?}");
     }
+
+    #[test]
+    fn a_dangling_link_does_not_create_a_file_outside() {
+        let case = schemas().join("tests/sync/exchange");
+        let scratch = Scratch::new("dangling-link");
+        copy_directory(&case.join("local"), &scratch.local_store());
+        let outside = scratch.root.join("created-outside.ndjson");
+        let log = scratch
+            .folder()
+            .join("local")
+            .join(PROJECT)
+            .join("log/dev-3k9a5h2t");
+        std::fs::create_dir_all(&log).expect("creatable");
+        symlink(&outside, log.join("1.ndjson")).expect("linkable");
+
+        let report = scratch.store().sync(&scratch.folder()).expect("syncs");
+        assert!(codes(&report).contains(&SyncCode::UnsafePath), "{report:?}");
+        assert!(report.sent.is_empty());
+        assert!(!outside.exists(), "no file is created through the link");
+    }
+
+    #[test]
+    fn a_fifo_segment_is_skipped_without_blocking() {
+        let scratch = Scratch::new("fifo");
+        let log = scratch
+            .folder()
+            .join("local")
+            .join(PROJECT)
+            .join("log/dev-7q2m8x4c");
+        std::fs::create_dir_all(&log).expect("creatable");
+        let status = std::process::Command::new("mkfifo")
+            .arg(log.join("1.ndjson"))
+            .status()
+            .expect("mkfifo runs");
+        assert!(status.success());
+
+        let report = scratch.store().sync(&scratch.folder()).expect("syncs");
+        assert_eq!(codes(&report), [SyncCode::UnsafePath]);
+        assert!(report.received.is_empty());
+    }
 }
