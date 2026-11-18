@@ -171,6 +171,28 @@ fn a_missing_lockfile_or_base_stops_the_check() {
     assert!(error.message.contains("base"), "{}", error.message);
 }
 
+#[cfg(unix)]
+#[test]
+fn a_read_entry_that_links_outside_the_project_is_not_mounted() {
+    let project = Scratch::of("plugin-read-within-capabilities", "symlink-escape");
+    let outside =
+        std::env::temp_dir().join(format!("hone-plugin-test-outside-{}", std::process::id()));
+    std::fs::create_dir_all(outside.join("payments")).expect("create");
+    std::fs::write(outside.join("payments/fee.rs"), "secret").expect("write");
+    std::fs::remove_dir_all(project.0.join("src")).expect("remove src");
+    std::os::unix::fs::symlink(&outside, project.0.join("src")).expect("symlink");
+    let report = check(&project.0, &interfaces());
+    let _ = std::fs::remove_dir_all(&outside);
+    let codes: Vec<String> = report
+        .expect("runs")
+        .gates
+        .iter()
+        .flat_map(|gate| &gate.findings)
+        .map(|finding| finding.code.name().to_owned())
+        .collect();
+    assert_eq!(codes, ["unreadable"]);
+}
+
 #[test]
 fn without_a_lockfile_nothing_is_approved() {
     let project = Scratch::of("plugin-trap", "no-lockfile");

@@ -202,7 +202,10 @@ impl<'a> Host<'a> {
                 } else {
                     (root.join(entry), Path::new(guest).join(entry))
                 };
-                if host.exists() {
+                // A symbolic link in the checked state must not mount a directory outside it.
+                if let (Ok(host), Ok(root)) = (host.canonicalize(), root.canonicalize())
+                    && host.starts_with(&root)
+                {
                     mounts.push((format!("ro:{}", host.display()), guest));
                 }
             }
