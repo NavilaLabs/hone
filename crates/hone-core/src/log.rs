@@ -197,11 +197,10 @@ pub(crate) fn open_below(path: &Path, root: &Path, write: bool) -> std::io::Resu
             .create_new(true)
             .open(path)?,
         Err(error) => return Err(error),
-        // Opening a FIFO or device would block or read something else entirely.
-        Ok(_) if !std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) => {
-            return Ok(None);
-        }
-        Ok(_) => File::options().read(true).append(write).open(path)?,
+        Ok(_) => match open_existing(path, write)? {
+            Some(file) => file,
+            None => return Ok(None),
+        },
     };
     // Checking the path before opening it leaves a window in which a writer of the folder can
     // swap in a link, so the opened file itself must be the one found below `root`.
@@ -212,6 +211,41 @@ pub(crate) fn open_below(path: &Path, root: &Path, write: bool) -> std::io::Resu
         return Ok(None);
     }
     Ok(same_file(&file, &canonical)?.then_some(file))
+}
+
+#[cfg(unix)]
+fn open_existing(path: &Path, write: bool) -> std::io::Result<Option<File>> {
+    use std::os::unix::fs::OpenOptionsExt;
+    // A type check before the open leaves a window in which a writer of the folder can swap in
+    // a FIFO, and opening a FIFO blocks. `O_NONBLOCK` opens anything at once; `same_file` then
+    // rejects whatever is not a regular file.
+    match File::options()
+        .read(true)
+        .append(write)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+    {
+        Ok(file) => Ok(Some(file)),
+        // A dangling link, a socket, or a device without a driver behind it.
+        Err(error)
+            if error.kind() == ErrorKind::NotFound || error.raw_os_error() == Some(libc::ENXIO) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(not(unix))]
+fn open_existing(path: &Path, write: bool) -> std::io::Result<Option<File>> {
+    if !std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) {
+        return Ok(None);
+    }
+    File::options()
+        .read(true)
+        .append(write)
+        .open(path)
+        .map(Some)
 }
 
 #[cfg(unix)]

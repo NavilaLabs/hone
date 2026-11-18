@@ -1115,6 +1115,7 @@ dependencies = [
  "extism",
  "getrandom 0.4.3",
  "jsonschema",
+ "libc",
  "regex",
  "ryu-js",
  "saphyr-parser",
