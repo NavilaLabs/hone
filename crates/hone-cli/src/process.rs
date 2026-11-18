@@ -381,3 +381,15 @@ fn print_events(events: &TicketEvents) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::printable;
+
+    #[test]
+    fn control_characters_are_escaped_for_the_terminal() {
+        assert_eq!(
+            printable("dev-\u{1b}[31mred\u{7}é"),
+            "dev-\\u{1b}[31mred\\u{7}é"
+        );
+    }
+}

@@ -398,4 +398,50 @@ mod links {
         assert!(report.sent.is_empty());
         assert_eq!(std::fs::read_dir(&outside).expect("readable").count(), 0);
     }
+
+    #[test]
+    fn a_hard_linked_own_segment_is_not_written() {
+        let case = schemas().join("tests/sync/push-completes-torn-line");
+        let scratch = Scratch::new("hard-linked-own");
+        copy_directory(&case.join("local"), &scratch.local_store());
+        let outside = scratch.root.join("outside.ndjson");
+        std::fs::write(&outside, "").expect("writable");
+        let log = scratch
+            .folder()
+            .join("local")
+            .join(PROJECT)
+            .join("log/dev-3k9a5h2t");
+        std::fs::create_dir_all(&log).expect("creatable");
+        std::fs::hard_link(&outside, log.join("1.ndjson")).expect("linkable");
+
+        let report = scratch.store().sync(&scratch.folder()).expect("syncs");
+        assert!(codes(&report).contains(&SyncCode::UnsafePath), "{report:?}");
+        assert!(report.sent.is_empty());
+        assert_eq!(std::fs::read(&outside).expect("readable"), b"");
+    }
+
+    #[test]
+    fn a_hard_linked_foreign_segment_is_not_imported() {
+        let case = schemas().join("tests/sync/fresh-local-store");
+        let scratch = Scratch::new("hard-linked-foreign");
+        let outside = scratch.root.join("outside.ndjson");
+        std::fs::copy(
+            case.join("folder/local")
+                .join(PROJECT)
+                .join("log/dev-7q2m8x4c/1.ndjson"),
+            &outside,
+        )
+        .expect("copyable");
+        let log = scratch
+            .folder()
+            .join("local")
+            .join(PROJECT)
+            .join("log/dev-7q2m8x4c");
+        std::fs::create_dir_all(&log).expect("creatable");
+        std::fs::hard_link(&outside, log.join("1.ndjson")).expect("linkable");
+
+        let report = scratch.store().sync(&scratch.folder()).expect("syncs");
+        assert_eq!(codes(&report), [SyncCode::UnsafePath]);
+        assert!(report.received.is_empty(), "{report:?}");
+    }
 }
