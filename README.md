@@ -4,7 +4,7 @@ Sharpen the design before the code.
 
 hone is an open protocol and a reference implementation for recording design artifacts in a project: specs, decisions, modules, test plans, their links, their lifecycle, and the steps that lead from a ticket to code. Every rule can be checked deterministically, without AI, so the same check can block an agent, a pre-push hook, or a CI run.
 
-> **Status:** design phase. The protocol concept ([docs/protocol-concept.md](docs/protocol-concept.md)) and the schemas are in place. The CLI resolves a configuration (`hone resolve`), runs the standard gates (`hone check`), blocks agent edits of code without a binding decision (`hone hook claude-code`), writes comment threads and step state to a local process store (`hone thread`, `hone step`, `hone events`), and offers the same functions to agents as an MCP server (`hone mcp`). `exec` gates, plugins, and replication come later.
+> **Status:** design phase. The protocol concept ([docs/protocol-concept.md](docs/protocol-concept.md)) and the schemas are in place. The CLI resolves a configuration (`hone resolve`), runs the standard gates (`hone check`), blocks agent edits of code without a binding decision (`hone hook claude-code`), writes comment threads and step state to a local process store (`hone thread`, `hone step`, `hone events`), runs plugin gates in a WebAssembly sandbox and approved `exec` commands, and offers the same functions to agents as an MCP server (`hone mcp`). Replication comes later.
 >
 > **Until v1 nothing is stable.** Every part, from the protocol and the schemas to the implementation, may still be changed, replaced, or rebuilt from scratch. There are no compatibility guarantees before v1.
 
@@ -37,7 +37,7 @@ Run the tests:
 cargo test
 ```
 
-`cargo test` covers the resolved configuration, the resolution test cases, the artifact fixtures, the content hash, the gate test cases (`schemas/tests/check/`), the event fixtures and the process store (`schemas/tests/events/`), and every MCP tool.
+`cargo test` covers the resolved configuration, the resolution test cases, the artifact fixtures, the content hash, the gate test cases (`schemas/tests/check/`, including plugin and `exec` gates), the plugin input, the event fixtures and the process store (`schemas/tests/events/`), and every MCP tool.
 
 ## Checking
 
@@ -49,6 +49,31 @@ git diff --name-only main | hone check --ticket tk-9f2x4a8m --changed-from -
 ```
 
 `--changed <path>` (repeatable) and `--changed-from <file|->` (one path per line, an empty file means no changes) supply the changed paths for `change-needs-binding`. `--class pure|exec` runs only one class of gates, and `--json` prints the result as JSON.
+
+### Plugins and `exec` gates
+
+A plugin gate runs a WebAssembly module (WASI preview 1) from `.hone/plugins/<name>.wasm` in a sandbox: it reads the project read-only under `/project` and, with `--base <dir>`, the base state under `/base`, and has no network. An `exec` gate runs a command of the toolchain, without a shell and with only the environment variables it names. Both run only when the lockfile approves them: the plugin with its hash and capabilities, the command under `x-hone-exec`.
+
+```yaml
+# .hone/lock.yaml
+plugins:
+  public-api-has-decision:
+    hash: "sha256:…"
+    capabilities:
+      { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }
+x-hone-exec:
+  - { command: [cargo, test], env: [CARGO_HOME, HOME, PATH, RUSTUP_HOME] }
+```
+
+`--lock <file>` replaces `.hone/lock.yaml`. CI passes the lockfile of the protected base state, so that a pull request cannot approve its own plugins or commands:
+
+```sh
+git show origin/main:.hone/lock.yaml > /tmp/lock.yaml
+git worktree add /tmp/base origin/main
+hone check --ticket tk-9f2x4a8m --changed-from changed.txt --base /tmp/base --lock /tmp/lock.yaml
+```
+
+hone's own plugins live in [`plugins/`](plugins/README.md).
 
 ### Claude Code hook
 
