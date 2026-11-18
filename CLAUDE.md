@@ -35,6 +35,7 @@ A rule that needs Git, a specific tracker, a server, or an agent belongs to the 
 ## Implementation invariants
 
 - Paths from an untrusted state (a checked directory, a base state, a shared folder) are canonicalized and must stay under their root before hone mounts, copies, or reads them. A symbolic link can point anywhere.
+- For an untrusted path, check the opened file, not only the path: it is a regular file with one link, and its device and inode match the canonical path below the root. Between a check and the open, a writer can swap in a link, a hard link, or a FIFO. Use `log::open_below`.
 - `hone-core` works inside a tokio runtime, because the MCP server calls it from one. Work that blocks on a runtime (WASI in wasmtime) runs on a thread of its own.
 - A request is validated before anything is created on disk, so a rejected call leaves no trace.
 
