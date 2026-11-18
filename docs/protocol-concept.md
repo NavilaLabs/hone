@@ -79,7 +79,7 @@ From artifact storage, the protocol requires only a directory that can be read a
 - **The source of truth is an append-only event log, one log per device and project**, to which only that device appends. There are no competing writers. Merging means reading all logs and taking the union.
 - **Segments.** A device's log consists of segments: `log/<device>/<number>.ndjson`. The number is decimal without leading zeros and starts at 1. The segment with the highest number is open, every lower one is closed. A segment is closed after a fixed number of events or a fixed size (the thresholds are up to the tool). Closed segments are immutable and may be compressed (`.ndjson.zst`). Events are never rewritten, there is no compaction. Archiving and dropping (Section 10) operate on whole segments of completed tickets.
 - **Lines.** Every line of a segment is one event as JSON in the canonical form of RFC 8785, ending with `\n`, so that the bytes of an event are unambiguous (a later `sig` signs them). A last line without `\n` in the open segment is an interrupted write: readers ignore it, and the writer cuts it off before it appends again. In a closed segment, it is an error.
-- **Every event has a sequence number** (`seq`) in its device's log. It starts at 1 and grows by exactly 1. A gap is allowed only where whole segments are missing (archived or dropped). The **cursor** of a state is a map `device → last seq` and says exactly what a peer is missing.
+- **Every event has a sequence number** (`seq`) in its device's log. It starts at 1 and grows by exactly 1. A gap is allowed only where whole segments are missing (archived or dropped). The **cursor** of a state is a map `device → last seq` and says exactly what a peer is missing (Section 4, "Replication").
 - **Order without a shared clock.** The order is deterministic: topological by `after` and, within one device, by `seq`. Ties are broken by `id`, which is a UUIDv7 and therefore starts with the time of writing (Question 11, Question 31). `after` expresses causality only: it lists, for every other device, the newest event the writer had read when it wrote. What an event refers to (a thread, an artifact) lives in `payload`. Diverging clocks therefore change at most the order of concurrent events, never the order of events that knew each other. A reference in `after` to an event that is not present (a lost or not yet synchronized device) does not count. A cycle cannot arise honestly, and if it does, the events in it are ordered by `id`.
 - **Why no database format as the source of truth.** Database files from two devices cannot be merged without conflicts, neither through a shared folder nor through Git. Appended text files can. For fast queries, an implementation builds an index (for example an embedded database). It is a cache, can be rebuilt from the logs at any time, and is not part of the protocol (Section 12).
 - **Local storage:** a directory per workspace and project (hone: Section 12) with `log/` and the sync state. Without a server, the workspace is `local`. All clones and worktrees of a project share this storage, because a ticket lives across branches. If the directory does not exist, the process store is unavailable. If it exists but holds no events, the store is empty.
@@ -123,7 +123,23 @@ A known type has a fixed payload schema. Custom types are named `x-<name>` and h
 
 ### Replication
 
-**Contract (per project):** `append(events)`, `read(cursor) → events`, `sync(peer)`. During sync, both sides exchange their cursors and send each other what is missing. Events are never changed, duplicate IDs are ignored. The tool computes status and order deterministically from the set (order: see above), so there are no merge conflicts.
+**Contract (per project):** `append(events)`, `read(cursor) → events`, `sync(peer)`. During sync, both sides exchange their cursors and send each other what is missing. Events are never changed, duplicate IDs are ignored. The tool computes status and order deterministically from the set (order: see above), so there are no merge conflicts. In detail (Question 33):
+
+- **Cursor.** A JSON object from device ID to `seq`, for example `{"dev-3k9a5h2t": 118, "dev-7q2m8x4c": 5}`. A device that is missing counts as 0. The cursor of a state names, for every device, the highest `seq` up to which its valid events are contiguous, counted from its first valid event. A valid event behind a hole (an invalid line in the middle) does not raise the cursor.
+- **`read(cursor)`** returns every event of the state with `seq` greater than the cursor's value for its device, up to that device's own cursor. The events of one device come in ascending `seq`, the devices in any order: the receiver computes the order of the set itself. Invalid events are never returned.
+- **`append(events)`** takes events in order. An event that is already present with the same content (same `id`, same bytes) is accepted and changes nothing. An event is stored only when it continues its device's log (`seq` is the cursor plus 1). The first event that cannot be stored ends the call: everything before it is stored, nothing after it.
+- **`sync(peer)`** is `read` and `append` in both directions, each side with the other's cursor.
+- **Segments of a replica.** Only `seq` is shared. Every store cuts the segments of every log with its own thresholds, including the logs of other devices it holds. A device's own log in a shared folder is the same log as the local one and is therefore written byte for byte.
+- **Duplicates and conflicts.** An incoming event is compared with the event the receiver holds at the same device and `seq`. The same bytes are a duplicate and are ignored. The same `id` with other content is an **`id-conflict`**, as is an `id` the receiver holds at another device or `seq`. Another `id` at the same device and `seq` is a **`fork`**: two machines write as one device, for example after a data directory was copied. In all conflict cases the receiver keeps its copy, does not store the incoming event or any later one of that device from this peer, and reports it. The states may then diverge until a person resolves the fork.
+
+**Shared folder.** A shared folder (a mounted directory, Nextcloud, Syncthing, a network drive) is a peer without a program on the other side. Its layout is normative, so that tools of different vendors can share one folder: below the folder root, the folder holds process stores in the layout of the local store, `<workspace>/<project>/log/<device>/<number>.ndjson`. One folder can therefore serve many projects, for example as a backup target. The reading rules apply to it unchanged. Sync with a folder means:
+
+- **Pull.** For every device, including the own one, the receiver imports the valid events after its cursor, as long as their `seq` is contiguous. It stops at the first gap, the first invalid line, or the first conflict, and reports that. A torn line, a gap left by a segment that has not arrived yet, or a closed segment that is still being written thus delays the import until the next sync and never causes a gap. Importing the own device restores a log from a backup.
+- **Push.** A device writes only its own log into the folder, never that of another device, so that two writers never touch the same file. For every segment of its own log, the folder copy must be a byte prefix of the local segment: the missing rest is appended, a missing file is created. If the folder copy is not a prefix, that is a `fork`, and the file stays untouched. Push never overwrites, renames, or deletes anything in the folder. Only complete lines are pushed.
+- **Untrusted content.** The folder is untrusted. Files whose name is not `<number>.ndjson` in a device directory are ignored, including the conflict copies of sync tools. Every path is resolved to its canonical form and must stay below the folder root, otherwise it is neither read nor written and is reported as **`unsafe-path`**. A line that breaks the reading rules is reported as **`invalid-event`**.
+- **Missing folder.** If the folder root does not exist, sync fails and creates nothing, because an unmounted share would otherwise fill a local directory. The project directory below the root is created on the first push. If the local store does not exist, sync creates it. It creates no device ID, because a device that has written nothing needs none.
+
+A shared folder has no real time and no permissions below the access to the folder. A Git branch is a shared folder whose root is a worktree of that branch (Section 12).
 
 | Peer                    | Purpose                                                                                                                                                        |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -133,8 +149,8 @@ A known type has a fixed payload schema. Custom types are named `x-<name>` and h
 
 **Role of the server.** It is the rendezvous point and only replicates. In addition, it
 
-- authenticates authors and sets the identity in the event. A client cannot choose it freely,
-- checks the scope and, for approvals, the role according to `actors`,
+- authenticates authors and enforces the identity in the event: it rejects an event whose `author.name` is not the authenticated identity. A client cannot choose it freely. The server never rewrites an event, because the client already holds it and a changed copy with the same `id` would be an `id-conflict`,
+- checks the scope and, for approvals, the role according to `actors`. Where the server learns the actors (its own administration, a linked repository) is its own business, because it does not hold the project's files,
 - manages permissions per project and provides real time and notifications.
 
 The replication contract is part of the protocol (Question 19). The server that speaks it and the user interface belong to the reference implementation and are open source. Anyone can build their own server or client or run the reference server themselves.
@@ -146,9 +162,34 @@ The replication contract is part of the protocol (Question 19). The server that 
 - Authentication only as a transport requirement: bearer token. How the client obtains it is governed by OAuth 2.0 or OpenID Connect.
 - Rejection of events outside the scope and of approvals with a mismatching role, with defined error codes.
 
+**Server transport** (Question 33). HTTP with JSON. The base URL comes from the context (Section 12), the project is part of the path, and every request carries `Authorization: Bearer <token>`.
+
+| Request                                                     | Meaning                                                                                                                                                        |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/projects/{project}/cursor`                         | The server's cursor as JSON                                                                                                                                    |
+| `POST /v1/projects/{project}/events`                        | `append`: the body is NDJSON, one event per line in its canonical form. Answer `200` with `{"cursor": …}`, the server's cursor after storing                   |
+| `GET /v1/projects/{project}/events?cursor=<device>:<seq>,…` | `read`: the answer is NDJSON (`application/x-ndjson`). An empty `cursor` means the empty cursor                                                                |
+| The same request with `Accept: text/event-stream`           | Real-time subscription (Server-Sent Events): first what `read` returns, then every new event, one event per `data:` line, as long as the connection stays open |
+
+A client writes the author of its context into its events. It appends only events it wrote itself, because the identity check would reject those of others. Sync with a server is `cursor`, `append`, and `read` composed by the client.
+
+**Error codes.** An error is answered with the HTTP status of the table and the body `{"code": …, "message": …, "seq"?: …, "event"?: …, "cursor"?: …}`. `seq` and `event` name the rejected event, `cursor` is the server's cursor after the events stored before it. Rejecting an event ends the call as described under `append`: the events of that device after it are not stored, and the client recovers (Section 12).
+
+| Code                | Status | Meaning                                                                            |
+| ------------------- | ------ | ---------------------------------------------------------------------------------- |
+| `unauthenticated`   | 401    | The bearer token is missing or invalid                                             |
+| `forbidden`         | 403    | The identity has no access to the project. Who has access is the server's business |
+| `scope-mismatch`    | 422    | The event's `project` is not the project of the path                               |
+| `identity-mismatch` | 422    | `author.name` is not the authenticated identity                                    |
+| `role-mismatch`     | 422    | An `approval.given` names a role that `actors` does not give its author            |
+| `invalid-event`     | 422    | The line breaks the reading rules (schema, canonical form, `sig`, …)               |
+| `seq-gap`           | 409    | The event does not continue its device's log on the server                         |
+| `fork`              | 409    | The server holds another event at the same device and `seq`                        |
+| `id-conflict`       | 409    | The server holds an event with the same `id` and other content                     |
+
 **Not normative** are permission management (who sees which project), administration, and notifications. Every server solves these on its own.
 
-**Identity.** There is no identity across servers. Every context (Section 12) has its own, which matches tenant separation. With a server, the server sets the identity in the event. Without a server, authorship is trust-based until a later version introduces signatures (`sig`).
+**Identity.** There is no identity across servers. Every context (Section 12) has its own, which matches tenant separation. With a server, the server enforces the identity in the event: the client writes it, the server rejects a wrong one (`identity-mismatch`). Without a server, authorship is trust-based until a later version introduces signatures (`sig`).
 
 **CI does not have the process store.** For gates to work there, the `review` block in the artifact is the interface (Section 10). CI may additionally query the server, but the baseline check must not depend on it.
 
@@ -1094,7 +1135,7 @@ x-hone-exec:
 
 An `exec` gate runs only when `command`, `cwd` (default `.`), and `env` (default `[]`, compared as a set) equal one entry. The entry itself is the approval, and a reviewer reads the command in plain text. A hash next to it would say the same thing twice. hone caches no result of a plugin or a command, every call runs fresh, and it compiles each plugin once per call. Extism prints the output of a plugin only when the environment variable `EXTISM_ENABLE_WASI_OUTPUT` is set. That is meant for debugging and breaks `--json` and the MCP server. The sources of hone's own plugins live in `plugins/`, a Cargo workspace of their own for the target `wasm32-wasip1`. The built `.wasm` files are committed to the test cases, so that `cargo test` needs neither network nor a WASM toolchain.
 
-**Backup without a server.** The tool offers a folder (including a synchronized one such as Nextcloud) as a backup target. Technically this is a "shared folder" peer. Whatever a lost device never backed up is gone. The tool says so clearly during setup.
+**Backup without a server.** The tool offers a folder (including a synchronized one such as Nextcloud) as a backup target. Technically this is a "shared folder" peer (Section 4): since pull imports the own device too, a new machine that keeps the old `device` file gets its log back from the folder. Whatever a lost device never backed up is gone. The tool says so clearly during setup.
 
 **Reports.** `check` and `report` output the design diff and drift report as JSON. The protocol will standardize the format later. Whether that becomes a pull request comment or a file is up to the tool. Reports are not stored in the process store, because they can be recomputed at any time (Question 13).
 
@@ -1115,7 +1156,7 @@ The implementation depends on the platform: one branch per unit, pull requests, 
 
 **Creation.** `hone init --from <package>` writes `extends` into the new configuration. This brings a custom standard process into every project without needing a global layer.
 
-**Process store in Git (fallback).** For small teams without a server, a dedicated branch (for example `hone/process`) works, which is never merged into code branches. Since every device writes only its own log file, there are no merge conflicts. It remains a fallback: no real time, write access to the repository required, the history grows, and whoever can read the repository sees everything. Git notes and branch descriptions are unsuitable: branch descriptions are local and not pushed, notes can only be shared with an explicit push and can overwrite each other with several writers.
+**Process store in Git (fallback).** For small teams without a server, a dedicated branch (for example `hone/process`) works, which is never merged into code branches. It is a shared folder (Section 4) whose root is a worktree of that branch: the tool pulls, runs the sync, commits the own `log/<device>/`, and pushes. Since every device writes only its own log file, there are no merge conflicts. hone has no Git integration for it yet (Section 16, step 10). It remains a fallback: no real time, write access to the repository required, the history grows, and whoever can read the repository sees everything. Git notes and branch descriptions are unsuitable: branch descriptions are local and not pushed, notes can only be shared with an explicit push and can overwrite each other with several writers.
 
 **Command line and MCP.** The reference implementation is a Cargo workspace: the library `hone-core` and the crate `hone-cli`, which holds only the command line (binary `hone`, for example `hone resolve [--check] [--json]`). A later GUI builds on the command line. Before v1, the crate `hone-mcp` adds an MCP server over stdio, so that agents call the same functions as people. It depends on `hone-core` like `hone-cli` does, and `hone-cli` only starts it as the subcommand `hone mcp`, without MCP logic of its own. Every result and every error of `hone-core` is serializable, and every command has `--json`, so the command line and the MCP server stay thin adapters over the library. Where packages come from is the tool's business: `hone-core` asks a package source for a name and a version.
 
@@ -1142,6 +1183,10 @@ The implementation depends on the platform: one branch per unit, pull requests, 
 | `hone events --ticket <tk>`                                                  | The ticket's events in order, the computed thread and step state, and the invalid events |
 
 The anchor is one of `--anchor-artifact <id> [--quote …]` (hone computes the content hash of the artifact's current file), `--anchor-code <path#symbol>`, `--anchor-change <reference>`, or `--anchor-transcript <url> [--position …]`. A reply, resolution, or reopening takes the ticket from the opening event, which must be present. `hone step set` accepts only steps of the ticket's profile, so that a typo does not end up in an immutable log. The author comes from `--author <handle>` and `--role <role>`, by default from `HONE_AUTHOR` and `HONE_ROLE`. The role must exist in the ticket's snapshot, the handle is free, because without a server authorship is trust-based (Section 4). hone fills `after` itself. The MCP server offers the same functions as the tools `thread_open`, `thread_reply`, `thread_resolve`, `thread_reopen`, `step_set`, and `events`, with the same JSON as `--json`. Its author is fixed at the start (`hone mcp --author critic-bot --role critic`) and cannot be chosen per call, so that an agent does not write as a human. Without an author, the writing tools return a result marked `isError`. Approvals, `review.confirmed`, and the `ticket.*` events have a schema, but no command yet: they belong to condensation and the start of a ticket (Section 16, step 10).
+
+**Sync** (Question 33). `hone sync --folder <dir> [--json]` syncs the project's store with a shared folder (Section 4). The folder comes from `--folder`, by default from the environment variable `HONE_SYNC_FOLDER`. Until contexts exist (Section 16, step 10), hone stores no binding between a project and a peer. The result names, per device, how many events were received from the folder and how many were sent to it, and the problems with code, path, and line. The exit code is 0 when the sync finished without a problem, 1 when it finished and reported problems (an answer, as a failed gate is), and 2 when it could not run (a missing folder, an unreadable store). Import and own appends hold the same lock file, so that a sync never races a write of the same device. The MCP server offers the tool `sync` without arguments, with the folder fixed at the start (`hone mcp --sync-folder <dir>`), so that an agent cannot sync into an arbitrary path. Without a folder, the tool returns a result marked `isError`.
+
+**Rejected events.** A server rejects an event and every later one of its device in the same call (Section 4). The event stays in the local log and the device cannot sync past it. Typical cause: an approval written offline after the role was withdrawn. To keep that rare, a client checks the server's rules before it writes. Recovery is the tool's business, for example a new device ID under which the later events are written anew.
 
 **Further integrations:** trackers (GitHub Issues, Jira, Linear: read tickets, write status back), review platforms (synchronize threads and approvals), agents (AGENTS.md, MCP, ACP: provide context, report drift). Language-specific tooling will be described in its own document.
 
@@ -1218,6 +1263,19 @@ A gate test case is a directory `schemas/tests/check/<case>/`:
 
 A failing case contains exactly one finding of level `error`, except for `ids-unique`, which reports every file involved. An implementation must report every line of `expected.txt`, and a finding of level `error` exactly when the file contains one. Beyond that, it may report more findings.
 
+The replication contract (Section 4) has two kinds of test cases. They compare what is read, not bytes, because every store cuts its segments itself. A read test case is a directory `schemas/tests/read/<case>/`:
+
+- `store/`: a process store of the project `prj-8m2k4d7q` (`log/<device>/<number>.ndjson`).
+- `cursor.json`: the cursor of the call.
+- `expected.ndjson`: the returned events, one canonical line each, sorted by device and then by `seq`. An empty file means that nothing is returned.
+
+A sync test case is a directory `schemas/tests/sync/<case>/`:
+
+- `local/`: the local store before the sync, with `device` when the device has written. A case without `local/` starts without a local store.
+- `folder/`: the shared-folder root before the sync, `<workspace>/<project>/log/…`.
+- `cursor.json`: the cursors after one sync, `{"local": …, "folder": …}`, each the cursor of the store as read afterwards.
+- `expected.txt`: one line per reported problem, `<code> <path> <line>`, sorted. `<path>` is relative to the case directory (`folder/…` or `local/…`), `<line>` is `-` for a whole file. An empty file means a sync without problems.
+
 **Licenses** (Question 25). Anyone may do anything with it, including closed forks and hosted services.
 
 - Code (CLI, sync server, user interface, plugins, packages, schemas, test suite): `MIT OR Apache-2.0`. Whoever wants chooses MIT. Whoever needs patent protection chooses Apache-2.0.
@@ -1250,7 +1308,7 @@ All questions of this draft are decided. The numbers stay stable because the tex
 18. **Agent transcripts:** Decided. Only linked: link type `transcript` and thread anchor `transcript` (Sections 5 and 10).
 19. **Standardize the sync interface?** Decided: yes. The replication contract is part of the protocol (conformance level Extended).
 20. **Confidential tickets:** Decided. The scope stays at project level, a confidential ticket gets its own project (Section 12).
-21. **Author identity:** Decided. No identity across servers, every context has its own. With a server, the server sets the identity. Without one, it is trust-based. The field `sig` is reserved for signatures in a later version (Section 4).
+21. **Author identity:** Decided. No identity across servers, every context has its own. With a server, the server enforces the identity: it rejects an event with a wrong author and never rewrites one (Question 33). Without one, it is trust-based. The field `sig` is reserved for signatures in a later version (Section 4).
 22. **Backup and device loss without a server:** Decided. The tool offers a folder as a backup target. Whatever was never backed up is lost (Sections 4 and 12).
 23. **Modules as living definitions:** Decided. Modules are a preset with lifecycle `living`, freely editable. A deliberate cut is an approved decision with `affects`. `context.observed` takes a module ID or an anchor (Section 5).
 24. **Terms in the schema:** Decided. The artifact field `scope` is now called `reach`. `verifies` takes only artifact IDs, test code is linked through `code` (Section 5).
@@ -1264,6 +1322,8 @@ All questions of this draft are decided. The numbers stay stable because the tex
 
 32. **Plugin contract and `exec` gates:** Decided. Plugins are WASI preview 1 modules without host functions. They read the checked directory and the optional base state read-only under `/project` and `/base`, get no network, environment, or arguments, and must not use the clock or random numbers. `check` receives the configuration, the ticket record, the step, the parameters, every artifact (path, effective status, content hash, data, body), and optionally `changed_paths` and `tool_output`. It returns only `findings` with codes of its own choosing. `describe` is not called by `check`. A plugin that cannot run or returns an invalid output gets the finding `plugin-failed`. Before every run, `check` compares the `.wasm` file, the configuration, and a lockfile, which the caller may replace (`plugin-hash`, `plugin-capabilities`). Plugins are not frozen per ticket: after an update a ticket switches to the new configuration. `exec` gates come with step 8: only approved commands run (`exec-unapproved`), only with the named environment, with a default timeout of 10 minutes and outputs cut at 1 MiB. `exec-failed` covers start failures, timeouts, signals, and, without `evaluate`, an exit code other than 0. With `evaluate`, the plugin decides alone through `tool_output: { exit, stdout, stderr, truncated }`. hone approves commands as readable entries under `x-hone-exec` in `lock.yaml`, offers `--base` and `--lock` on the command line and over MCP, caches nothing, and builds Extism in always. Its plugins live in `plugins/` and are committed built (Sections 7, 8, 9, 12, and 14).
 
+33. **Replication contract and shared folder:** Decided. A cursor is a JSON object from device to the highest contiguous `seq`, a missing device counts as 0. `read(cursor)` returns only valid events, per device in ascending `seq`, and the receiver orders the set itself. `append` stores in order and stops at the first event it cannot store, identical duplicates are accepted. Every store cuts its own segments, only `seq` is shared. A different event at the same device and `seq` is a `fork`, the same `id` with other content an `id-conflict`; the receiver keeps its copy, imports nothing later of that device, and reports it. A shared folder has the normative layout `<workspace>/<project>/log/…`; pull imports every device, the own one included, as a contiguous prefix; push writes only the own log, appends only to a byte prefix, and never overwrites. Stray files are ignored, paths leaving the folder root are `unsafe-path`, a missing folder root is an error. The server enforces the author instead of rewriting it, speaks HTTP with NDJSON and Server-Sent Events, answers with fixed error codes (`unauthenticated`, `forbidden`, `scope-mismatch`, `identity-mismatch`, `role-mismatch`, `invalid-event`, `seq-gap`, `fork`, `id-conflict`), and learns the actors by its own means. A Git branch is a shared folder in a worktree. hone offers `hone sync --folder` and the MCP tool `sync` with the folder fixed at the start. The test cases live in `schemas/tests/read/` and `schemas/tests/sync/` (Sections 4, 12, and 14).
+
 ## 16. Next steps
 
 1. Done: format (Question 1) and the artifact schema with tests (`schemas/`), adapted to all decisions (ID format, `reach`, lifecycles instead of fixed types, presets under `schemas/standard/`, module with `interface`, `context.observed`, hash normalization).
@@ -1274,7 +1334,7 @@ All questions of this draft are decided. The numbers stay stable because the tex
 6. Done: the MCP server (stdio) as the crate `hone-mcp`, a thin adapter over `hone-core`, started by `hone mcp`, with the tools `resolve`, `check`, `check_edit`, `check_artifact`, and `content_hash` (Question 30).
 7. Done: scope IDs and the event schema (`schemas/event.schema.json`, Question 31) with valid and invalid fixtures, the local process store in `hone-core` (segments per device, deterministic order, no index yet), the commands `hone thread`, `hone step`, and `hone events` and the matching MCP tools, and the gates `no-open-blocking-threads`, `threads-answered`, and `steps-complete` against the store.
 8. Done: the plugin contract (Question 32) with Extism as the runtime and `schemas/plugin.schema.json`, the gate `public-api-has-decision` in Rust under `plugins/`, capabilities and hash pinning checked on every run against a lockfile the caller may replace, `exec` gates with approved commands and `evaluate`, and `--base` and `--lock` on the command line and over MCP.
-9. Write down the replication contract in the decided scope (Question 26) and build a reference backend: shared folder, then server.
+9. Write down the replication contract in the decided scope (Question 26, Question 33) and build a reference backend: shared folder, then server.
 10. After that: condensation, language plugins (including `module-anchors-resolve`), the user interface, and the tool layer (contexts, Git integration, delivery).
 11. Turn this concept into the normative specification in `spec/`.
 

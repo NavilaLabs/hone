@@ -41,7 +41,7 @@
       "pattern": "^(x-[a-z0-9]+(-[a-z0-9]+)*|[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+)$"
     },
     "author": {
-      "description": "Who wrote the event. Without a server trust-based, with a server set by the server.",
+      "description": "Who wrote the event. Without a server trust-based, with a server checked by the server against the authenticated identity.",
       "type": "object",
       "required": ["name", "role"],
       "properties": {
