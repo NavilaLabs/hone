@@ -197,6 +197,10 @@ pub(crate) fn open_below(path: &Path, root: &Path, write: bool) -> std::io::Resu
             .create_new(true)
             .open(path)?,
         Err(error) => return Err(error),
+        // A FIFO or device known before the open is never opened.
+        Ok(_) if !std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) => {
+            return Ok(None);
+        }
         Ok(_) => match open_existing(path, write)? {
             Some(file) => file,
             None => return Ok(None),
@@ -216,13 +220,14 @@ pub(crate) fn open_below(path: &Path, root: &Path, write: bool) -> std::io::Resu
 #[cfg(unix)]
 fn open_existing(path: &Path, write: bool) -> std::io::Result<Option<File>> {
     use std::os::unix::fs::OpenOptionsExt;
-    // A type check before the open leaves a window in which a writer of the folder can swap in
-    // a FIFO, and opening a FIFO blocks. `O_NONBLOCK` opens anything at once; `same_file` then
-    // rejects whatever is not a regular file.
+    // The type check before the open leaves a window in which a writer of the folder can swap
+    // in a FIFO, which would block, or a terminal, which would become the controlling one.
+    // These flags open anything at once and inertly; `same_file` then rejects whatever is not
+    // a regular file.
     match File::options()
         .read(true)
         .append(write)
-        .custom_flags(libc::O_NONBLOCK)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
         .open(path)
     {
         Ok(file) => Ok(Some(file)),
@@ -238,9 +243,6 @@ fn open_existing(path: &Path, write: bool) -> std::io::Result<Option<File>> {
 
 #[cfg(not(unix))]
 fn open_existing(path: &Path, write: bool) -> std::io::Result<Option<File>> {
-    if !std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) {
-        return Ok(None);
-    }
     File::options()
         .read(true)
         .append(write)
