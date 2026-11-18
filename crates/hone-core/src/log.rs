@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::File;
-use std::io::Write;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -168,6 +168,11 @@ impl Log {
         if below(path, root) {
             return true;
         }
+        self.report_unsafe(relative);
+        false
+    }
+
+    fn report_unsafe(&mut self, relative: &str) {
         self.unsafe_paths.insert(relative.to_owned());
         self.invalid.push(InvalidEvent {
             path: relative.to_owned(),
@@ -175,8 +180,41 @@ impl Log {
             ticket: None,
             message: "the path leads outside the store".into(),
         });
-        false
     }
+}
+
+pub(crate) fn open_below(
+    path: &Path,
+    root: &Path,
+    options: &OpenOptions,
+) -> std::io::Result<Option<File>> {
+    // Checking the path before opening it leaves a window in which a writer of the folder can
+    // swap in a link, so the opened file itself must be the one found below `root`.
+    let file = options.open(path)?;
+    let Ok(canonical) = path.canonicalize() else {
+        return Ok(None);
+    };
+    if !below(&canonical, root) {
+        return Ok(None);
+    }
+    Ok(same_file(&file, &canonical)?.then_some(file))
+}
+
+#[cfg(unix)]
+fn same_file(file: &File, canonical: &Path) -> std::io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let opened = file.metadata()?;
+    let named = std::fs::metadata(canonical)?;
+    // A hard link inside the folder can name a file outside it.
+    Ok(opened.is_file()
+        && opened.nlink() == 1
+        && opened.dev() == named.dev()
+        && opened.ino() == named.ino())
+}
+
+#[cfg(not(unix))]
+fn same_file(file: &File, _canonical: &Path) -> std::io::Result<bool> {
+    Ok(file.metadata()?.is_file())
 }
 
 pub(crate) fn below(path: &Path, root: &Path) -> bool {
@@ -307,7 +345,17 @@ fn read_device(
     let mut previous: Option<(u64, u64)> = None;
     for number in numbers {
         let path = format!("log/{device}/{number}.ndjson");
-        let bytes = std::fs::read(directory.join(format!("{number}.ndjson")))?;
+        let Some(mut file) = open_below(
+            &directory.join(format!("{number}.ndjson")),
+            root,
+            OpenOptions::new().read(true),
+        )?
+        else {
+            log.report_unsafe(&path);
+            continue;
+        };
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
         let is_open = Some(number) == open;
         let complete = bytes
             .iter()

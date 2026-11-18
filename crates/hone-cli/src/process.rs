@@ -278,10 +278,24 @@ fn print_sync(report: &SyncReport) {
         eprintln!(
             "{} {}{line}: {}",
             code.as_str().unwrap_or_default(),
-            problem.path.display(),
-            problem.message
+            printable(&problem.path.display().to_string()),
+            printable(&problem.message)
         );
     }
+}
+
+// Paths and messages can carry text from an untrusted folder, which must not reach the terminal
+// as control sequences.
+fn printable(text: &str) -> String {
+    text.chars()
+        .map(|character| {
+            if character.is_control() {
+                character.escape_unicode().to_string()
+            } else {
+                character.to_string()
+            }
+        })
+        .collect()
 }
 
 fn append(target: &Target, writer: &Writer, change: Change) -> ExitCode {
@@ -359,6 +373,11 @@ fn print_events(events: &TicketEvents) {
         let line = invalid
             .line
             .map_or(String::new(), |line| format!(" line {line}"));
-        println!("invalid {}{line}: {}", invalid.path, invalid.message);
+        println!(
+            "invalid {}{line}: {}",
+            printable(&invalid.path),
+            printable(&invalid.message)
+        );
     }
 }
+

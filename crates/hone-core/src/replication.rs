@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
-use std::io::{ErrorKind, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -250,21 +250,29 @@ fn push(
             .iter()
             .rposition(|byte| *byte == b'\n')
             .map_or(0, |last| last + 1)];
+        if complete.is_empty() {
+            continue;
+        }
         let target = target_directory.join(&name);
-        let held = match target.symlink_metadata() {
-            Ok(_) if !log::below(&target, folder) => {
-                report.problem(
-                    SyncCode::UnsafePath,
-                    target,
-                    None,
-                    "the segment leads outside the shared folder".into(),
-                );
-                break;
-            }
-            Ok(_) => std::fs::read(&target)?,
-            Err(error) if error.kind() == ErrorKind::NotFound => Vec::new(),
-            Err(error) => return Err(error),
+        let exists = target.symlink_metadata().is_ok();
+        let opened = log::open_below(
+            &target,
+            folder,
+            File::options().read(true).append(true).create(true),
+        )?;
+        let Some(mut file) = opened else {
+            report.problem(
+                SyncCode::UnsafePath,
+                target,
+                None,
+                "the segment leads outside the shared folder".into(),
+            );
+            break;
         };
+        let mut held = Vec::new();
+        if exists {
+            file.read_to_end(&mut held)?;
+        }
         if !complete.starts_with(&held) {
             let common = held
                 .iter()
@@ -284,7 +292,6 @@ fn push(
         if rest.is_empty() {
             continue;
         }
-        let mut file = File::options().create(true).append(true).open(&target)?;
         file.write_all(rest)?;
         file.sync_data()?;
         sent += rest.iter().filter(|byte| **byte == b'\n').count() as u64;
