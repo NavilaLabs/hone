@@ -83,6 +83,14 @@ struct CheckInput {
     changed_paths: Option<Vec<String>>,
     #[schemars(description = "Run only gates of this class.")]
     class: Option<Class>,
+    #[schemars(
+        description = "The base state, a directory that plugins read under `/base`, relative to the project root or absolute."
+    )]
+    base: Option<PathBuf>,
+    #[schemars(
+        description = "The lockfile that approves plugins and `exec` commands, relative to the project root or absolute. Defaults to `.hone/lock.yaml`."
+    )]
+    lock: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Deserialize, JsonSchema)]
@@ -244,6 +252,8 @@ impl Server {
                 Class::Exec => GateClass::Exec,
             }),
             data_directory: self.project.data_directory.clone(),
+            base: input.base.map(|base| self.project.root.join(base)),
+            lock: input.lock.map(|lock| self.project.root.join(lock)),
         };
         report_result(hone_core::check(&self.project.root, &request))
     }

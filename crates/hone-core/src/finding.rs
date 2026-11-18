@@ -29,9 +29,9 @@ impl fmt::Display for Level {
     }
 }
 
-/// The normative codes of the findings of the standard gates (concept Section 7, "Findings").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
-#[serde(rename_all = "kebab-case")]
+/// The code of a finding: one of the normative codes (concept Section 7, "Findings"), or a code
+/// that a plugin chose (concept Section 9).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Code {
     /// The file violates the strict YAML profile or the file shape.
     YamlProfile,
@@ -73,14 +73,26 @@ pub enum Code {
     ProcessStoreUnavailable,
     /// An event of the ticket, or one whose ticket cannot be read, is invalid.
     EventInvalid,
+    /// The `.wasm` file, its lock entry, or the hash disagree.
+    PluginHash,
+    /// The capabilities of a plugin exceed the approved ones in the lockfile.
+    PluginCapabilities,
+    /// The plugin could not run or returned an invalid output.
+    PluginFailed,
+    /// The command of an `exec` gate is not approved.
+    ExecUnapproved,
+    /// The command of an `exec` gate did not start, timed out, ended through a signal, or failed.
+    ExecFailed,
     /// The implementation does not provide this gate.
     Unsupported,
+    /// A code that a plugin chose: a key, lowercase with hyphens.
+    Plugin(String),
 }
 
 impl Code {
-    /// The normative name of the code, for example `path-mismatch`.
+    /// The name of the code, for example `path-mismatch`.
     #[must_use]
-    pub fn name(self) -> &'static str {
+    pub fn name(&self) -> &str {
         match self {
             Code::YamlProfile => "yaml-profile",
             Code::KindUnknown => "kind-unknown",
@@ -102,8 +114,20 @@ impl Code {
             Code::StepIncomplete => "step-incomplete",
             Code::ProcessStoreUnavailable => "process-store-unavailable",
             Code::EventInvalid => "event-invalid",
+            Code::PluginHash => "plugin-hash",
+            Code::PluginCapabilities => "plugin-capabilities",
+            Code::PluginFailed => "plugin-failed",
+            Code::ExecUnapproved => "exec-unapproved",
+            Code::ExecFailed => "exec-failed",
             Code::Unsupported => "unsupported",
+            Code::Plugin(code) => code,
         }
+    }
+}
+
+impl Serialize for Code {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.name())
     }
 }
 

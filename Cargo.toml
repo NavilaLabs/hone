@@ -13,6 +13,7 @@ publish = false
 hone-core = { path = "crates/hone-core" }
 hone-mcp = { path = "crates/hone-mcp" }
 clap = { version = "4.6.8", features = ["derive", "env"] }
+extism = { version = "1.41.0", default-features = false, features = ["wasmtime-default-features"] }
 getrandom = "0.4.3"
 jsonschema = { version = "0.61.2", default-features = false }
 regex = "1.13.1"

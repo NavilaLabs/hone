@@ -11,7 +11,7 @@ use crate::pointer::Pointer;
 const COMMON_SCHEMA: &str = include_str!("../../../schemas/common.schema.json");
 const CONFIG_SCHEMA: &str = include_str!("../../../schemas/config.schema.json");
 
-const STANDARD_GATES: [&str; 10] = [
+pub(crate) const STANDARD_GATES: [&str; 10] = [
     "artifact-exists",
     "status-is",
     "schema-valid",

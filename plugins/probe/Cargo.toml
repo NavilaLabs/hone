@@ -1,0 +1,15 @@
+[package]
+name = "probe"
+description = "A test plugin whose behaviour the gate parameter `mode` selects, for the gate test cases of hone."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+extism-pdk.workspace = true
+serde_json.workspace = true

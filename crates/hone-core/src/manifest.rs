@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -61,11 +61,22 @@ pub(crate) struct ApprovedPlugin {
     pub(crate) capabilities: Map<String, Value>,
 }
 
+// hone's approval of an `exec` command (concept Section 12, "Plugins and `exec` in hone").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ApprovedCommand {
+    pub(crate) command: Vec<String>,
+    pub(crate) cwd: String,
+    pub(crate) env: BTreeSet<String>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Lock {
     pub(crate) packages: BTreeMap<String, PinnedPackage>,
     pub(crate) plugins: BTreeMap<String, ApprovedPlugin>,
+    pub(crate) commands: Vec<ApprovedCommand>,
 }
+
+const EXEC_KEY: &str = "x-hone-exec";
 
 pub(crate) fn read_project_config(hone: &Path) -> Result<Vec<Reference>, Vec<Problem>> {
     let origin = Origin::Project;
@@ -177,13 +188,18 @@ pub(crate) fn read_package_config(
 }
 
 pub(crate) fn read_lock(hone: &Path) -> Result<Lock, Vec<Problem>> {
+    read_lock_file(hone, "lock.yaml")
+}
+
+// A missing file is an empty lock: it approves nothing.
+pub(crate) fn read_lock_file(directory: &Path, file: &str) -> Result<Lock, Vec<Problem>> {
     let origin = Origin::Project;
-    let Some(lock) = read_map(hone, "lock.yaml", &origin)? else {
+    let Some(lock) = read_map(directory, file, &origin)? else {
         return Ok(Lock::default());
     };
     let mut problems = Vec::new();
     let mut result = Lock::default();
-    let mut complain = |message: String| problems.push(manifest(&origin, "lock.yaml", message));
+    let mut complain = |message: String| problems.push(manifest(&origin, file, message));
     for (key, value) in &lock {
         match (key.as_str(), value) {
             ("packages", Value::Object(packages)) => {
@@ -207,6 +223,15 @@ pub(crate) fn read_lock(hone: &Path) -> Result<Lock, Vec<Problem>> {
                 }
             }
             ("packages" | "plugins", _) => complain(format!("`{key}` must be a map")),
+            (EXEC_KEY, Value::Array(entries)) => {
+                for (index, entry) in entries.iter().enumerate() {
+                    match read_approved_command(entry) {
+                        Ok(approved) => result.commands.push(approved),
+                        Err(message) => complain(format!("{EXEC_KEY}/{index}: {message}")),
+                    }
+                }
+            }
+            (EXEC_KEY, _) => complain(format!("`{EXEC_KEY}` must be a list")),
             (other, _) if other.starts_with("x-") => {}
             (other, _) => complain(format!("unknown key `{other}`")),
         }
@@ -253,6 +278,42 @@ fn read_approved_plugin(entry: &Value) -> Result<ApprovedPlugin, String> {
     Ok(ApprovedPlugin {
         hash: read_hash(entry)?,
         capabilities,
+    })
+}
+
+fn read_approved_command(entry: &Value) -> Result<ApprovedCommand, String> {
+    let entry = entry.as_object().ok_or("must be a map")?;
+    if let Some(key) = entry
+        .keys()
+        .find(|key| !matches!(key.as_str(), "command" | "cwd" | "env"))
+    {
+        return Err(format!("unknown key `{key}`"));
+    }
+    let strings = |key: &str| -> Result<Option<Vec<String>>, String> {
+        match entry.get(key) {
+            None => Ok(None),
+            Some(Value::Array(items)) => items
+                .iter()
+                .map(|item| item.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+                .map(Some)
+                .ok_or_else(|| format!("`{key}` must be a list of strings")),
+            Some(_) => Err(format!("`{key}` must be a list of strings")),
+        }
+    };
+    let command = strings("command")?.ok_or("`command` is missing")?;
+    if command.is_empty() {
+        return Err("`command` must not be empty".into());
+    }
+    let cwd = match entry.get("cwd") {
+        None => ".".to_owned(),
+        Some(Value::String(cwd)) => cwd.clone(),
+        Some(_) => return Err("`cwd` must be a string".into()),
+    };
+    Ok(ApprovedCommand {
+        command,
+        cwd,
+        env: strings("env")?.unwrap_or_default().into_iter().collect(),
     })
 }
 

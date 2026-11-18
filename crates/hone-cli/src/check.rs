@@ -32,6 +32,12 @@ pub(crate) struct CheckArguments {
     /// Run only gates of this class.
     #[arg(long, value_enum)]
     class: Option<Class>,
+    /// The base state, a directory that plugins read under `/base`.
+    #[arg(long, value_name = "DIR")]
+    base: Option<PathBuf>,
+    /// The lockfile that approves plugins and `exec` commands, instead of `.hone/lock.yaml`.
+    #[arg(long, value_name = "FILE")]
+    lock: Option<PathBuf>,
     /// Print the result as JSON.
     #[arg(long)]
     json: bool,
@@ -70,6 +76,8 @@ pub(crate) fn run_check(arguments: &CheckArguments) -> ExitCode {
             Class::Exec => GateClass::Exec,
         }),
         data_directory: None,
+        base: arguments.base.clone(),
+        lock: arguments.lock.clone(),
     };
     match hone_core::check(&arguments.root, &request) {
         Ok(report) => {

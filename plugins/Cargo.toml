@@ -1,0 +1,24 @@
+# hone's own plugins (concept Section 9): a workspace of its own, because they build for the
+# target `wasm32-wasip1`. See README.md.
+[workspace]
+resolver = "3"
+members = ["public-api-has-decision", "probe"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/NavilaLabs/hone"
+publish = false
+
+[workspace.dependencies]
+extism-pdk = "1.4.1"
+quote = "1.0.42"
+serde_json = "1.0.154"
+syn = { version = "2.0.111", default-features = false, features = ["clone-impls", "full", "parsing", "printing"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

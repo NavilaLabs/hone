@@ -1,10 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::anchor;
 use crate::directory::{Artifact, Directory, Place};
 use crate::finding::{Code, Finding};
+use crate::host::Host;
 use crate::pointer::Pointer;
 use crate::process::{StepStatus, ThreadStatus, TicketEvents};
 use crate::schema_valid;
@@ -25,11 +26,14 @@ pub(crate) struct Scope<'a> {
 
 pub(crate) struct TicketCall<'a> {
     pub(crate) ticket: &'a str,
+    pub(crate) record: &'a Map<String, Value>,
     pub(crate) profile: &'a Map<String, Value>,
+    pub(crate) step_name: &'a str,
     pub(crate) step: &'a Value,
     pub(crate) changed_paths: Option<&'a [String]>,
     // `None` when the process store is unavailable.
     pub(crate) process: Option<&'a TicketEvents>,
+    pub(crate) host: &'a Host<'a>,
 }
 
 impl<'a> Scope<'a> {
@@ -82,15 +86,44 @@ impl<'a> Scope<'a> {
                 }));
                 findings
             }
-            "exec" => vec![Finding::error(
-                Code::Unsupported,
-                "`exec` gates are not supported yet",
-            )],
-            plugin => vec![Finding::error(
-                Code::Unsupported,
-                format!("plugin gates are not supported yet (`{plugin}`)"),
-            )],
+            "exec" => call
+                .host
+                .exec_gate(self.config, params, &self.plugin_input(call, params)),
+            plugin => call
+                .host
+                .plugin_gate(self.config, plugin, &self.plugin_input(call, params)),
         }
+    }
+
+    // The input of `check` (concept Section 9, "Input of `check`"), without `tool_output`.
+    fn plugin_input(&self, call: &TicketCall<'_>, params: &Value) -> Value {
+        let artifacts: Vec<Value> = self
+            .artifacts()
+            .map(|(index, artifact)| {
+                let mut entry = json!({
+                    "path": artifact.path,
+                    "hash": artifact.content.hash(),
+                    "data": artifact.content.data,
+                    "body": artifact.content.body,
+                });
+                if let Some(status) = &self.effective[index] {
+                    entry["status"] = json!(status);
+                }
+                entry
+            })
+            .collect();
+        let mut input = json!({
+            "protocol": 1,
+            "config": self.config,
+            "ticket": call.record,
+            "step": call.step_name,
+            "params": if params.is_object() { params.clone() } else { json!({}) },
+            "artifacts": artifacts,
+        });
+        if let Some(changed) = call.changed_paths {
+            input["changed_paths"] = json!(changed);
+        }
+        input
     }
 
     fn artifacts(&self) -> impl Iterator<Item = (usize, &Artifact)> {

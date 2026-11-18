@@ -607,7 +607,7 @@
       }
     },
     "ExecParams": {
-      "description": "Runs a command of the toolchain on the host. Command, working directory, and environment are pinned with a hash in `lock.yaml`. Without `evaluate`, exit code 0 passes. With `evaluate`, the plugin receives the result as `tool_outputs` and decides.",
+      "description": "Runs a command of the toolchain on the host. It runs only when the lockfile approves command, working directory, and environment. Without `evaluate`, exit code 0 passes. With `evaluate`, the plugin receives the result as `tool_output` and decides alone.",
       "type": "object",
       "required": ["command"],
       "properties": {
@@ -641,6 +641,7 @@
           "uniqueItems": true
         },
         "timeout_ms": {
+          "description": "Time limit of the command. Default: 600000 (10 minutes).",
           "type": "integer",
           "minimum": 1
         },

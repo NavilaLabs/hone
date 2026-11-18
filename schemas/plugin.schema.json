@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hone.invalid/schema/1/plugin.schema.json",
+  "title": "hone protocol 1: plugin input and output",
+  "description": "The JSON that the host and a plugin exchange (concept Section 9, \"Contract\"). Input and output are UTF-8 JSON without `null`. `CheckInput` is the input of `check`, `CheckOutput` its output, and `DescribeOutput` the output of `describe`.",
+  "$defs": {
+    "CheckInput": {
+      "type": "object",
+      "required": [
+        "protocol",
+        "config",
+        "ticket",
+        "step",
+        "params",
+        "artifacts"
+      ],
+      "properties": {
+        "protocol": { "const": 1 },
+        "config": {
+          "description": "The configuration the gate runs against: the ticket's snapshot.",
+          "$ref": "config.schema.json"
+        },
+        "ticket": {
+          "description": "The data of the ticket record.",
+          "type": "object",
+          "required": ["id", "type"],
+          "properties": {
+            "id": { "$ref": "common.schema.json#/$defs/TicketId" },
+            "type": { "const": "ticket" }
+          }
+        },
+        "step": {
+          "description": "The name of the step whose gate runs.",
+          "$ref": "common.schema.json#/$defs/Key"
+        },
+        "params": {
+          "description": "The `params` of the gate entry, `{}` when it has none. For a plugin named by `evaluate`, the `params` of the `exec` gate.",
+          "type": "object"
+        },
+        "artifacts": {
+          "description": "Every artifact and ticket record of the checked directory whose file passes the YAML profile.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/Artifact" }
+        },
+        "changed_paths": {
+          "description": "The paths the change touches, relative to the project root. Absent when the caller supplied none.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "tool_output": {
+          "description": "Only for a plugin named by `evaluate`: the result of the command.",
+          "$ref": "#/$defs/ToolOutput"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Artifact": {
+      "type": "object",
+      "required": ["path", "hash", "data", "body"],
+      "properties": {
+        "path": {
+          "description": "The file, relative to the project root.",
+          "$ref": "config.schema.json#/$defs/RelativePath"
+        },
+        "status": {
+          "description": "The effective status (concept Section 6). Absent when the artifact has no declared status, as with lifecycle `living`.",
+          "type": "string"
+        },
+        "hash": {
+          "description": "The content hash (concept Section 5).",
+          "$ref": "common.schema.json#/$defs/Hash"
+        },
+        "data": {
+          "description": "The data model of the file: the front matter or the YAML document.",
+          "type": "object"
+        },
+        "body": {
+          "description": "The Markdown text after the front matter, `\"\"` for a YAML file.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ToolOutput": {
+      "type": "object",
+      "required": ["exit", "stdout", "stderr", "truncated"],
+      "properties": {
+        "exit": {
+          "description": "The exit code of the command.",
+          "type": "integer"
+        },
+        "stdout": {
+          "description": "Standard output, up to 1 MiB from the start, bytes that are not UTF-8 replaced.",
+          "type": "string"
+        },
+        "stderr": {
+          "description": "Standard error, cut and replaced like `stdout`.",
+          "type": "string"
+        },
+        "truncated": {
+          "description": "`true` when `stdout` or `stderr` was cut.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "CheckOutput": {
+      "type": "object",
+      "required": ["findings"],
+      "properties": {
+        "findings": {
+          "description": "The gate fails exactly when a finding has level `error`.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/Finding" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "Finding": {
+      "type": "object",
+      "required": ["level", "code", "message"],
+      "properties": {
+        "level": { "enum": ["error", "warning"] },
+        "code": {
+          "description": "A code the plugin chooses.",
+          "$ref": "common.schema.json#/$defs/Key"
+        },
+        "path": {
+          "description": "The file, relative to the project root, if the finding concerns one.",
+          "$ref": "config.schema.json#/$defs/RelativePath"
+        },
+        "pointer": {
+          "description": "A JSON Pointer into the data model of the file, if the finding concerns a value.",
+          "type": "string",
+          "pattern": "^(/([^~/]|~[01])*)*$"
+        },
+        "message": {
+          "description": "A human-readable explanation, not normative.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DescribeOutput": {
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "protocol",
+        "entry_points",
+        "capabilities"
+      ],
+      "properties": {
+        "name": { "$ref": "common.schema.json#/$defs/Key" },
+        "version": { "type": "string", "minLength": 1 },
+        "protocol": { "const": 1 },
+        "entry_points": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "capabilities": {
+          "description": "The capabilities the plugin asks for. The tool grants them, or fewer.",
+          "type": "object",
+          "required": ["read", "net", "timeout_ms", "memory_pages"],
+          "properties": {
+            "read": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  { "const": "project" },
+                  { "$ref": "config.schema.json#/$defs/RelativePath" }
+                ]
+              },
+              "uniqueItems": true
+            },
+            "net": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            },
+            "timeout_ms": { "type": "integer", "minimum": 1 },
+            "memory_pages": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

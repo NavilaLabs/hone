@@ -8,6 +8,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+extism.workspace = true
 getrandom.workspace = true
 jsonschema.workspace = true
 regex.workspace = true

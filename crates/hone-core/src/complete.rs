@@ -98,19 +98,31 @@ fn check_capabilities(
     at: &Pointer,
     problems: &mut Vec<Problem>,
 ) {
-    let mut deny = |key: &str, message: String| {
+    for (key, message) in unapproved_capabilities(requested, approved) {
         problems.push(pointer_problem(
             Category::PluginCapabilities,
             &at.child(key),
             message,
         ));
-    };
+    }
+}
+
+// The capabilities beyond the approved ones (concept Section 8, "Plugins"), as the key and a
+// message per excess.
+pub(crate) fn unapproved_capabilities(
+    requested: &Map<String, Value>,
+    approved: &Map<String, Value>,
+) -> Vec<(&'static str, String)> {
+    let mut excess = Vec::new();
+    let mut deny = |key: &'static str, message: String| excess.push((key, message));
     for key in ["read", "net"] {
-        if let (Some(Value::Array(requested)), Some(Value::Array(approved))) =
-            (requested.get(key), approved.get(key))
-        {
+        let approved = approved
+            .get(key)
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice);
+        if let Some(Value::Array(requested)) = requested.get(key) {
             for item in requested.iter().filter(|item| !approved.contains(item)) {
-                deny(key, format!("{item} is not approved in lock.yaml"));
+                deny(key, format!("{item} is not approved in the lockfile"));
             }
         }
     }
@@ -125,14 +137,18 @@ fn check_capabilities(
         );
     }
     for key in ["timeout_ms", "memory_pages"] {
-        if let (Some(requested), Some(approved)) = (
-            requested.get(key).and_then(Value::as_i64),
-            approved.get(key).and_then(Value::as_i64),
-        ) && requested > approved
-        {
-            deny(key, format!("{requested} exceeds the approved {approved}"));
+        let Some(requested) = requested.get(key).and_then(Value::as_i64) else {
+            continue;
+        };
+        match approved.get(key).and_then(Value::as_i64) {
+            Some(approved) if requested > approved => {
+                deny(key, format!("{requested} exceeds the approved {approved}"));
+            }
+            Some(_) => {}
+            None => deny(key, "the lockfile approves no value".into()),
         }
     }
+    excess
 }
 
 pub(crate) fn write_defaults(tree: &mut Map<String, Value>) {

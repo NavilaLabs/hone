@@ -11,9 +11,12 @@ use crate::artifact;
 use crate::directory::Directory;
 use crate::finding::{Code, Finding, Level};
 use crate::gates::{DIRECTORY_GATES, PROCESS_GATES, Scope, TicketCall};
+use crate::host::Host;
+use crate::manifest::{Lock, read_lock_file};
 use crate::process::{ProcessError, ProcessStore};
 use crate::resolved_file::read_resolved;
 use crate::schema_valid::ContentRules;
+use crate::validate::STANDARD_GATES;
 
 static TICKET_ID: LazyLock<Regex> =
     LazyLock::new(|| Regex::new("^tk-[0-9a-hjkmnp-tv-z]{8}$").expect("valid regex"));
@@ -44,6 +47,11 @@ pub struct CheckRequest {
     /// The base directory of the process store (see [`ProcessStore::locate`]), or `None` for
     /// `HONE_DATA_DIR` or the data directory of the platform.
     pub data_directory: Option<PathBuf>,
+    /// The base state, a directory that plugins read under `/base`, or `None` without one.
+    pub base: Option<PathBuf>,
+    /// The lockfile that approves plugins and `exec` commands, or `None` for
+    /// `.hone/lock.yaml`. CI passes the lockfile of the protected base state.
+    pub lock: Option<PathBuf>,
 }
 
 /// The result of one gate.
@@ -96,10 +104,28 @@ impl std::error::Error for CheckError {}
 /// # Errors
 ///
 /// Returns a [`CheckError`] if `.hone/resolved.json`, the ticket record, or its snapshot is
-/// missing or invalid, or if the request names an unknown step.
+/// missing or invalid, if the request names an unknown step, a base that is not a directory, or
+/// a lockfile that does not exist, or if a plugin or `exec` gate runs and the lockfile is
+/// malformed.
 pub fn check(project_root: &Path, request: &CheckRequest) -> Result<CheckReport, CheckError> {
     if request.ticket.is_none() && request.step.is_some() {
         return Err(error("`step` requires a ticket"));
+    }
+    if let Some(base) = &request.base
+        && !base.is_dir()
+    {
+        return Err(error(format!(
+            "{}: the base is not a directory",
+            base.display()
+        )));
+    }
+    if let Some(lock) = &request.lock
+        && !lock.is_file()
+    {
+        return Err(error(format!(
+            "{}: the lockfile does not exist",
+            lock.display()
+        )));
     }
     let current = Resolved::load(project_root)?;
     let current = current.document();
@@ -123,6 +149,8 @@ pub fn check(project_root: &Path, request: &CheckRequest) -> Result<CheckReport,
             step: request.step.as_deref(),
             changed_paths: request.changed_paths.as_deref(),
             data_directory: request.data_directory.as_deref(),
+            base: request.base.as_deref(),
+            lock: request.lock.as_deref(),
         };
         run.gates(&mut report, |gate| {
             let class = if gate == "exec" {
@@ -163,6 +191,8 @@ pub fn check_edit(
         step: None,
         changed_paths: Some(&changed),
         data_directory: None,
+        base: None,
+        lock: None,
     };
     run.gates(&mut report, |gate| gate == "change-needs-binding")?;
     Ok(report)
@@ -204,6 +234,8 @@ struct TicketRun<'a> {
     step: Option<&'a str>,
     changed_paths: Option<&'a [String]>,
     data_directory: Option<&'a Path>,
+    base: Option<&'a Path>,
+    lock: Option<&'a Path>,
 }
 
 impl TicketRun<'_> {
@@ -248,15 +280,29 @@ impl TicketRun<'_> {
                 .any(|(_, _, gate)| PROCESS_GATES.contains(gate))
         });
         let process = if needs_store { self.process()? } else { None };
+        let needs_lock = steps.iter().any(|step| {
+            selected(step)
+                .iter()
+                .any(|(_, _, gate)| !STANDARD_GATES.contains(gate))
+        });
+        let lock = if needs_lock {
+            self.read_lock()?
+        } else {
+            Lock::default()
+        };
+        let host = Host::new(self.project_root, self.base, lock);
         let directory = Directory::scan(self.project_root, snapshot);
         let scope = Scope::new(snapshot, &directory);
         for step in steps {
             let call = TicketCall {
                 ticket: self.ticket,
+                record: &record,
                 profile,
+                step_name: step,
                 step: &snapshot["steps"][step],
                 changed_paths: self.changed_paths,
                 process: process.as_ref(),
+                host: &host,
             };
             for (label, entry, gate) in selected(step) {
                 let findings = scope.ticket_gate(entry, &call);
@@ -266,6 +312,18 @@ impl TicketRun<'_> {
             }
         }
         Ok(())
+    }
+
+    fn read_lock(&self) -> Result<Lock, CheckError> {
+        let default = self.project_root.join(".hone").join("lock.yaml");
+        let path = self.lock.unwrap_or(&default);
+        let (Some(directory), Some(file)) = (path.parent(), path.file_name()) else {
+            return Err(error(format!("{}: not a lockfile", path.display())));
+        };
+        read_lock_file(directory, &file.to_string_lossy()).map_err(|problems| {
+            let problems: Vec<String> = problems.iter().map(ToString::to_string).collect();
+            error(format!("{}: {}", path.display(), problems.join("; ")))
+        })
     }
 
     fn process(&self) -> Result<Option<crate::TicketEvents>, CheckError> {

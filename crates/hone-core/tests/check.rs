@@ -46,6 +46,8 @@ fn request(case: &Path) -> CheckRequest {
         }),
         class: None,
         data_directory: Some(case.join("data")),
+        base: Some(case.join("base")).filter(|base| base.is_dir()),
+        lock: Some(case.join("lock.yaml")).filter(|lock| lock.is_file()),
     }
 }
 
@@ -125,20 +127,20 @@ fn class_exec_runs_only_exec_gates() {
     let request = CheckRequest {
         class: Some(GateClass::Exec),
         step: Some("interfaces".into()),
-        ..request(&case("exec-unsupported"))
+        ..request(&case("exec-exit-nonzero"))
     };
-    let report = check(&case("exec-unsupported/project"), &request).expect("runs");
+    let report = check(&case("exec-exit-nonzero/project"), &request).expect("runs");
     let names: Vec<&str> = report.gates.iter().map(|gate| gate.name.as_str()).collect();
-    assert_eq!(names, ["interfaces/compiles"]);
+    assert_eq!(names, ["interfaces/run"]);
 }
 
 #[test]
 fn class_pure_skips_exec_gates() {
     let request = CheckRequest {
         class: Some(GateClass::Pure),
-        ..request(&case("exec-unsupported"))
+        ..request(&case("exec-exit-nonzero"))
     };
-    let report = check(&case("exec-unsupported/project"), &request).expect("runs");
+    let report = check(&case("exec-exit-nonzero/project"), &request).expect("runs");
     assert!(report.passed(), "{report:?}");
     assert!(report.gates.iter().all(|gate| gate.gate != "exec"));
 }
