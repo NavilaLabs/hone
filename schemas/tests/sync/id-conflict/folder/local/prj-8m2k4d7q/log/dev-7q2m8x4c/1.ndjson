@@ -1,0 +1,2 @@
+{"author":{"name":"alice","role":"human"},"device":"dev-7q2m8x4c","id":"ev-0193a8f2-6c1e-7a00-8000-0000000b0001","payload":{"status":"open","step":"decision"},"project":"prj-8m2k4d7q","seq":1,"ticket":"tk-9f2x4a8m","type":"step.changed"}
+{"author":{"name":"alice","role":"human"},"device":"dev-7q2m8x4c","id":"ev-0193a8f2-6c1e-7a00-8000-0000000b0002","payload":{"status":"done","step":"decision"},"project":"prj-8m2k4d7q","seq":2,"ticket":"tk-9f2x4a8m","type":"step.changed"}

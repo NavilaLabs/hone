@@ -1,0 +1,1 @@
+invalid-event folder/local/prj-8m2k4d7q/log/dev-7q2m8x4c/1.ndjson 2

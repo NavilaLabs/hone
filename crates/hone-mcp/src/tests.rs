@@ -630,3 +630,39 @@ async fn thread_open_without_anchor_is_invalid() {
     assert!(message.contains("anchor"), "{message}");
     remove(&project);
 }
+
+#[tokio::test]
+async fn sync_without_a_folder_is_an_error() {
+    let project = process_case("sync-no-folder", None);
+    let reply = call(project.clone(), "sync", json!({})).await;
+    assert!(reply.is_error);
+    assert_eq!(reply.content["status"], "invalid");
+    assert!(
+        reply.content["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("--sync-folder")),
+        "{:?}",
+        reply.content
+    );
+    remove(&project);
+}
+
+#[tokio::test]
+async fn sync_moves_events_through_the_fixed_folder() {
+    let bob = process_case("sync-folder", Some(("bob", "human")));
+    let folder = bob.root.parent().expect("temporary root").join("folder");
+    std::fs::create_dir_all(&folder).expect("creatable");
+    let bob = Project {
+        sync_folder: Some(folder.clone()),
+        ..bob
+    };
+    let step = json!({ "ticket": TICKET, "step": "decision", "status": "done" });
+    assert!(!call(bob.clone(), "step_set", step).await.is_error);
+
+    let reply = call(bob.clone(), "sync", json!({})).await;
+    assert!(!reply.is_error, "{:?}", reply.content);
+    assert_eq!(reply.content["problems"], json!([]));
+    let sent = reply.content["sent"].as_object().expect("sent");
+    assert_eq!(sent.values().collect::<Vec<_>>(), [&json!(1)]);
+    remove(&bob);
+}
