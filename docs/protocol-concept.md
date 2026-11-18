@@ -384,31 +384,36 @@ The standard package sets the parameters `{ anchored: module, binding: decision 
 
 **What `check` runs.** `schema-valid`, `ids-unique`, and `links-resolve` are **directory gates**. Each runs at most once per call, if at least one step of the current resolved configuration (`.hone/resolved.json`) contains it, and checks against that configuration. A directory gate concerns the artifacts of all tickets, and an older snapshot does not know the kinds of newer tickets. All other gates are **ticket gates**. They run only when the caller names a ticket, and always against the ticket's snapshot (Section 8): the gates of the step the caller names, or otherwise of every step that the ticket's profile lists as `required`. A directory gate inside a ticket step does not run a second time. The ticket record is found through `ticket.path`, its snapshot through `config`. If `resolved.json` or the snapshot is missing, does not pass the checks of the resolved configuration, or does not match its hash, `check` does not run at all. That is not a finding.
 
-**Findings.** A gate returns findings. A finding has `level` (`error` or `warning`), a `code`, optionally `path` (the file relative to the project root) and `pointer` (a JSON Pointer into the file's data model), and `message` (free text, not normative). A gate fails exactly when it has a finding of level `error`. The codes are fixed and normative, so that a test case can name the expected reason:
+**Findings.** A gate returns findings. A finding has `level` (`error` or `warning`), a `code`, optionally `path` (the file relative to the project root) and `pointer` (a JSON Pointer into the file's data model), and `message` (free text, not normative). A gate fails exactly when it has a finding of level `error`. The codes are fixed and normative, so that a test case can name the expected reason. A plugin gate additionally reports the codes its plugin chooses (Section 9):
 
-| Gate                       | Code                        | Level   | Meaning                                                                            |
-| -------------------------- | --------------------------- | ------- | ---------------------------------------------------------------------------------- |
-| `schema-valid`             | `yaml-profile`              | error   | The file violates the strict YAML profile or the file shape (Section 5)            |
-| `schema-valid`             | `kind-unknown`              | error   | `type` names neither `ticket` nor a kind of the configuration                      |
-| `schema-valid`             | `path-mismatch`             | error   | `id`, `ticket`, or `type` disagrees with the path (Section 5, "Files and paths")   |
-| `schema-valid`             | `id-prefix`                 | error   | `id` does not start with the `id_prefix` of the kind                               |
-| `schema-valid`             | `status`                    | error   | The declared status is not a status of the kind                                    |
-| `schema-valid`             | `schema`                    | error   | The data does not match the schema of its lifecycle and kind                       |
-| `schema-valid`             | `unknown-field`             | warning | A key without `x-` that no schema names (Section 5)                                |
-| `schema-valid`             | `unmatched-file`            | warning | A file looks like an artifact but matches no pattern (Section 5)                   |
-| `ids-unique`               | `id-duplicate`              | error   | Another file carries the same ID. Every file involved gets a finding               |
-| `links-resolve`            | `link-unresolved`           | error   | A link points to an artifact or a ticket record that does not exist                |
-| `artifact-exists`          | `artifact-missing`          | error   | The ticket has no matching artifact                                                |
-| `status-is`                | `status-mismatch`           | error   | An artifact of the ticket has an effective status outside the set                  |
-| `approvals-valid`          | `approvals-missing`         | error   | An artifact has fewer valid approvals than `min` (Section 10)                      |
-| `change-needs-binding`     | `binding-missing`           | error   | An anchored artifact hit by `changed_paths` has no binding artifact through it     |
-| `change-needs-binding`     | `changed-paths-missing`     | error   | The caller supplied no `changed_paths`. An empty list is allowed and passes        |
-| `no-open-blocking-threads` | `thread-blocking-open`      | error   | A blocking thread of the ticket is open                                            |
-| `threads-answered`         | `thread-unanswered`         | error   | A thread of the ticket opened by the role is not answered (Section 10)             |
-| `steps-complete`           | `step-incomplete`           | error   | A required step is neither done nor skipped                                        |
-| the three above            | `process-store-unavailable` | error   | The gate needs the process store, which this call does not have (see below)        |
-| the three above            | `event-invalid`             | warning | An event of the ticket (or one whose ticket cannot be read) is invalid (Section 4) |
-| any                        | `unsupported`               | error   | The implementation does not provide this gate, for example `exec` or a plugin gate |
+| Gate                                 | Code                        | Level   | Meaning                                                                                     |
+| ------------------------------------ | --------------------------- | ------- | ------------------------------------------------------------------------------------------- |
+| `schema-valid`                       | `yaml-profile`              | error   | The file violates the strict YAML profile or the file shape (Section 5)                     |
+| `schema-valid`                       | `kind-unknown`              | error   | `type` names neither `ticket` nor a kind of the configuration                               |
+| `schema-valid`                       | `path-mismatch`             | error   | `id`, `ticket`, or `type` disagrees with the path (Section 5, "Files and paths")            |
+| `schema-valid`                       | `id-prefix`                 | error   | `id` does not start with the `id_prefix` of the kind                                        |
+| `schema-valid`                       | `status`                    | error   | The declared status is not a status of the kind                                             |
+| `schema-valid`                       | `schema`                    | error   | The data does not match the schema of its lifecycle and kind                                |
+| `schema-valid`                       | `unknown-field`             | warning | A key without `x-` that no schema names (Section 5)                                         |
+| `schema-valid`                       | `unmatched-file`            | warning | A file looks like an artifact but matches no pattern (Section 5)                            |
+| `ids-unique`                         | `id-duplicate`              | error   | Another file carries the same ID. Every file involved gets a finding                        |
+| `links-resolve`                      | `link-unresolved`           | error   | A link points to an artifact or a ticket record that does not exist                         |
+| `artifact-exists`                    | `artifact-missing`          | error   | The ticket has no matching artifact                                                         |
+| `status-is`                          | `status-mismatch`           | error   | An artifact of the ticket has an effective status outside the set                           |
+| `approvals-valid`                    | `approvals-missing`         | error   | An artifact has fewer valid approvals than `min` (Section 10)                               |
+| `change-needs-binding`               | `binding-missing`           | error   | An anchored artifact hit by `changed_paths` has no binding artifact through it              |
+| `change-needs-binding`               | `changed-paths-missing`     | error   | The caller supplied no `changed_paths`. An empty list is allowed and passes                 |
+| `no-open-blocking-threads`           | `thread-blocking-open`      | error   | A blocking thread of the ticket is open                                                     |
+| `threads-answered`                   | `thread-unanswered`         | error   | A thread of the ticket opened by the role is not answered (Section 10)                      |
+| `steps-complete`                     | `step-incomplete`           | error   | A required step is neither done nor skipped                                                 |
+| the three above                      | `process-store-unavailable` | error   | The gate needs the process store, which this call does not have (see below)                 |
+| the three above                      | `event-invalid`             | warning | An event of the ticket (or one whose ticket cannot be read) is invalid (Section 4)          |
+| plugin gates, `exec` with `evaluate` | `plugin-hash`               | error   | The `.wasm` file, its lock entry, or the hash disagree (Section 9)                          |
+| plugin gates, `exec` with `evaluate` | `plugin-capabilities`       | error   | The capabilities exceed the approved ones in the lockfile (Section 9)                       |
+| plugin gates, `exec` with `evaluate` | `plugin-failed`             | error   | The plugin could not run or returned an invalid output (Section 9)                          |
+| `exec`                               | `exec-unapproved`           | error   | The command, working directory, or environment is not approved (Section 9)                  |
+| `exec`                               | `exec-failed`               | error   | The command did not start, timed out, ended through a signal, or failed (Section 9)         |
+| any                                  | `unsupported`               | error   | The implementation does not provide this gate, for example one beyond its conformance level |
 
 A file that violates the YAML profile is reported by `schema-valid` and is invisible to all other gates. Threads and step state are events in the process store (Section 10). `no-open-blocking-threads`, `threads-answered`, and `steps-complete` read the events of the ticket from it. Without a process store (the directory does not exist, for example in CI) they fail with `process-store-unavailable`, so that nothing passes by mistake: no threads would otherwise look like no open threads. An invalid event is not read and is reported as a warning, so that an immutable broken segment of one device cannot block a project forever. The state of a step is the `status` of its last `step.changed` in the order (Section 4), and `open` without one. A `step.changed` for a step that the profile does not list is kept and ignored.
 
@@ -650,6 +655,7 @@ When a ticket starts, the resolved configuration (with its `overrides`) is store
 
 - Gates check a ticket **always against its snapshot**. CI needs neither generators nor packages for this.
 - If a ticket deliberately switches to new rules, that is an event (`ticket.config_changed`) and visible in the record.
+- Plugins are not frozen. `.hone/plugins/<name>.wasm` exists once, and `lock.yaml` approves exactly one hash per plugin. After an update, the gates of a ticket whose snapshot names the old hash fail with `plugin-hash` (Section 9), until the ticket deliberately switches to the new configuration.
 - The ticket's `overrides` are part of the snapshot (see "Ticket overrides" below). Changing them after the ticket started creates a new snapshot and the event `ticket.config_changed`.
 - The tool may delete a snapshot only when **no ticket record** refers to it any more, not even a completed one. Snapshots are small and shared. This keeps every ticket auditable (Question 8).
 
@@ -844,29 +850,45 @@ Behaviour beyond the standard gates comes from **WebAssembly plugins**. Only the
 
 A plugin exports named entry points. The protocol defines these:
 
-| Entry point        | Kind            | Input                                                                                           | Output                                                               |
-| ------------------ | --------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `describe()`       | all             | –                                                                                               | Name, version, protocol version, entry points, required capabilities |
-| `check(input)`     | gate            | checked state, ticket, step, parameters, optionally `base`, `changed_paths`, and `tool_outputs` | `{ ok, findings[] }`                                                 |
-| `generate(input)`  | generator       | layer, parameters, resolved configuration so far                                                | patch                                                                |
-| `resolve(anchor)`  | language plugin | anchor (`path#symbol`)                                                                          | location or error                                                    |
-| `public_api(path)` | language plugin | path                                                                                            | list of public symbols (for the drift check)                         |
+| Entry point        | Kind            | Input                                                                                            | Output                                                               |
+| ------------------ | --------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `describe()`       | all             | –                                                                                                | Name, version, protocol version, entry points, required capabilities |
+| `check(input)`     | gate            | configuration, ticket, step, parameters, artifacts, optionally `changed_paths` and `tool_output` | `{ findings[] }`                                                     |
+| `generate(input)`  | generator       | layer, parameters, resolved configuration so far                                                 | patch                                                                |
+| `resolve(anchor)`  | language plugin | anchor (`path#symbol`)                                                                           | location or error                                                    |
+| `public_api(path)` | language plugin | path                                                                                             | list of public symbols (for the drift check)                         |
 
-Custom entry points are allowed in the namespace `x-<name>`.
+Custom entry points are allowed in the namespace `x-<name>`. Input and output are UTF-8 JSON. Their schema is `schemas/plugin.schema.json`.
 
 ```json
 // check: input (shortened)
 { "protocol": 1,
-  "ticket": { "id": "tk-9f2x4a8m", "profile": "full", "attributes": { "risk": "high" } },
-  "step": "decision",
-  "params": {},
-  "artifacts": [ { "id": "dec-7k3m2q8p", "type": "decision", "status": "accepted", "hash": "sha256:3f1c...", "path": "design/decisions/..." } ],
+  "config": { "protocol": 1, "kinds": { … }, "steps": { … } },
+  "ticket": { "id": "tk-9f2x4a8m", "type": "ticket", "profile": "full", "attributes": { "risk": "high" }, … },
+  "step": "interfaces",
+  "params": { "anchored": "module", "binding": "decision" },
+  "artifacts": [ { "path": "design/decisions/dec-7k3m2q8p-payment-async.md", "status": "accepted", "hash": "sha256:3f1c…", "data": { "id": "dec-7k3m2q8p", "type": "decision", … }, "body": "## Context\n…" } ],
   "changed_paths": ["src/payments/gateway.rs"] }
 
 // check: output
-{ "ok": false,
-  "findings": [ { "level": "error", "message": "Public API of PaymentGateway changed without a binding decision", "path": "src/payments/gateway.rs" } ] }
+{ "findings": [ { "level": "error", "code": "public-api-unbound", "message": "The public API of src/payments/gateway.rs changed without a binding decision", "path": "src/payments/gateway.rs" } ] }
 ```
+
+**Input of `check`.** `config` is the configuration the gate runs against (the ticket's snapshot, Section 7), `ticket` the data of the ticket record, `step` the name of the step, and `params` the `params` of the gate entry, `{}` when it has none. `artifacts` lists every artifact of the checked directory, not only the ticket's, because a binding decision can come from an earlier ticket. Each entry has the path relative to the project root, the effective status (Section 6, absent for lifecycle `living`), the content hash (Section 5), `data` (the data model of the file: the front matter or the YAML document), and `body` (the Markdown text, `""` for a YAML file), the same split as for the content hash. `id` and `type` live only in `data`. Ticket records count as artifacts here. Files that violate the YAML profile are missing, as for every other gate. `changed_paths` is absent when the caller supplied none. The input of a plugin named by `evaluate` additionally holds `tool_output` (see "What WASM cannot do"), and its `params` are those of the `exec` gate. The input has no `null`.
+
+**Output of `check`.** Only `findings`, in the shape of Section 7: `level`, `code`, optionally `path` and `pointer`, and `message`. The gate fails exactly when a finding has level `error`. There is no `ok` field, because it would follow from the findings and could contradict them. A plugin chooses its own codes (a key: lowercase with hyphens). The host sorts the findings. An output that is not this shape is the finding `plugin-failed`.
+
+**Output of `describe`.** `{ name, version, protocol, entry_points, capabilities }`: the plugin's name and version, the protocol version (`1`), the entry points it exports, and the capabilities it asks for, in the shape of the capabilities below. `check` does not call `describe`. It serves tools that install a plugin and propose its capabilities. A plugin recognizes the protocol version from `protocol` in its input.
+
+**Runtime.** A plugin is a WebAssembly module for WASI preview 1 (Rust: target `wasm32-wasip1`). The host gives it exactly this:
+
+- The checked directory read-only under `/project`, and the base state, if the caller supplied one, read-only under `/base`. `read: [project]` mounts the whole directory, a path such as `read: [src]` only `/project/src` and `/base/src`. A path that does not exist in a state is not mounted there.
+- No network, no environment variables, no arguments, no standard input. Standard output and standard error have no meaning and are discarded.
+- `memory_pages` as the memory limit and `timeout_ms` as the time limit of one call.
+
+The sandbox cannot hide the clock and random numbers from WASI. **A plugin must not use them**, because a gate is a function of its input and the files. The host calls every gate with a fresh instance, so no state passes from one call to the next.
+
+**Failures.** If the module cannot be loaded, lacks the entry point, traps, exceeds a limit, returns an error, or returns an output outside the schema, the gate gets the finding `plugin-failed` (level `error`). Its message says what happened. The other gates run on. A plugin's failure is never "check could not run".
 
 ### Capabilities and trust
 
@@ -888,8 +910,9 @@ The resolved configuration contains only the plugins that `check` runs (gates an
 Rules:
 
 - **The default is nothing.** `net: []` means no network. The tool must always set the list explicitly. In Extism an empty list means "no host allowed", but a missing value (`null`) means "all hosts allowed", and this rule closes exactly that trap.
-- **Gates are pure.** No network, no writing. The result is then a function of input and files and therefore repeatable.
+- **Gates are pure.** No network, no writing, no clock, no random numbers. The result is then a function of input and files and therefore repeatable.
 - **Hash pinning.** Plugin hash and approved capabilities are recorded in `lock.yaml`. If either changes, a new approval is required. CI runs only plugins that are recorded there with a hash.
+- **Checked on every run.** Before a plugin runs, `check` compares the SHA-256 of the `.wasm` file with `hash` in the configuration the gate runs against, and that `hash` and the capabilities with the entry in a lockfile. The lockfile is `.hone/lock.yaml`, unless the caller supplies another one, such as CI with the lockfile of the protected base state. A missing file, a missing lock entry, or a differing hash is the finding `plugin-hash`. Capabilities beyond the approved ones (the same rule as for `resolve`, Section 8) are the finding `plugin-capabilities`. In both cases the plugin does not run. `resolve` checking the same thing is not enough, because a change can bring `.wasm`, `lock.yaml`, `resolved.json`, and the snapshots along together.
 - **Generators are the exception:** they may get network access, but run only on `resolve`, never in CI.
 
 ### What WASM cannot do
@@ -903,7 +926,7 @@ compiles: # a gate entry in a step
     command: ["cargo", "check", "--workspace"] # required: argv list, no shell
     cwd: crates/core # optional, relative to the project root, default: the project root
     env: ["CARGO_HOME"] # optional: environment variables passed through, default: none
-    timeout_ms: 600000 # optional
+    timeout_ms: 600000 # optional, default: 600000 (10 minutes)
     evaluate: cargo-findings # optional: plugin that turns the result into findings
 ```
 
@@ -912,8 +935,10 @@ Without `evaluate`, exit code 0 passes. `exec` belongs to the class `exec`, ever
 Rules:
 
 - **Two classes.** `pure` gates (standard gates and WASM) are fast and deterministic and may run in every agent hook. `exec` gates run on completion of a step, before a push, and in CI, not on every edit. The caller chooses the class (`check --class pure`). The trigger remains the caller's business.
-- **An argv list, no shell.** The tool pins command, working directory, and allowed environment variables with a hash and requires approval. How it pins them is the tool's business (Section 8, `lock.yaml`). CI takes the lockfile from the protected base state, never from the change itself. Otherwise a pull request could inject arbitrary code into CI. The protocol regulates nothing beyond that. What "protected" means (branch protection, mandatory review for `lock.yaml`) is defined by the platform (Section 12). Hash pinning is enough (Question 6). `exec` gates are allowed only where the team trusts them (locally, and in CI on protected states).
-- **Plugins evaluate tool output.** Optionally, the host passes the command's result (`exit`, `stdout`, `stderr`, truncated) as `tool_outputs` to a plugin's `check`, which turns it into findings. The plugin stays a pure function of its input. Host functions with which a plugin starts commands itself are deliberately not provided, because they would break "gates are pure".
+- **An argv list, no shell.** The tool pins command, working directory, and allowed environment variables and requires approval. How it pins them is the tool's business (Section 8, `lock.yaml`). An `exec` gate whose command is not approved does not run and gets the finding `exec-unapproved`. CI takes the lockfile from the protected base state, never from the change itself. Otherwise a pull request could inject arbitrary code into CI. The protocol regulates nothing beyond that. What "protected" means (branch protection, mandatory review for `lock.yaml`) is defined by the platform (Section 12). Hash pinning is enough (Question 6). `exec` gates are allowed only where the team trusts them (locally, and in CI on protected states).
+- **Only the named environment.** The command receives exactly the variables in `env` that the caller has set, and no others. The host looks up the program (`command[0]` without a path separator) through its own `PATH`, so that `cargo` starts without a full path. Whatever the toolchain needs (for Rust, for example, `PATH`, `HOME`, `CARGO_HOME`, `RUSTUP_HOME`) the language package lists, visible and pinned.
+- **Result.** Standard input is empty. Standard output and standard error are kept up to 1 MiB each, from the start, bytes that are not UTF-8 are replaced. A program that cannot start, a timeout (the host ends the process), or an end through a signal is the finding `exec-failed`. Without `evaluate`, an exit code other than 0 is also `exec-failed`.
+- **Plugins evaluate tool output.** With `evaluate`, the host passes the result as `tool_output: { exit, stdout, stderr, truncated }` to the plugin's `check` (`truncated` is `true` when one of the two outputs was cut), with the `exec` gate's `params`. The plugin's findings alone decide, an exit code other than 0 fails nothing by itself. When the command did not end normally (it could not start, timed out, or ended through a signal), the gate gets `exec-failed` and the plugin is not called. The plugin goes through the same pinning and the same failures as a plugin gate. It stays a pure function of its input. Host functions with which a plugin starts commands itself are deliberately not provided, because they would break "gates are pure".
 - **Language packages supply the commands** (`hone/lang-rust`, `hone/lang-php` through `extends`). Nobody writes them by hand.
 - **CI does not trust local `exec` results** and runs them itself. The toolchain version is part of the result, because it influences it.
 
@@ -1053,7 +1078,21 @@ This section is **not normative**. It collects what a tool can build on the prot
 
 **Repository names.** Which location belongs to `repo:` in `repo:path#symbol` is bound locally by the device, as with contexts.
 
-**Protected state in CI.** For CI to take `lock.yaml` from the base state, the platform needs a protected base branch and a mandatory review for `lock.yaml` (for example CODEOWNERS).
+**Protected state in CI.** For CI to take `lock.yaml` from the base state, the platform needs a protected base branch and a mandatory review for `lock.yaml` (for example CODEOWNERS). With Git, CI passes it as `git show origin/main:.hone/lock.yaml > /tmp/lock.yaml && hone check --lock /tmp/lock.yaml …`.
+
+**Plugins and `exec` in hone** (Question 32). `hone check` takes `--base <dir>` (the base state, for example a `git worktree` of the target branch) and `--lock <file>` (the lockfile instead of `.hone/lock.yaml`). The runtime is Extism, always built in, with no feature switch. hone approves an `exec` command in `lock.yaml` under `x-hone-exec`, a list of readable entries:
+
+```yaml
+# .hone/lock.yaml
+x-hone-exec:
+  - {
+      command: [cargo, test],
+      cwd: ".",
+      env: [CARGO_HOME, HOME, PATH, RUSTUP_HOME],
+    }
+```
+
+An `exec` gate runs only when `command`, `cwd` (default `.`), and `env` (default `[]`, compared as a set) equal one entry. The entry itself is the approval, and a reviewer reads the command in plain text. A hash next to it would say the same thing twice. hone caches no result of a plugin or a command, every call runs fresh, and it compiles each plugin once per call. Extism prints the output of a plugin only when the environment variable `EXTISM_ENABLE_WASI_OUTPUT` is set. That is meant for debugging and breaks `--json` and the MCP server. The sources of hone's own plugins live in `plugins/`, a Cargo workspace of their own for the target `wasm32-wasip1`. The built `.wasm` files are committed to the test cases, so that `cargo test` needs neither network nor a WASM toolchain.
 
 **Backup without a server.** The tool offers a folder (including a synchronized one such as Nextcloud) as a backup target. Technically this is a "shared folder" peer. Whatever a lost device never backed up is gone. The tool says so clearly during setup.
 
@@ -1082,13 +1121,13 @@ The implementation depends on the platform: one branch per unit, pull requests, 
 
 **MCP server.** `hone mcp [--root <dir>] [--packages <dir>]` serves exactly one project, the same as `hone resolve` (default root `.`). The tools take no root, because an agent run receives context from exactly one project (tenant separation). The server uses the official Rust SDK `rmcp`. It offers one tool per public function of `hone-core`, named like the function without a prefix (the client adds the server name, for example `mcp__hone__check`):
 
-| Tool             | Input                                                     | Result                                                                                   |
-| ---------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `resolve`        | `check` (optional, only compare, write nothing)           | Like `hone resolve --json`: `status` (`written`, `up-to-date`, `out-of-date`) and `hash` |
-| `check`          | `ticket`, `step`, `changed_paths`, `class` (all optional) | Like `hone check --json`: `status` (`passed`, `failed`) and `gates`                      |
-| `check_edit`     | `ticket`, `path` (relative to the root)                   | The same as the agent hook, asked beforehand: `status` and `gates`                       |
-| `check_artifact` | `path`, `content` (both required)                         | `status` and `findings`, `failed` exactly when a finding is an `error`                   |
-| `content_hash`   | `path`, `content` (both required)                         | `hash`                                                                                   |
+| Tool             | Input                                                                     | Result                                                                                   |
+| ---------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `resolve`        | `check` (optional, only compare, write nothing)                           | Like `hone resolve --json`: `status` (`written`, `up-to-date`, `out-of-date`) and `hash` |
+| `check`          | `ticket`, `step`, `changed_paths`, `class`, `base`, `lock` (all optional) | Like `hone check --json`: `status` (`passed`, `failed`) and `gates`                      |
+| `check_edit`     | `ticket`, `path` (relative to the root)                                   | The same as the agent hook, asked beforehand: `status` and `gates`                       |
+| `check_artifact` | `path`, `content` (both required)                                         | `status` and `findings`, `failed` exactly when a finding is an `error`                   |
+| `content_hash`   | `path`, `content` (both required)                                         | `hash`                                                                                   |
 
 `check_artifact` and `content_hash` take the content as text, so that an agent checks a draft before it writes the file. Results map to MCP like the exit codes of the command line: a failed gate is a normal result with `status: failed`, because it is an answer and not an error. A tool that could not run (exit code 2, a failed resolution, content outside the YAML profile for `content_hash`) returns a result marked `isError` with `status` (`error`, `failed`, or `io-error`) and `message`, `problems` (resolution), or `violations` (`content_hash`). Invalid arguments, such as a missing `path` or `step` without `ticket`, are also a result marked `isError` and not a protocol error, so that the agent reads the reason and corrects the call (the behaviour of the MCP specification and of `rmcp`). Writing and comparing `resolved.json` and reading it for `check_artifact` live in `hone-core`, so that the command line and the MCP server cannot drift apart.
 
@@ -1170,7 +1209,10 @@ The YAML profile, the schemas, and the content hash (Section 5) have test cases 
 
 A gate test case is a directory `schemas/tests/check/<case>/`:
 
-- `project/`: the checked directory, including `.hone/resolved.json` and the snapshots the case needs.
+- `project/`: the checked directory, including `.hone/resolved.json`, the snapshots, and the plugins (`.wasm` and `lock.yaml`) the case needs.
+- `base/` (optional): the base state of the call (Section 9, "Runtime").
+- `lock.yaml` (optional): the lockfile the caller supplies instead of `project/.hone/lock.yaml`, as CI does with the lockfile of the base state (Section 9).
+- `data/` (optional): the base directory of the process store, with the store of the project's scope IDs (Section 4).
 - `input.yaml` (optional): `ticket`, `step`, and `changed_paths` of the call, each optional.
 - `expected.txt`: one line per finding, `<level> <gate> <code> <path> <pointer>`, sorted. `<gate>` is the gate name of a directory gate or `<step>/<label>` of a ticket gate. `<path>` and `<pointer>` are `-` when the finding has none. An empty file means that every gate passed without a finding.
 
@@ -1219,6 +1261,8 @@ All questions of this draft are decided. The numbers stay stable because the tex
 29. **Check:** Decided. Directory gates run against `resolved.json` when a step contains them, ticket gates against the snapshot, either the named step or every `required` step. Artifacts are found through the path patterns, and path and content must agree. A superseding artifact counts by its declared status. Findings carry fixed codes. Gates that need the process store fail until the event schema exists, `exec` and plugin gates fail as `unsupported` until step 8. Approvals count once per person, with the role checked against `actors`. `change-needs-binding` needs `changed_paths` and matches anchors by path segments and simple globs. The agent hook runs only `change-needs-binding` and never blocks edits to artifacts (Sections 5, 6, 7, 10, 12, and 14).
 30. **MCP server:** Decided. One project per server (`hone mcp --root --packages`), the SDK `rmcp`, the tools `resolve`, `check`, `check_edit`, `check_artifact`, and `content_hash` without a prefix, with the same JSON as `--json`. A failed gate and an out-of-date `resolved.json` are normal results, "could not run" and invalid arguments are `isError`, never a protocol error. `check_artifact` and `content_hash` take path and content. Writing and comparing `resolved.json` moves into `hone-core` (Section 12).
 31. **Event schema and local process store:** Decided. Scope IDs and the device ID are a prefix plus 8 characters of Crockford Base32, the device ID is created per project, so that a device cannot be linked across tenants. An event has no `date`: the UUIDv7 `id` carries the time of writing, and the order is topological by `after` and `seq`, then by `id`. `after` expresses causality only (the newest known event of every other device), references live in `payload`. The envelope is strict (only `x-` fields extra, `sig` reserved and absent), known types have fixed payloads (Section 4), unknown types are kept and ignored. Lines are RFC 8785 JSON, an interrupted last line of the open segment is ignored, invalid events are not read and are reported. Segments are numbered from 1, the highest is open. `step.changed` replaces `step.skipped`, the thread ID is derived from the opening event, a thread is answered by a message of another author, and `steps-complete` ignores the steps that contain it. The three process-store gates check for real, report invalid events as warnings, and fail with `process-store-unavailable` without a store. `approvals-valid` stays on the `review` block. hone stores locally in the XDG data directory (`HONE_DATA_DIR` overrides it), has no index yet, keeps the code in `hone-core`, and offers process commands for threads, steps, and events on the command line and over MCP, with the MCP author fixed at the start (Sections 4, 5, 7, 10, and 12).
+
+32. **Plugin contract and `exec` gates:** Decided. Plugins are WASI preview 1 modules without host functions. They read the checked directory and the optional base state read-only under `/project` and `/base`, get no network, environment, or arguments, and must not use the clock or random numbers. `check` receives the configuration, the ticket record, the step, the parameters, every artifact (path, effective status, content hash, data, body), and optionally `changed_paths` and `tool_output`. It returns only `findings` with codes of its own choosing. `describe` is not called by `check`. A plugin that cannot run or returns an invalid output gets the finding `plugin-failed`. Before every run, `check` compares the `.wasm` file, the configuration, and a lockfile, which the caller may replace (`plugin-hash`, `plugin-capabilities`). Plugins are not frozen per ticket: after an update a ticket switches to the new configuration. `exec` gates come with step 8: only approved commands run (`exec-unapproved`), only with the named environment, with a default timeout of 10 minutes and outputs cut at 1 MiB. `exec-failed` covers start failures, timeouts, signals, and, without `evaluate`, an exit code other than 0. With `evaluate`, the plugin decides alone through `tool_output: { exit, stdout, stderr, truncated }`. hone approves commands as readable entries under `x-hone-exec` in `lock.yaml`, offers `--base` and `--lock` on the command line and over MCP, caches nothing, and builds Extism in always. Its plugins live in `plugins/` and are committed built (Sections 7, 8, 9, 12, and 14).
 
 ## 16. Next steps
 
