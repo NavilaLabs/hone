@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -255,11 +254,7 @@ fn push(
         }
         let target = target_directory.join(&name);
         let exists = target.symlink_metadata().is_ok();
-        let opened = log::open_below(
-            &target,
-            folder,
-            File::options().read(true).append(true).create(true),
-        )?;
+        let opened = log::open_below(&target, folder, true)?;
         let Some(mut file) = opened else {
             report.problem(
                 SyncCode::UnsafePath,

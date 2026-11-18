@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::fs::File;
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -183,14 +183,24 @@ impl Log {
     }
 }
 
-pub(crate) fn open_below(
-    path: &Path,
-    root: &Path,
-    options: &OpenOptions,
-) -> std::io::Result<Option<File>> {
+pub(crate) fn open_below(path: &Path, root: &Path, write: bool) -> std::io::Result<Option<File>> {
+    let file = match path.symlink_metadata() {
+        // `create_new` does not follow a link, so a dangling link cannot make hone create a
+        // file outside the folder.
+        Err(error) if error.kind() == ErrorKind::NotFound && write => File::options()
+            .read(true)
+            .append(true)
+            .create_new(true)
+            .open(path)?,
+        Err(error) => return Err(error),
+        // Opening a FIFO or device would block or read something else entirely.
+        Ok(_) if !std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) => {
+            return Ok(None);
+        }
+        Ok(_) => File::options().read(true).append(write).open(path)?,
+    };
     // Checking the path before opening it leaves a window in which a writer of the folder can
     // swap in a link, so the opened file itself must be the one found below `root`.
-    let file = options.open(path)?;
     let Ok(canonical) = path.canonicalize() else {
         return Ok(None);
     };
@@ -345,11 +355,7 @@ fn read_device(
     let mut previous: Option<(u64, u64)> = None;
     for number in numbers {
         let path = format!("log/{device}/{number}.ndjson");
-        let Some(mut file) = open_below(
-            &directory.join(format!("{number}.ndjson")),
-            root,
-            OpenOptions::new().read(true),
-        )?
+        let Some(mut file) = open_below(&directory.join(format!("{number}.ndjson")), root, false)?
         else {
             log.report_unsafe(&path);
             continue;
