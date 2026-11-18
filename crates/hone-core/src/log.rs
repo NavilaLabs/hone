@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use crate::canonical;
 use crate::event;
+use crate::manifest;
 
 const SEGMENT_MAX_EVENTS: usize = 1000;
 const SEGMENT_MAX_BYTES: usize = 1024 * 1024;
@@ -147,7 +148,10 @@ pub(crate) fn read(store: &Path, project: &str, root: &Path) -> std::io::Result<
     }
     for device in sorted_entries(&directory)? {
         let path = directory.join(&device);
-        if path.is_dir() && log.permitted(&path, &format!("log/{device}"), root) {
+        if manifest::is_device_id(&device)
+            && path.is_dir()
+            && log.permitted(&path, &format!("log/{device}"), root)
+        {
             read_device(
                 &directory,
                 &device,
