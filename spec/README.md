@@ -31,7 +31,7 @@ An implementation claims one level and proves it with the test cases of that lev
 | Plugins                           | The plugin contract, capabilities, and trust                     | Concept Section 9        |
 | [Process store](process-store.md) | Logs, segments, events, the reading rules, the order, the cursor | Written                  |
 | [Replication](replication.md)     | `read`, `append`, `sync`, the shared folder, the HTTP transport  | Written                  |
-| Approvals, threads, condensation  | The process events of review                                     | Concept Section 10       |
+| [Review](review.md)               | Approvals, threads, and condensation                             | Written                  |
 
 ## License
 

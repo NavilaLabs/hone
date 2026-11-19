@@ -921,6 +921,8 @@ Parsing-based language functions (resolving symbols, reading the public API), in
 
 ## 10. Approvals, comment threads, and condensation
 
+The rules of this section are normative text in [`spec/review.md`](../spec/review.md) (Question 41); this section keeps the examples and the reasons.
+
 Approvals and threads are **events in the process store**. They are not individual files in the working tree. On completion, whatever should remain is condensed.
 
 ### Approvals
@@ -978,13 +980,8 @@ payload:
   body: "What happens when the queue fails?"
 ```
 
-**Rules**
+**Rules** (normative in [`spec/review.md`](../spec/review.md)). Anyone may resolve or reopen a thread. Resolving without a message does not answer it, because a silent "done" documents no why. Authors carry a role, and whether it is an AI is stated in the role definition (`kind: ai`), so it shows what comes from an AI.
 
-- **Status.** A thread is open after `thread.opened`. The last of its `thread.resolved` and `thread.reopened` in the order (Section 4) decides whether it is `resolved` or open again. A message does not change the status. Anyone may resolve or reopen. Events of a thread whose opening event is not present count for no status.
-- **Blocking threads** (`blocking: true`) make the gate `no-open-blocking-threads` fail while they are open.
-- **Answered.** A thread is answered when it has at least one `thread.message` whose author `name` differs from the author of `thread.opened`. Resolving without a message does not answer, because a silent "done" documents no why. The gate `threads-answered` fails for every thread of the ticket, opened by its role, that is not answered.
-- **Approvals and threads are independent:** an approval stays valid as long as the hash matches. An open blocking thread blocks anyway.
-- **Roles are labelled.** Authors carry a role (`human`, `critic`, ...). Whether it is an AI is stated in the role definition (`kind: ai`). This shows what comes from an AI.
 - **The critic's questions are threads.** The questions and red flags of a step are created as threads on the artifact, answers are messages. The why documents itself this way, and `threads-answered` can be a gate. (The examiner's comprehension questions are not review and stay out of this.)
 
 ### Condensation on completion
@@ -1295,7 +1292,7 @@ All questions of this draft are decided. The numbers stay stable because the tex
 8. Done: the plugin contract (Question 32) with Extism as the runtime and `schemas/plugin.schema.json`, the gate `public-api-has-decision` in Rust under `plugins/`, capabilities and hash pinning checked on every run against a lockfile the caller may replace, `exec` gates with approved commands and `evaluate`, and `--base` and `--lock` on the command line and over MCP.
 9. Done: the replication contract in the decided scope (Question 26, Question 33, Question 34, Question 35: unreadable entries of a shared folder are skipped and reported) with the test cases `schemas/tests/read/`, `schemas/tests/sync/`, and `schemas/tests/append/`, the shared folder as the first reference backend (`hone sync --folder`), the reference server as the crate `hone-server` (`hone serve`: HTTP, NDJSON, Server-Sent Events, bearer authentication, every error code of Section 4), and the client (`hone sync --server [--watch]`, the MCP tool `sync` with `--sync-folder` or `--sync-server`).
 10. In progress: the desktop GUI `hone-gui` over the command line and `hone log` (Question 36), approvals and condensation as commands (Question 37), the Git branch as a shared folder (Question 38), contexts (Question 39), and the Rust plugin `module-anchors-resolve` (Question 40) are done. Open: plugins for other languages, credentials in an OS keyring, `export` and `forget`, and delivery.
-11. In progress: the normative specification in `spec/` (Question 41). Written: the conventions and levels (`spec/README.md`), conformance with every test case format (`spec/conformance.md`), the process store (`spec/process-store.md`), and replication (`spec/replication.md`). Open: artifacts, configuration, gates, plugins, and review, each moved out of this concept chapter by chapter.
+11. In progress: the normative specification in `spec/` (Question 41). Written: the conventions and levels (`spec/README.md`), conformance with every test case format (`spec/conformance.md`), the process store (`spec/process-store.md`), replication (`spec/replication.md`), and review (`spec/review.md`). Open: artifacts, configuration, gates, and plugins, each moved out of this concept chapter by chapter.
 
 ## Sources
 

@@ -94,4 +94,5 @@ Decisions taken without the maintainer, during an autonomous run on the branch `
 67. **Levels of the suites.** `valid/`, `invalid/`, `profile/`, `hash/`, `check/`, and `config/` are Core, `events/` is Flow, `resolve/`, `read/`, `sync/`, and `append/` are Extended; a gate case belongs to the level of its gates. The concept named the levels but did not assign the suites.
 68. **Tests outside the suite.** Transport codes, the subscription, and permission errors in a shared folder cannot be expressed as repository files; the conformance chapter says each implementation tests them itself.
 69. **Process store and replication moved.** `spec/process-store.md` and `spec/replication.md` hold the rules of concept Section 4 as numbered, normative statements; the concept keeps the reasons (one log per device, canonical lines, full UUIDv7, no database format, the role of the server, identity, CI) and points to the chapters. No rule was changed in the move.
-70. **Pending chapters:** artifacts, configuration, gates, plugins, review.
+70. **Review moved.** `spec/review.md` holds the rules of concept Section 10; the concept keeps the examples and reasons. The approval bullets of the concept still repeat some rules and should be trimmed when the gates chapter is written.
+71. **Pending chapters:** artifacts, configuration, gates, plugins.
