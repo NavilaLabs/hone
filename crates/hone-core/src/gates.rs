@@ -77,7 +77,11 @@ impl<'a> Scope<'a> {
                 let mut findings = match gate {
                     "no-open-blocking-threads" => open_blocking_threads(process),
                     "threads-answered" => unanswered_threads(process, params),
-                    _ => self.incomplete_steps(process, call.profile),
+                    _ => {
+                        let mut findings = self.incomplete_steps(process, call.profile);
+                        findings.extend(self.profile_not_selected(call.record));
+                        findings
+                    }
                 };
                 findings.extend(process.invalid.iter().map(|invalid| {
                     let line = invalid
@@ -367,6 +371,22 @@ impl<'a> Scope<'a> {
                 )
             })
             .collect()
+    }
+
+    fn profile_not_selected(&self, record: &Map<String, Value>) -> Option<Finding> {
+        let profile = record.get("profile")?.as_str()?;
+        let attributes = record
+            .get("attributes")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let selected = crate::ticket::selected_profile(self.config, &attributes)?;
+        (selected != profile).then(|| {
+            Finding::warning(
+                Code::ProfileNotSelected,
+                format!("the ticket uses the profile `{profile}`, `select` gives `{selected}` for its attributes"),
+            )
+        })
     }
 
     fn contains_steps_complete(&self, step: &str) -> bool {

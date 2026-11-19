@@ -224,6 +224,34 @@ enum StepStatusInput {
 
 #[derive(Deserialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+struct TicketStartInput {
+    #[schemars(
+        description = "The attributes for profile selection, each a string, an integer, or a boolean, for example `{ \"risk\": \"high\", \"size\": 3 }`."
+    )]
+    #[serde(default)]
+    attributes: serde_json::Map<String, Value>,
+    #[schemars(description = "Tickets of external trackers the new ticket belongs to.")]
+    #[serde(default)]
+    external: Vec<ExternalInput>,
+    #[schemars(
+        description = "A profile instead of the result of `select`; `steps-complete` then warns `profile-not-selected`. Leave it out normally."
+    )]
+    profile: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct ExternalInput {
+    #[schemars(description = "The tracker, for example `github` or `jira`.")]
+    system: String,
+    #[schemars(description = "The ticket's key in the tracker, for example `8798` or `PAY-12`.")]
+    key: String,
+    #[schemars(description = "The ticket's address.")]
+    url: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
 struct TicketOverviewInput {
     #[schemars(description = "The ticket, for example `tk-9f2x4a8m`.")]
     ticket: String,
@@ -353,6 +381,39 @@ impl Server {
     }
 
     #[tool(
+        description = "Start a ticket as the server's author: writes the ticket record, the snapshot of the current configuration, and `ticket.started`. The profile follows `select` for the attributes. Returns the `ticket` ID, its `path`, `profile`, `selected`, `config`, `attributes`, and the written `event`."
+    )]
+    fn ticket_start(&self, Parameters(input): Parameters<TicketStartInput>) -> CallToolResult {
+        let Some(author) = &self.project.author else {
+            return no_author();
+        };
+        let packages: Box<dyn PackageSource> = match &self.project.packages {
+            Some(directory) => Box::new(PackageDirectory::new(directory)),
+            None => Box::new(NoPackages),
+        };
+        let start = hone_core::TicketStart {
+            attributes: input.attributes,
+            external: input
+                .external
+                .into_iter()
+                .map(|entry| hone_core::External {
+                    system: entry.system,
+                    key: entry.key,
+                    url: entry.url,
+                })
+                .collect(),
+            profile: input.profile,
+        };
+        match self
+            .store()
+            .and_then(|store| store.start_ticket(author, packages.as_ref(), start))
+        {
+            Ok(written) => CallToolResult::structured(to_value(&written)),
+            Err(error) => CallToolResult::structured_error(to_value(&error)),
+        }
+    }
+
+    #[tool(
         description = "Open a comment thread on a ticket, written as the server's author. Returns the written `event` and the `thread` ID."
     )]
     fn thread_open(&self, Parameters(input): Parameters<ThreadOpenInput>) -> CallToolResult {
@@ -448,9 +509,7 @@ impl Server {
 
     fn append(&self, change: Change) -> CallToolResult {
         let Some(author) = &self.project.author else {
-            return CallToolResult::structured_error(to_value(&ProcessError::Invalid {
-                message: "the server has no author: start it with --author and --role, or set an author in the project's context".into(),
-            }));
+            return no_author();
         };
         match self.store().and_then(|store| store.append(author, change)) {
             Ok(appended) => CallToolResult::structured(to_value(&appended)),
@@ -478,6 +537,12 @@ fn report_result(result: Result<CheckReport, hone_core::CheckError>) -> CallTool
         })),
         Err(error) => could_not_run(&error.message),
     }
+}
+
+fn no_author() -> CallToolResult {
+    CallToolResult::structured_error(to_value(&ProcessError::Invalid {
+        message: "the server has no author: start it with --author and --role, or set an author in the project's context".into(),
+    }))
 }
 
 fn could_not_run(message: &str) -> CallToolResult {

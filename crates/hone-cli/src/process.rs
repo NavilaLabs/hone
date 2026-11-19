@@ -363,6 +363,164 @@ pub(crate) fn run_log(target: &Target) -> ExitCode {
 }
 
 #[derive(Args)]
+pub(crate) struct TicketStartArguments {
+    #[command(flatten)]
+    target: Target,
+    #[command(flatten)]
+    writer: Writer,
+    /// Directory with one subdirectory per package name, for example `acme/base/`.
+    #[arg(long)]
+    packages: Option<PathBuf>,
+    /// An attribute as `<key>=<value>`, read like a YAML scalar: digits are an integer, `true`
+    /// and `false` a boolean, anything else a string; a value in double quotes stays a string.
+    #[arg(long = "attribute", value_name = "KEY=VALUE")]
+    attributes: Vec<String>,
+    /// A ticket of an external tracker as `<system>:<key>[=<url>]`, for example
+    /// `github:8798=https://github.com/o/r/issues/8798`.
+    #[arg(long, value_name = "SYSTEM:KEY[=URL]")]
+    external: Vec<String>,
+    /// A profile instead of the result of `select`, kept visible as `profile-not-selected`.
+    #[arg(long)]
+    profile: Option<String>,
+}
+
+#[derive(Args)]
+pub(crate) struct SetAttributesArguments {
+    #[command(flatten)]
+    target: Target,
+    #[command(flatten)]
+    writer: Writer,
+    /// The ticket.
+    #[arg(long)]
+    ticket: String,
+    /// An attribute to set, as for `hone ticket start`.
+    #[arg(long = "attribute", value_name = "KEY=VALUE")]
+    attributes: Vec<String>,
+    /// An attribute to remove.
+    #[arg(long)]
+    unset: Vec<String>,
+}
+
+#[derive(Args)]
+pub(crate) struct SwitchConfigArguments {
+    #[command(flatten)]
+    target: Target,
+    #[command(flatten)]
+    writer: Writer,
+    /// Directory with one subdirectory per package name, for example `acme/base/`.
+    #[arg(long)]
+    packages: Option<PathBuf>,
+    /// The ticket.
+    #[arg(long)]
+    ticket: String,
+}
+
+fn package_source(packages: Option<&PathBuf>) -> Box<dyn hone_core::PackageSource> {
+    match packages {
+        Some(directory) => Box::new(hone_core::PackageDirectory::new(directory)),
+        None => Box::new(hone_core::NoPackages),
+    }
+}
+
+pub(crate) fn run_ticket_start(arguments: &TicketStartArguments) -> ExitCode {
+    let outcome = ProcessStore::locate(&arguments.target.root, None).and_then(|store| {
+        let author = arguments.writer.author(&store)?;
+        let start = hone_core::TicketStart {
+            attributes: parse_attributes(&arguments.attributes)?,
+            external: arguments
+                .external
+                .iter()
+                .map(|text| parse_external(text))
+                .collect::<Result<_, _>>()?,
+            profile: arguments.profile.clone(),
+        };
+        let packages = package_source(arguments.packages.as_ref());
+        store.start_ticket(&author, packages.as_ref(), start)
+    });
+    finish(arguments.target.json, outcome, print_ticket)
+}
+
+pub(crate) fn run_set_attributes(arguments: &SetAttributesArguments) -> ExitCode {
+    let outcome = ProcessStore::locate(&arguments.target.root, None).and_then(|store| {
+        let author = arguments.writer.author(&store)?;
+        let set = parse_attributes(&arguments.attributes)?;
+        store.set_attributes(&author, &arguments.ticket, set, &arguments.unset)
+    });
+    finish(arguments.target.json, outcome, print_ticket)
+}
+
+pub(crate) fn run_switch_config(arguments: &SwitchConfigArguments) -> ExitCode {
+    let outcome = ProcessStore::locate(&arguments.target.root, None).and_then(|store| {
+        let author = arguments.writer.author(&store)?;
+        let packages = package_source(arguments.packages.as_ref());
+        store.switch_config(&author, packages.as_ref(), &arguments.ticket)
+    });
+    finish(arguments.target.json, outcome, print_ticket)
+}
+
+fn print_ticket(written: &hone_core::TicketWritten) {
+    println!("{} ({}, {})", written.ticket, written.profile, written.path);
+    if let Some(selected) = written
+        .selected
+        .as_deref()
+        .filter(|selected| *selected != written.profile)
+    {
+        println!("note: `select` gives the profile `{selected}` for these attributes");
+    }
+}
+
+fn parse_attributes(texts: &[String]) -> Result<serde_json::Map<String, Value>, ProcessError> {
+    let mut attributes = serde_json::Map::new();
+    for text in texts {
+        let (key, raw) = text.split_once('=').ok_or_else(|| ProcessError::Invalid {
+            message: format!("`{text}` is not `<key>=<value>`"),
+        })?;
+        attributes.insert(key.to_owned(), attribute_value(raw)?);
+    }
+    Ok(attributes)
+}
+
+fn attribute_value(raw: &str) -> Result<Value, ProcessError> {
+    if raw.len() >= 2 && raw.starts_with('"') && raw.ends_with('"') {
+        return serde_json::from_str::<String>(raw)
+            .map(Value::String)
+            .map_err(|error| ProcessError::Invalid {
+                message: format!("`{raw}` is not a double-quoted string: {error}"),
+            });
+    }
+    let digits = raw.strip_prefix('-').unwrap_or(raw);
+    if !digits.is_empty()
+        && digits.bytes().all(|byte| byte.is_ascii_digit())
+        && let Ok(number) = raw.parse::<i64>()
+    {
+        return Ok(Value::from(number));
+    }
+    Ok(match raw {
+        "true" => Value::Bool(true),
+        "false" => Value::Bool(false),
+        text => Value::String(text.to_owned()),
+    })
+}
+
+fn parse_external(text: &str) -> Result<hone_core::External, ProcessError> {
+    let (reference, url) = match text.split_once('=') {
+        Some((reference, url)) => (reference, Some(url.to_owned())),
+        None => (text, None),
+    };
+    let (system, key) = reference
+        .split_once(':')
+        .filter(|(system, key)| !system.is_empty() && !key.is_empty())
+        .ok_or_else(|| ProcessError::Invalid {
+            message: format!("`{text}` is not `<system>:<key>[=<url>]`"),
+        })?;
+    Ok(hone_core::External {
+        system: system.to_owned(),
+        key: key.to_owned(),
+        url,
+    })
+}
+
+#[derive(Args)]
 pub(crate) struct ExportArguments {
     #[command(flatten)]
     target: Target,

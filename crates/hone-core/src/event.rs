@@ -15,6 +15,9 @@ pub(crate) const THREAD_REOPENED: &str = "thread.reopened";
 pub(crate) const STEP_CHANGED: &str = "step.changed";
 pub(crate) const APPROVAL_GIVEN: &str = "approval.given";
 pub(crate) const REVIEW_CONFIRMED: &str = "review.confirmed";
+pub(crate) const TICKET_STARTED: &str = "ticket.started";
+pub(crate) const TICKET_ATTRIBUTES_CHANGED: &str = "ticket.attributes_changed";
+pub(crate) const TICKET_CONFIG_CHANGED: &str = "ticket.config_changed";
 
 static VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
     let common: Value = serde_json::from_str(COMMON_SCHEMA).expect("common.schema.json is JSON");
@@ -76,6 +79,16 @@ pub(crate) fn new_device_id() -> String {
         .map(|byte| char::from(CROCKFORD[usize::from(byte & 0x1f)]))
         .collect();
     format!("dev-{random}")
+}
+
+pub(crate) fn new_ticket_id() -> String {
+    let mut bytes = [0u8; 8];
+    getrandom::fill(&mut bytes).expect("the operating system provides random bytes");
+    let random: String = bytes
+        .iter()
+        .map(|byte| char::from(CROCKFORD[usize::from(byte & 0x1f)]))
+        .collect();
+    format!("tk-{random}")
 }
 
 pub(crate) fn thread_of(event_id: &str) -> String {

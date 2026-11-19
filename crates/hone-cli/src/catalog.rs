@@ -30,6 +30,15 @@ pub(crate) enum Ticket {
         #[arg(long)]
         json: bool,
     },
+    /// Start a ticket: write its record, the snapshot of the current configuration, and
+    /// `ticket.started`. Prints the ticket ID.
+    Start(crate::process::TicketStartArguments),
+    /// Change a ticket's attributes: write the record and `ticket.attributes_changed`. The
+    /// profile stays.
+    SetAttributes(crate::process::SetAttributesArguments),
+    /// Switch a ticket to the current configuration: a new snapshot, the record's `config`, and
+    /// `ticket.config_changed`.
+    SwitchConfig(crate::process::SwitchConfigArguments),
 }
 
 pub(crate) fn run_artifacts(arguments: &CatalogArguments) -> ExitCode {
@@ -47,6 +56,9 @@ pub(crate) fn run_ticket(command: Ticket) -> ExitCode {
             hone_core::ticket_overview(&root, &ticket),
             print_overview,
         ),
+        Ticket::Start(arguments) => crate::process::run_ticket_start(&arguments),
+        Ticket::SetAttributes(arguments) => crate::process::run_set_attributes(&arguments),
+        Ticket::SwitchConfig(arguments) => crate::process::run_switch_config(&arguments),
     }
 }
 

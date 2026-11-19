@@ -69,6 +69,8 @@ pub enum Code {
     ThreadUnanswered,
     /// A required step is neither done nor skipped.
     StepIncomplete,
+    /// The ticket's profile is not the result of `select` for its attributes.
+    ProfileNotSelected,
     /// The gate needs the process store, which the call does not have.
     ProcessStoreUnavailable,
     /// An event of the ticket, or one whose ticket cannot be read, is invalid.
@@ -112,6 +114,7 @@ impl Code {
             Code::ThreadBlockingOpen => "thread-blocking-open",
             Code::ThreadUnanswered => "thread-unanswered",
             Code::StepIncomplete => "step-incomplete",
+            Code::ProfileNotSelected => "profile-not-selected",
             Code::ProcessStoreUnavailable => "process-store-unavailable",
             Code::EventInvalid => "event-invalid",
             Code::PluginHash => "plugin-hash",

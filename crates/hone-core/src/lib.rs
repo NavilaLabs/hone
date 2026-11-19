@@ -9,6 +9,7 @@
 
 mod anchor;
 mod artifact;
+mod below;
 mod canonical;
 mod catalog;
 mod check;
@@ -36,6 +37,7 @@ mod replication;
 mod resolved_file;
 mod schema_valid;
 mod source;
+mod ticket;
 mod transport;
 mod validate;
 mod yaml;
@@ -66,6 +68,7 @@ pub use process::{
 pub use replication::{SyncCode, SyncProblem, SyncReport};
 pub use resolved_file::{ResolvedFile, ResolvedFileError, compare_resolved, write_resolved};
 pub use source::{NoPackages, PackageDirectory, PackageSource};
+pub use ticket::{External, TicketStart, TicketWritten};
 pub use transport::{ServerCode, is_project_id, parse_cursor_query};
 pub use yaml::YamlProfileError;
 

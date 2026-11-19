@@ -5,6 +5,8 @@ use rmcp::model::CallToolRequestParams;
 use rmcp::service::{RoleClient, RunningService, ServiceError};
 use serde_json::{Value, json};
 
+use hone_core::Author;
+
 use crate::{Project, Server, SyncPeer};
 
 const TICKET: &str = "tk-9f2x4a8m";
@@ -167,6 +169,7 @@ async fn lists_exactly_the_tools() {
             "thread_reply",
             "thread_resolve",
             "ticket_overview",
+            "ticket_start",
         ]
     );
 }
@@ -712,4 +715,46 @@ async fn sync_moves_events_through_the_fixed_folder() {
     let sent = reply.content["sent"].as_object().expect("sent");
     assert_eq!(sent.values().collect::<Vec<_>>(), [&json!(1)]);
     remove(&bob);
+}
+
+#[tokio::test]
+async fn ticket_start_writes_as_the_servers_author_and_needs_one() {
+    let mut project = resolve_case("defaults");
+    let root = project.root.clone();
+    let resolved = call(project.clone(), "resolve", json!({})).await;
+    assert!(!resolved.is_error, "{}", resolved.content);
+    project.data_directory = Some(root.join("data"));
+
+    let without = call(project.clone(), "ticket_start", json!({})).await;
+    assert!(without.is_error);
+    assert_eq!(without.content["status"], "invalid");
+    assert!(!root.join("tickets").exists(), "nothing is written");
+
+    project.author = Some(Author {
+        name: "triage-bot".into(),
+        role: "human".into(),
+    });
+    let started = call(
+        project,
+        "ticket_start",
+        json!({ "attributes": { "size": 3 }, "external": [{ "system": "github", "key": "8798" }] }),
+    )
+    .await;
+    assert!(!started.is_error, "{}", started.content);
+    assert_eq!(started.content["profile"], "only");
+    assert_eq!(started.content["attributes"], json!({ "size": 3 }));
+    assert_eq!(
+        started.content["event"]["author"],
+        json!({ "name": "triage-bot", "role": "human" })
+    );
+    let ticket = started.content["ticket"].as_str().expect("an ID");
+    let record =
+        std::fs::read_to_string(root.join(format!("tickets/{ticket}.yaml"))).expect("the record");
+    assert!(
+        record.ends_with(
+            "attributes: { \"size\": 3 }\nexternal:\n  - { system: \"github\", key: \"8798\" }\n"
+        ),
+        "{record}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }
