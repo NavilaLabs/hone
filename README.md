@@ -129,6 +129,15 @@ HONE_TOKEN=… hone sync --server https://hone.example --watch   # stay connecte
 
 The server checks every event against the authenticated identity, the project, and for approvals the actors in its configuration, and rejects it with a fixed error code (concept Section 4). A token is configured only as its SHA-256 (`printf %s "$TOKEN" | sha256sum`). `--watch` imports events as they arrive and sends new own events every 2 seconds.
 
+A device keeps a context per tenant in its configuration directory, so that a project syncs and writes without flags. The token stays out of the file, in the environment or in the OS keyring:
+
+```sh
+hone context set acme --server https://hone.example --author alice --role architect
+hone context use acme                   # binds this checkout's project
+hone context login acme < token.txt     # the token from standard input into the OS keyring
+hone sync                               # the peer and the token of the context
+```
+
 At the end of an engagement, `hone export` archives the project's store and `hone forget` removes it from the device:
 
 ```sh

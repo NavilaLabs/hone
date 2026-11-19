@@ -72,12 +72,12 @@ Decisions taken without the maintainer, during an autonomous run on the branch `
 
 ## Contexts (concept Question 39)
 
-54. **A local `contexts.yaml`, no secret.** In the platform's configuration directory (`HONE_CONFIG_DIR` replaces it). A context holds a peer (`server`, `folder`, or `git` with `remote`), an optional author, and `token_env`, the name of the variable that holds the token. Alternative: store the token, rejected because a file with tokens leaks them; an OS keyring is left for later.
+54. **A local `contexts.yaml`, no secret.** In the platform's configuration directory (`HONE_CONFIG_DIR` replaces it). A context holds a peer (`server`, `folder`, or `git` with `remote`), an optional author, and `token_env`, the name of the variable that holds the token. Alternative: store the token, rejected because a file with tokens leaks them; an OS keyring is left for later (since item 89, a token can be stored in it).
 55. **Precedence.** A flag or its environment variable wins; only without them does `hone sync` take the context's peer and a writing command the context's author. `--author` and `--role` now go together.
 56. **The file is written anew.** `hone context set` and `use` rewrite it in the strict profile; comments are lost. Unknown keys, a peer with more than one kind, and a binding to an unknown context are rejected when reading.
 57. **Names.** A context name is lowercase letters, digits, and `-`, not starting with `-`.
 58. **The GUI leaves the author to the context** when its author or role field is empty, instead of passing empty flags.
-59. **Not done:** the MCP server does not read contexts yet (it keeps `--author`, `--sync-*`); `export` and `forget`; tokens in an OS keyring. (The MCP server reads contexts since item 78; `export` and `forget` exist since item 82.)
+59. **Not done:** the MCP server does not read contexts yet (it keeps `--author`, `--sync-*`); `export` and `forget`; tokens in an OS keyring. (The MCP server reads contexts since item 78; `export` and `forget` exist since item 82; tokens in an OS keyring since item 89.)
 
 ## `module-anchors-resolve` (concept Question 40)
 
@@ -119,3 +119,11 @@ Decisions taken without the maintainer, during an autonomous run on the branch `
 86. **Git worktrees.** After removing worktrees of `hone sync --git`, hone runs `git worktree prune` in the project root and ignores its failure, because Git drops stale registrations itself. Not covered by tests yet.
 87. **No MCP tools.** An export writes outside the project, which the MCP server avoids (its sync peer is fixed for the same reason), and forgetting is a decision of a person, as approvals are (item 42).
 88. **Not done:** encrypting the local store per project, which the concept names as optional.
+
+## Tokens in the OS keyring (concept Question 44)
+
+89. **The crate `keyring` 4.2.0, always built in.** Its `v1` mode picks Keychain Services, the Windows Credential Manager, or the Secret Service through `zbus` (pure Rust, no `libdbus`). It adds about 45 crates to `hone-cli` only; `hone-core` stays free of it, because credentials are tool. Like Extism, it has no feature switch.
+90. **One entry per context and server.** Service `hone`, account `<context> <server>`. A token stored for a context is not found after the context's server changes, so it is never sent to another server. Alternative: the context name alone, rejected for that reason; the server alone, rejected because two contexts with different identities can share a server.
+91. **The environment wins.** A context's token is the variable of `token_env` (default `HONE_TOKEN`) when it is set and not empty, otherwise the keyring's token, as a flag wins over the context (item 55). Without a keyring (`NoDefaultStore`, for example on a server without a desktop session) there is simply no stored token; any other keyring error is appended to the message `no token for the server: set <variable> or store one with hone context login <name>`. `--server` and `--sync-server` without a context still read only `HONE_TOKEN`, because there is no context to look up.
+92. **Login reads standard input.** `hone context login <name>` reads one line from standard input, never a flag, because a flag shows in the process list and the shell history. It refuses an unknown context, a context without a server, and an empty line before it touches the keyring. `hone context logout <name>` reports whether a token was removed (`removed`). `contexts.yaml` gains no field: whether a token is stored is the keyring's state alone.
+93. **Not covered by tests:** storing and reading a real keyring entry, because tests must not write into the developer's keyring; the precedence is unit-tested with a stand-in, the refusals end to end, and the round trip was smoke-tested against KWallet.
