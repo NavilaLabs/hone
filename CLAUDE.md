@@ -8,7 +8,7 @@ Design phase. The protocol concept is `docs/protocol-concept.md`, the artifact a
 
 Until v1 nothing is stable: every layer (protocol, schemas, implementation) may be changed or rebuilt from scratch. Do not keep a design because it already exists or to preserve compatibility; propose the better design. Decisions already taken are still not reopened silently: name the change and ask.
 
-Run the tests with `cargo test`: resolved configuration, resolution test cases (`schemas/tests/resolve/`), artifact fixtures and content hash (`schemas/tests/{valid,invalid,profile,hash}/`), gate test cases (`schemas/tests/check/`), event fixtures and the process store (`schemas/tests/events/`), replication test cases (`schemas/tests/{read,sync}/`), and the MCP tools. Build tooling in Rust; throwaway generator scripts (bash, jq) live outside the repository.
+Run the tests with `cargo test`: resolved configuration, resolution test cases (`schemas/tests/resolve/`), artifact fixtures and content hash (`schemas/tests/{valid,invalid,profile,hash}/`), gate test cases (`schemas/tests/check/`), event fixtures and the process store (`schemas/tests/events/`), replication test cases (`schemas/tests/{read,sync,append}/`), the replication server over HTTP, and the MCP tools. Build tooling in Rust; throwaway generator scripts (bash, jq) live outside the repository.
 
 A step of concept Section 16 follows the skill `hone-step` (`.claude/skills/hone-step/`).
 

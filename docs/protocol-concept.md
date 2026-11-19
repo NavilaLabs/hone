@@ -1309,7 +1309,7 @@ A sync test case is a directory `schemas/tests/sync/<case>/`:
 
 An append test case checks what a server stores and answers (Question 34). It is a directory `schemas/tests/append/<case>/`:
 
-- `store/`: the server's store of the project `prj-8m2k4d7q` before the call.
+- `store/`: the server's store of the project `prj-8m2k4d7q` before the call. A case without `store/` starts with an empty store.
 - `request.json`: `{"identity": …, "actors": …}`, the authenticated identity and the actors the server knows for the project.
 - `events.ndjson`: the body of the request.
 - `expected.json`: `{"status": …, "code"?: …, "seq"?: …, "event"?: …, "cursor": …}`, the HTTP status and the answer without `message`. `cursor` is the server's cursor afterwards, also after a rejection, so it shows what was stored.
@@ -1376,7 +1376,7 @@ All questions of this draft are decided. The numbers stay stable because the tex
 6. Done: the MCP server (stdio) as the crate `hone-mcp`, a thin adapter over `hone-core`, started by `hone mcp`, with the tools `resolve`, `check`, `check_edit`, `check_artifact`, and `content_hash` (Question 30).
 7. Done: scope IDs and the event schema (`schemas/event.schema.json`, Question 31) with valid and invalid fixtures, the local process store in `hone-core` (segments per device, deterministic order, no index yet), the commands `hone thread`, `hone step`, and `hone events` and the matching MCP tools, and the gates `no-open-blocking-threads`, `threads-answered`, and `steps-complete` against the store.
 8. Done: the plugin contract (Question 32) with Extism as the runtime and `schemas/plugin.schema.json`, the gate `public-api-has-decision` in Rust under `plugins/`, capabilities and hash pinning checked on every run against a lockfile the caller may replace, `exec` gates with approved commands and `evaluate`, and `--base` and `--lock` on the command line and over MCP.
-9. Partly done: the replication contract in the decided scope (Question 26, Question 33) with the test cases `schemas/tests/read/` and `schemas/tests/sync/`, and the shared folder as the first reference backend (`hone sync --folder`, the MCP tool `sync`). Open: the reference server (HTTP, NDJSON, Server-Sent Events, bearer authentication, the error codes of Section 4).
+9. Done: the replication contract in the decided scope (Question 26, Question 33, Question 34) with the test cases `schemas/tests/read/`, `schemas/tests/sync/`, and `schemas/tests/append/`, the shared folder as the first reference backend (`hone sync --folder`), the reference server as the crate `hone-server` (`hone serve`: HTTP, NDJSON, Server-Sent Events, bearer authentication, every error code of Section 4), and the client (`hone sync --server [--watch]`, the MCP tool `sync` with `--sync-folder` or `--sync-server`).
 10. After that: condensation, language plugins (including `module-anchors-resolve`), the user interface, and the tool layer (contexts, Git integration, delivery).
 11. Turn this concept into the normative specification in `spec/`.
 
