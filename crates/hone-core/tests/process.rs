@@ -730,6 +730,67 @@ fn condense_takes_the_last_decision_of_every_person_for_the_current_hash() {
 }
 
 #[test]
+fn review_shows_every_last_decision_against_the_current_hash() {
+    let workspace = Workspace::new("review");
+    let original = std::fs::read(workspace.project().join(DECISION)).expect("decision");
+    let hash = content_hash(DECISION, &original).expect("hash");
+    let empty = workspace
+        .store()
+        .review(TICKET, "dec-7k3m2q8p")
+        .expect("no store yet");
+    assert!(empty.decisions.is_empty() && empty.confirmations.is_empty());
+
+    let stale = format!("sha256:{}", "0".repeat(64));
+    let mut confirmed = approval(5, 5, ("alice", "architect"), &hash, "approved");
+    confirmed["type"] = json!("review.confirmed");
+    confirmed["payload"] = json!({ "artifact": "dec-7k3m2q8p", "hash": stale });
+    workspace.write_segment(
+        DEVICE_A,
+        "1.ndjson",
+        &lines(&[
+            approval(1, 1, ("bob", "human"), &hash, "approved"),
+            approval(2, 2, ("alice", "architect"), &stale, "approved"),
+            approval(3, 3, ("bob", "human"), &hash, "changes-requested"),
+            approval(4, 4, ("alice", "human"), &hash, "approved"),
+            confirmed,
+        ]),
+    );
+
+    let review = workspace
+        .store()
+        .review(TICKET, "dec-7k3m2q8p")
+        .expect("reviewed");
+    // 0x0193a8f0 9b2c: `date -u -d @1733706160 +%F` is 2024-12-09.
+    assert_eq!(
+        serde_json::to_value(&review).expect("serializable"),
+        json!({
+            "artifact": "dec-7k3m2q8p",
+            "path": DECISION,
+            "hash": hash,
+            "decisions": [
+                { "name": "alice", "role": "architect", "decision": "approved", "hash": stale, "current": false, "date": "2024-12-09" },
+                { "name": "alice", "role": "human", "decision": "approved", "hash": hash, "current": true, "date": "2024-12-09" },
+                { "name": "bob", "role": "human", "decision": "changes-requested", "hash": hash, "current": true, "date": "2024-12-09" }
+            ],
+            "confirmations": [
+                { "name": "alice", "role": "architect", "hash": stale, "current": false, "date": "2024-12-09" }
+            ],
+            "review": review.review,
+        })
+    );
+    assert!(review.review.is_some(), "the fixture has a review block");
+
+    let error = workspace
+        .store()
+        .review(TICKET, "dec-2h6r9t1x")
+        .expect_err("no such artifact");
+    assert_eq!(
+        invalid_message(error),
+        "no artifact `dec-2h6r9t1x` in the project"
+    );
+}
+
+#[test]
 fn condense_refuses_a_malformed_summary_and_leaves_the_file() {
     let workspace = Workspace::new("condense-summary");
     let file = workspace.project().join(DECISION);

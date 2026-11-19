@@ -96,6 +96,41 @@ fn ticket_show_prints_the_profile_steps_and_roles() {
 }
 
 #[test]
+fn review_show_without_a_store_has_the_hash_and_the_file_review() {
+    let missing = std::env::temp_dir().join(format!("hone-review-show-{}", std::process::id()));
+    let output = Command::new(env!("CARGO_BIN_EXE_hone"))
+        .args([
+            "review",
+            "show",
+            "--ticket",
+            "tk-9f2x4a8m",
+            "dec-7k3m2q8p",
+            "--json",
+            "--root",
+        ])
+        .arg(project())
+        .env("HONE_DATA_DIR", &missing)
+        .output()
+        .expect("hone runs");
+    assert_eq!(output.status.code(), Some(0));
+    let value: Value = serde_json::from_slice(&output.stdout).expect("one JSON document");
+    // The fixture's review block approves the current content.
+    let hash = "sha256:678e7bc1cacb3c07fe77369e22fb499f58067c31ad2eeb66b929a32ce8ce45f6";
+    assert_eq!(
+        value,
+        json!({
+            "artifact": "dec-7k3m2q8p",
+            "path": "design/decisions/dec-7k3m2q8p-payment-async.md",
+            "hash": hash,
+            "decisions": [],
+            "confirmations": [],
+            "review": { "approved_by": [{ "name": "alice", "role": "architect", "hash": hash, "date": "2026-11-16" }] }
+        })
+    );
+    assert!(!missing.exists(), "showing creates no store");
+}
+
+#[test]
 fn ticket_show_of_a_malformed_id_fails_with_exit_code_1() {
     let (code, value) = hone(&["ticket", "show", "--ticket", "PAY-123"]);
     assert_eq!(code, Some(1));
