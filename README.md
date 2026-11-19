@@ -51,7 +51,7 @@ git diff --name-only main | hone check --ticket tk-9f2x4a8m --changed-from -
 
 `--changed <path>` (repeatable) and `--changed-from <file|->` (one path per line, an empty file means no changes) supply the changed paths for `change-needs-binding`. `--class pure|exec` runs only one class of gates, and `--json` prints the result as JSON.
 
-`hone artifacts` lists the artifacts of the checked directory with their declared and effective status, and `hone ticket show --ticket <tk>` prints a ticket's profile with its steps in order and the roles of its snapshot. Both read only the directory and take `--json`.
+`hone artifacts` lists the artifacts of the checked directory with their declared and effective status and their ID links, `hone review show --ticket <tk> <artifact>` shows every person's last decision on an artifact against its current content hash, and `hone ticket show --ticket <tk>` prints a ticket's profile with its steps in order and the roles of its snapshot. Both read only the directory and take `--json`.
 
 ### Plugins and `exec` gates
 

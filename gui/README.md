@@ -15,19 +15,28 @@ cd gui && HONE_BIN=../target/debug/hone cargo run -- <project root>
 
 ## Screens
 
-| Screen    | Command line                                                                                                |
-| --------- | ----------------------------------------------------------------------------------------------------------- |
-| Tickets   | `hone artifacts`, `hone log`, `hone ticket show`, `hone events`, `hone check --class pure`, `hone step set` |
-| Artifacts | `hone artifacts`                                                                                            |
-| Threads   | `hone events --ticket`, `hone artifacts`, `hone thread open/reply/resolve/reopen`                           |
-| Checks    | `hone check [--ticket]`                                                                                     |
-| Event log | `hone log`                                                                                                  |
-| Tracker   | none: GitHub or Jira over HTTPS, the setting in `gui.json`                                                  |
-| Sync      | `hone sync --folder` or `--server`, `hone log`                                                              |
-| Server    | `hone serve --config`                                                                                       |
-| Top bar   | `hone artifacts` (project ID), `hone context show` and `hone log` (authors), `hone ticket show` (roles)     |
+| Screen     | Command line                                                                                                                            |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Tickets    | `hone artifacts`, `hone log`, `hone ticket show`, `hone events`, `hone check --class pure`, `hone step set`                             |
+| Artifacts  | `hone artifacts`; one artifact: `hone review show`, `hone approve [--changes-requested]`, `hone review condense`, `hone review confirm` |
+| Link graph | `hone artifacts`                                                                                                                        |
+| Threads    | `hone events --ticket`, `hone artifacts`, `hone thread open/reply/resolve/reopen`                                                       |
+| Checks     | `hone check [--ticket]`                                                                                                                 |
+| Event log  | `hone log`                                                                                                                              |
+| Tracker    | none: GitHub or Jira over HTTPS, the setting in `gui.json`                                                                              |
+| Sync       | `hone sync --folder` or `--server`, `hone log`                                                                                          |
+| Server     | `hone serve --config`                                                                                                                   |
+| Top bar    | `hone artifacts` (project ID), `hone context show` and `hone log` (authors), `hone ticket show` (roles), the search                     |
 
 A ticket shows the steps of its profile in the order of `hone ticket show`: done, skipped with its reason, open, or waiting for an earlier step that is still open, the current step (the first open step that waits for nothing), and per step the pure gates of the last check. The GUI runs `hone check --ticket <tk> --class pure` when a ticket opens and after every write, so no `exec` gate runs a command behind the user's back; the full check stays on the Checks screen. A gate whose only error is `changed-paths-missing` is shown as needing changed paths, not as failed, because the GUI knows no change.
+
+The link graph places artifacts in one column per kind, ordered so that the kinds that store more links than they receive stand left, and orders each column by the rows of each node's neighbours. A link across a column runs through the gap between two rows, so it never passes behind a node. Hovering or focusing a node shows its links and their types; click or Enter opens it. Ticket records and their links start hidden; the ticket filter shows one ticket's artifacts and their direct neighbours.
+
+An artifact shows its stored links and the links other artifacts store towards it (marked computed), the threads anchored to it, and its review in its ticket: every person's last decision, whether it is for the current content, the condensed `review` block, and the actions Approve, Request changes (with an optional proof), Condense into the file, and Confirm the review block. They write as the chosen author, and the artifact's ticket becomes the open ticket, so the role list is that ticket's.
+
+The search (Ctrl+K or Cmd+K, or the field in the top bar) finds tickets by ID and external key, artifacts by ID, kind, and title, threads by their first line, and, with a tracker, the tracker's tickets (after a pause in typing). Every word must match. A tracker ticket that a ticket record names opens the hone ticket; any other one opens the Tracker screen on it.
+
+Errors, failed gates, refused writes, and invalid fields use `bad`, never the accent; an invalid field keeps a `bad` border and focus ring.
 
 Wherever the set of values is known, a field is a searchable list (`src/ui/combobox.rs`): tickets, steps, thread kinds (hone/standard's four plus the kinds in the log, or a new one), artifacts for an anchor, the event log's filters, the author (the context's author and the authors of the log, or a new handle) and the role (the roles of the open ticket's configuration). Arrow keys move, Enter selects, Escape closes.
 
