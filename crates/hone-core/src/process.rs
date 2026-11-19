@@ -176,6 +176,24 @@ pub struct Appended {
     pub thread: Option<String>,
 }
 
+/// The result of [`ProcessStore::export`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Exported {
+    /// The project's directory in the target, `<target>/<workspace>/<project>/`.
+    pub directory: PathBuf,
+    /// The number of events written, per device that had any.
+    pub events: BTreeMap<String, u64>,
+}
+
+/// The result of [`ProcessStore::forget`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Forgotten {
+    /// The store directory that was removed.
+    pub directory: PathBuf,
+    /// The number of valid events removed, per device that had any.
+    pub events: BTreeMap<String, u64>,
+}
+
 /// Whether a thread is open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -492,6 +510,108 @@ impl ProcessStore {
         .map_err(|error| ProcessError::IoError {
             message: format!("{}: {error}", folder.display()),
         })
+    }
+
+    /// Writes every device's log into `target`, a new or empty directory, in the layout of a
+    /// shared folder (concept Section 12, "Tenant separation"): the complete lines of each
+    /// segment, byte for byte, below `<target>/<workspace>/<project>/log/`. A sync with
+    /// `target` as the folder imports them again.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProcessError::Invalid`] if `target` is not empty, and
+    /// [`ProcessError::Unavailable`] if the project has no process store, both without
+    /// creating anything, and [`ProcessError::IoError`] if the store cannot be read or
+    /// `target` cannot be written.
+    pub fn export(&self, target: &Path) -> Result<Exported, ProcessError> {
+        let io = |error: std::io::Error| ProcessError::IoError {
+            message: format!("{}: {error}", target.display()),
+        };
+        match std::fs::read_dir(target) {
+            Ok(mut entries) => {
+                if entries.next().is_some() {
+                    return Err(ProcessError::Invalid {
+                        message: format!(
+                            "{} is not empty: export into a new or empty directory",
+                            target.display()
+                        ),
+                    });
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io(error)),
+        }
+        if !self.directory.join("log").is_dir() {
+            return Err(ProcessError::Unavailable {
+                message: format!("no process store at {}", self.directory.display()),
+            });
+        }
+        let _lock = self.lock()?;
+        std::fs::create_dir_all(target).map_err(io)?;
+        let report = replication::export(&self.directory, &self.workspace, &self.project, target)
+            .map_err(io)?;
+        if let Some(problem) = report.problems.first() {
+            return Err(ProcessError::IoError {
+                message: format!("{}: {}", problem.path, problem.message),
+            });
+        }
+        Ok(Exported {
+            directory: target.join(&self.workspace).join(&self.project),
+            events: report.sent,
+        })
+    }
+
+    /// Removes the project's local process store (concept Section 12, "Tenant separation"):
+    /// every device's log, the device ID, and the worktrees of `hone sync --git`. Copies in a
+    /// shared folder or on a server stay. A project without a store has nothing to remove.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProcessError::IoError`] if the store cannot be read or removed.
+    pub fn forget(&self) -> Result<Forgotten, ProcessError> {
+        let mut forgotten = Forgotten {
+            directory: self.directory.clone(),
+            events: BTreeMap::new(),
+        };
+        if !self.directory.is_dir() {
+            return Ok(forgotten);
+        }
+        let lock = self.lock()?;
+        for (device, events) in self.load()?.chains() {
+            forgotten
+                .events
+                .insert(device.to_owned(), events.len() as u64);
+        }
+        let had_worktrees = self.directory.join("git").is_dir();
+        let entries = std::fs::read_dir(&self.directory).map_err(|error| self.io(&error))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| self.io(&error))?;
+            if entry.file_name() == "lock" {
+                continue;
+            }
+            // `remove_dir_all` does not follow symbolic links, so nothing outside the store goes.
+            let removed = if entry.file_type().map_err(|error| self.io(&error))?.is_dir() {
+                std::fs::remove_dir_all(entry.path())
+            } else {
+                std::fs::remove_file(entry.path())
+            };
+            removed.map_err(|error| self.io(&error))?;
+        }
+        // The lock file goes last, after the lock is released, because some platforms cannot
+        // remove an open file.
+        drop(lock);
+        std::fs::remove_file(self.directory.join("lock")).map_err(|error| self.io(&error))?;
+        std::fs::remove_dir(&self.directory).map_err(|error| self.io(&error))?;
+        if let Some(workspace) = self.directory.parent() {
+            // Only an empty workspace directory goes; other projects may live in it.
+            let _ = std::fs::remove_dir(workspace);
+        }
+        if had_worktrees {
+            // Git drops the registrations of removed worktrees itself after a while; pruning now
+            // only cleans up earlier, so a failure changes nothing.
+            git::prune_worktrees(&self.project_root);
+        }
+        Ok(forgotten)
     }
 
     /// Writes the `review` block into the artifact `artifact` of `ticket` (concept Section 12,

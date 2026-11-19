@@ -103,6 +103,10 @@ pub(crate) fn worktree_of(store: &Path, branch: &str) -> PathBuf {
     store.join("git").join(branch.replace('/', "-"))
 }
 
+pub(crate) fn prune_worktrees(repository: &Path) {
+    let _ = git(repository, &["worktree", "prune"]);
+}
+
 fn git(directory: &Path, arguments: &[&str]) -> Result<String, String> {
     let output = Command::new("git")
         .arg("-C")

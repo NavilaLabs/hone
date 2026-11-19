@@ -193,6 +193,12 @@ impl Contexts {
         Ok(())
     }
 
+    /// Removes the binding of `project` and returns the name of the context it was bound to,
+    /// or `None` if it had none. The context itself stays.
+    pub fn unbind(&mut self, project: &str) -> Option<String> {
+        self.projects.remove(project).map(|binding| binding.context)
+    }
+
     /// The context bound to `project` checked out at `root`, or `None` if the project has no
     /// binding.
     ///

@@ -4,8 +4,8 @@ use std::process::ExitCode;
 use clap::{Args, Subcommand, ValueEnum};
 use hone_core::{
     Appended, Author, BoundContext, Change, Condensed, Context, ContextPeer, Contexts, Cursor,
-    Peer, ProcessError, ProcessStore, Server, StepStatus, SyncReport, ThreadAnchor, ThreadStatus,
-    TicketEvents,
+    Forgotten, Peer, ProcessError, ProcessStore, Server, StepStatus, SyncReport, ThreadAnchor,
+    ThreadStatus, TicketEvents,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -360,6 +360,81 @@ pub(crate) fn run_log(target: &Target) -> ExitCode {
         })
     });
     finish(target.json, outcome, print_log)
+}
+
+#[derive(Args)]
+pub(crate) struct ExportArguments {
+    #[command(flatten)]
+    target: Target,
+    /// The directory to write into. It must be new or empty.
+    #[arg(long)]
+    to: PathBuf,
+}
+
+pub(crate) fn run_export(arguments: &ExportArguments) -> ExitCode {
+    let outcome = ProcessStore::locate(&arguments.target.root, None)
+        .and_then(|store| store.export(&arguments.to));
+    finish(arguments.target.json, outcome, |exported| {
+        let events: u64 = exported.events.values().sum();
+        println!(
+            "exported {events} events of {} devices to {}",
+            exported.events.len(),
+            exported.directory.display()
+        );
+    })
+}
+
+#[derive(Args)]
+pub(crate) struct ForgetArguments {
+    #[command(flatten)]
+    target: Target,
+    /// The project ID of the root, repeated, because nothing that is forgotten comes back.
+    #[arg(long)]
+    confirm: String,
+}
+
+/// The result of `hone forget`.
+#[derive(Serialize)]
+struct Forget {
+    #[serde(flatten)]
+    forgotten: Forgotten,
+    /// The context the project was bound to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context: Option<String>,
+}
+
+pub(crate) fn run_forget(arguments: &ForgetArguments) -> ExitCode {
+    let outcome = ProcessStore::locate(&arguments.target.root, None).and_then(|store| {
+        if arguments.confirm != store.project() {
+            return Err(ProcessError::Invalid {
+                message: format!(
+                    "`{}` is not the project of the root: forgetting `{}` takes --confirm {}",
+                    arguments.confirm,
+                    store.project(),
+                    store.project()
+                ),
+            });
+        }
+        // Read before anything is removed, so that a malformed file stops the whole command.
+        let mut contexts = Contexts::load()?;
+        let forgotten = store.forget()?;
+        let context = contexts.unbind(store.project());
+        if context.is_some() {
+            contexts.save()?;
+        }
+        Ok(Forget { forgotten, context })
+    });
+    finish(arguments.target.json, outcome, |forget| {
+        let events: u64 = forget.forgotten.events.values().sum();
+        println!(
+            "removed {events} events of {} devices from {}",
+            forget.forgotten.events.len(),
+            forget.forgotten.directory.display()
+        );
+        if let Some(context) = &forget.context {
+            println!("unbound from the context {context}");
+        }
+    })
 }
 
 #[derive(Args)]

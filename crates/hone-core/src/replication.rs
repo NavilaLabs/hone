@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use crate::canonical;
 use crate::log::{self, Log};
+use crate::manifest;
 
 /// The kind of a problem a sync reports (concept Section 4, "Replication").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -141,6 +142,39 @@ pub(crate) fn sync_folder(
             own,
             folder,
             &[workspace, project, "log", own],
+            &mut report,
+        )?;
+    }
+    report.finish();
+    Ok(report)
+}
+
+// The complete lines of every device, byte for byte, in the layout of a shared folder, so that a
+// sync with `target` as the folder imports them again.
+pub(crate) fn export(
+    local: &Path,
+    workspace: &str,
+    project: &str,
+    target: &Path,
+) -> std::io::Result<SyncReport> {
+    let mut report = SyncReport::default();
+    let mut devices = Vec::new();
+    for entry in std::fs::read_dir(local.join("log"))? {
+        let entry = entry?;
+        if let Ok(name) = entry.file_name().into_string()
+            && manifest::is_device_id(&name)
+            && entry.file_type()?.is_dir()
+        {
+            devices.push(name);
+        }
+    }
+    devices.sort();
+    for device in &devices {
+        push(
+            local,
+            device,
+            target,
+            &[workspace, project, "log", device],
             &mut report,
         )?;
     }

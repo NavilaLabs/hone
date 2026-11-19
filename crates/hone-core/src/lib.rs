@@ -55,8 +55,8 @@ pub use finding::{Code, Finding, Level};
 pub use hosted::{AppendError, Appender, HostedStore, Rejection};
 pub use log::{Cursor, InvalidEvent};
 pub use process::{
-    Appended, Author, Change, Condensed, Peer, ProcessError, ProcessStore, StepState, StepStatus,
-    ThreadAnchor, ThreadState, ThreadStatus, TicketEvents,
+    Appended, Author, Change, Condensed, Exported, Forgotten, Peer, ProcessError, ProcessStore,
+    StepState, StepStatus, ThreadAnchor, ThreadState, ThreadStatus, TicketEvents,
 };
 pub use replication::{SyncCode, SyncProblem, SyncReport};
 pub use resolved_file::{ResolvedFile, ResolvedFileError, compare_resolved, write_resolved};

@@ -50,6 +50,12 @@ enum Command {
     Events(process::EventsArguments),
     /// Show every valid event of the project's process store and its cursor.
     Log(process::Target),
+    /// Write the project's process store, the logs of every device, into a new or empty
+    /// directory in the layout of a shared folder, from which `hone sync --folder` imports it.
+    Export(process::ExportArguments),
+    /// Remove the project's local process store and its context binding. Copies in a shared
+    /// folder or on a server stay.
+    Forget(process::ForgetArguments),
     /// Sync the process store with a shared folder or a server. Exits with 0 when the sync found
     /// no problem, 1 when it reported problems, and 2 when it could not run.
     Sync(process::SyncArguments),
@@ -103,6 +109,8 @@ fn main() -> ExitCode {
         Command::Review(review) => process::run_review(review),
         Command::Events(arguments) => process::run_events(&arguments),
         Command::Log(target) => process::run_log(&target),
+        Command::Export(arguments) => process::run_export(&arguments),
+        Command::Forget(arguments) => process::run_forget(&arguments),
         Command::Sync(arguments) => process::run_sync(&arguments),
         Command::Context(command) => process::run_context(command),
         Command::Serve { config } => match hone_server::Config::load(&config) {
