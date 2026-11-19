@@ -1,0 +1,4 @@
+plugins:
+  module-anchors-resolve:
+    hash: "sha256:a9fddbd9a9430190da5a4f513194b5603160888a69b6e6a0089a9a11681cea4c"
+    capabilities: { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }

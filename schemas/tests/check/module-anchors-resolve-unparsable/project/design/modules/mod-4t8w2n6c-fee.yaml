@@ -1,0 +1,4 @@
+id: "mod-4t8w2n6c"
+type: "module"
+anchors:
+  - { kind: "symbol", ref: "src/payments/fee.rs#Fee" }

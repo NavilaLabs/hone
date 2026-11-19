@@ -1,0 +1,2 @@
+warning interfaces/anchors other-repository design/modules/mod-4t8w2n6c-fee.yaml /anchors/1
+warning interfaces/anchors symbol-unchecked design/modules/mod-4t8w2n6c-fee.yaml /anchors/0

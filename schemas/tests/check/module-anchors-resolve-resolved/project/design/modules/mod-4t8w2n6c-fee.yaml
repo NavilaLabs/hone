@@ -1,0 +1,10 @@
+id: "mod-4t8w2n6c"
+type: "module"
+interface: { code: "src/payments/fee.rs#Fee::total" }
+anchors:
+  - { kind: "path", ref: "src/payments" }
+  - { kind: "glob", ref: "src/**/*.rs" }
+  - { kind: "symbol", ref: "src/payments/fee.rs#compute" }
+  - { kind: "symbol", ref: "src/payments/fee.rs#Fee::amount" }
+  - { kind: "symbol", ref: "src/payments/fee.rs#Tier::High" }
+  - { kind: "symbol", ref: "src/payments/fee.rs#rounding::round" }

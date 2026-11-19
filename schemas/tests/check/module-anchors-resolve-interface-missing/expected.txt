@@ -1,0 +1,2 @@
+error interfaces/anchors symbol-missing design/modules/mod-4t8w2n6c-fee.yaml /interface/code
+warning schema-valid unknown-field design/modules/mod-4t8w2n6c-fee.yaml /interface

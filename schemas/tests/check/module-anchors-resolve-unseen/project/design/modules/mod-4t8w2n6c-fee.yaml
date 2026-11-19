@@ -1,0 +1,5 @@
+id: "mod-4t8w2n6c"
+type: "module"
+anchors:
+  - { kind: "symbol", ref: "design/decisions/README.md#Decisions" }
+  - { kind: "symbol", ref: "billing:src/fee.rs#Fee" }
