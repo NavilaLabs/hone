@@ -78,8 +78,12 @@ enum Command {
         #[arg(long, env = "HONE_SYNC_FOLDER", conflicts_with = "sync_server")]
         sync_folder: Option<PathBuf>,
         /// The replication server of the tool `sync`, reached with the token in `HONE_TOKEN`.
-        #[arg(long, env = "HONE_SYNC_SERVER")]
+        #[arg(long, env = "HONE_SYNC_SERVER", conflicts_with = "sync_git")]
         sync_server: Option<String>,
+        /// The branch of the project's Git repository that the tool `sync` uses as a shared
+        /// folder, moved through `origin`.
+        #[arg(long, env = "HONE_SYNC_GIT", conflicts_with = "sync_folder")]
+        sync_git: Option<String>,
     },
     /// Run hone as a hook of an agent.
     #[command(subcommand)]
@@ -139,13 +143,15 @@ fn main() -> ExitCode {
             role,
             sync_folder,
             sync_server,
+            sync_git,
         } => {
             let author = author
                 .zip(role)
                 .map(|(name, role)| hone_core::Author { name, role });
-            let sync_peer = match (sync_folder, sync_server) {
-                (Some(folder), _) => Some(hone_mcp::SyncPeer::Folder(folder)),
-                (None, Some(url)) => match process::token() {
+            let sync_peer = match (sync_folder, sync_server, sync_git) {
+                (Some(folder), _, _) => Some(hone_mcp::SyncPeer::Folder(folder)),
+                (None, None, Some(branch)) => Some(hone_mcp::SyncPeer::Git(branch)),
+                (None, Some(url), _) => match process::token() {
                     Ok(token) => Some(hone_mcp::SyncPeer::Server(hone_core::Server::new(
                         &url, &token,
                     ))),
@@ -154,7 +160,7 @@ fn main() -> ExitCode {
                         return ExitCode::FAILURE;
                     }
                 },
-                (None, None) => None,
+                (None, None, None) => None,
             };
             let project = hone_mcp::Project {
                 root,

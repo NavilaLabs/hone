@@ -40,6 +40,8 @@ pub enum SyncPeer {
     Folder(PathBuf),
     /// A replication server.
     Server(hone_core::Server),
+    /// A branch of the project's Git repository, moved through `origin`.
+    Git(String),
 }
 
 /// Serves the MCP tools for `project` over stdin and stdout until the client disconnects.
@@ -389,9 +391,13 @@ impl Server {
         let peer = match &self.project.sync_peer {
             Some(SyncPeer::Folder(folder)) => Peer::Folder(folder),
             Some(SyncPeer::Server(server)) => Peer::Server(server),
+            Some(SyncPeer::Git(branch)) => Peer::Git {
+                remote: "origin",
+                branch,
+            },
             None => {
                 return CallToolResult::structured_error(to_value(&ProcessError::Invalid {
-                    message: "the server has no peer: start it with --sync-folder or --sync-server"
+                    message: "the server has no peer: start it with --sync-folder, --sync-server, or --sync-git"
                         .into(),
                 }));
             }

@@ -16,6 +16,7 @@ use crate::event::{
     self, APPROVAL_GIVEN, REVIEW_CONFIRMED, STEP_CHANGED, THREAD_MESSAGE, THREAD_OPENED,
     THREAD_REOPENED, THREAD_RESOLVED,
 };
+use crate::git;
 use crate::log::{self, Cursor, InvalidEvent, Log};
 use crate::manifest;
 use crate::replication::{self, SyncReport};
@@ -232,6 +233,14 @@ pub enum Peer<'a> {
     Folder(&'a Path),
     /// A replication server.
     Server(&'a Server),
+    /// A branch of the project's Git repository, moved through `remote` (concept Section 12,
+    /// "Process store in Git").
+    Git {
+        /// The remote, for example `origin`.
+        remote: &'a str,
+        /// The branch, for example `hone/process`.
+        branch: &'a str,
+    },
 }
 
 /// A call of [`ProcessStore`] could not finish.
@@ -370,6 +379,7 @@ impl ProcessStore {
     /// refuses the call, and [`ProcessError::IoError`] if a store cannot be read or written.
     pub fn sync(&self, peer: Peer<'_>) -> Result<SyncReport, ProcessError> {
         match peer {
+            Peer::Git { remote, branch } => self.sync_git(remote, branch),
             Peer::Folder(folder) => self.sync_folder(folder),
             Peer::Server(server) => {
                 let own = self.existing_device()?;
@@ -404,6 +414,52 @@ impl ProcessStore {
             let session = Session::new(server, &self.directory, &self.project, own.as_deref())?;
             client::block_on(session.watch(until, on_report))
         })
+    }
+
+    fn sync_git(&self, remote: &str, branch: &str) -> Result<SyncReport, ProcessError> {
+        // Both reach the Git command line as arguments; a leading `-` would be read as an option.
+        let valid = |name: &str| {
+            !name.is_empty()
+                && !name.starts_with('-')
+                && !name.contains("..")
+                && name.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || "/._-".contains(character)
+                })
+        };
+        if !valid(remote) || !valid(branch) {
+            return Err(invalid(format!(
+                "`{remote}` / `{branch}` is not a remote and branch name hone accepts: ASCII letters, digits, `/`, `.`, `_`, `-`, not starting with `-`"
+            )));
+        }
+        let _lock = self.lock()?;
+        let unavailable = |message: String| ProcessError::Unavailable { message };
+        let checkout = git::Branch {
+            repository: &self.project_root,
+            remote,
+            branch,
+            worktree: git::worktree_of(&self.directory, branch),
+        };
+        let folder = checkout.checkout().map_err(unavailable)?.to_path_buf();
+        let own = self.existing_device()?;
+        let report = replication::sync_folder(
+            &self.directory,
+            &self.workspace,
+            &self.project,
+            own.as_deref(),
+            &folder,
+        )
+        .map_err(|error| ProcessError::IoError {
+            message: format!("{}: {error}", folder.display()),
+        })?;
+        if let Some(own) = own {
+            let log = format!("{}/{}/log/{own}", self.workspace, self.project);
+            if folder.join(&log).is_dir() {
+                checkout
+                    .publish(&log, &format!("hone: log of {own}"))
+                    .map_err(unavailable)?;
+            }
+        }
+        Ok(report)
     }
 
     fn sync_folder(&self, folder: &Path) -> Result<SyncReport, ProcessError> {

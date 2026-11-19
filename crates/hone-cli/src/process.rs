@@ -358,10 +358,17 @@ pub(crate) struct SyncArguments {
     #[arg(
         long,
         env = "HONE_SYNC_FOLDER",
-        conflicts_with = "server",
-        required_unless_present = "server"
+        conflicts_with_all = ["server", "git"],
+        required_unless_present_any = ["server", "git"]
     )]
     folder: Option<PathBuf>,
+    /// A branch of the project's Git repository used as the shared folder, for example
+    /// `hone/process`.
+    #[arg(long, env = "HONE_SYNC_GIT", conflicts_with = "server")]
+    git: Option<String>,
+    /// The remote of `--git`.
+    #[arg(long, default_value = "origin", requires = "git")]
+    remote: String,
     /// The base URL of a replication server, reached with the token in `HONE_TOKEN`.
     #[arg(long, env = "HONE_SYNC_SERVER")]
     server: Option<String>,
@@ -381,6 +388,12 @@ pub(crate) fn token() -> Result<String, String> {
 pub(crate) fn run_sync(arguments: &SyncArguments) -> ExitCode {
     let target = &arguments.target;
     let outcome = ProcessStore::locate(&target.root, None).and_then(|store| {
+        if let Some(branch) = &arguments.git {
+            return store.sync(Peer::Git {
+                remote: &arguments.remote,
+                branch,
+            });
+        }
         match (&arguments.folder, &arguments.server) {
             (Some(folder), _) => store.sync(Peer::Folder(folder)),
             (None, Some(url)) => {

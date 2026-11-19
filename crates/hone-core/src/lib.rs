@@ -20,6 +20,7 @@ mod event;
 mod exec;
 mod finding;
 mod gates;
+mod git;
 mod host;
 mod hosted;
 mod layer;
