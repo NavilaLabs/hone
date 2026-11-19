@@ -1,6 +1,6 @@
 # hone protocol: concept
 
-Status: draft, as of 2026-11-17. This concept is the source for the normative specification, which will live in `spec/`.
+Status: draft, as of 2026-11-19. This concept is the source for the normative specification in `spec/`. Where a chapter of `spec/` exists, it is normative and wins over this text.
 
 ## 1. Goal
 
@@ -1294,54 +1294,7 @@ Three levels, so that implementations can start small:
 
 The specification includes JSON Schemas for all formats (artifacts, resolved configuration, events, plugin inputs and outputs) and a **conformance test suite** with which every implementation proves its level. Resolution comes with a collection of test cases (layers in, resolved document out), because two tools must resolve identically.
 
-A resolution test case is a directory `schemas/tests/resolve/<case>/`:
-
-- `packages/<name>/`: the packages the case provides, by package name (`packages/acme/base/` for `acme/base`).
-- `project/.hone/`: the project layer, including `config.yaml` and `lock.yaml`.
-- `overrides.yaml` (optional): the ticket overrides.
-- Either `expected.json`, the resolved document, compared as data, or `expected-error.txt`, one line with the error category, a space, and the location: a JSON Pointer, or a file path relative to the case directory (`project/.hone/…` or `packages/<name>/…`).
-
-A failing case contains exactly one error. An implementation may report several, but the expected one must be among them. Every `expected.json` passes the shape and reference checks of the resolved configuration.
-
-The YAML profile, the schemas, and the content hash (Section 5) have test cases of their own, because two parsers must produce the same data and the same hash. They are single files under `schemas/tests/`, checked by their content without a place in a directory, with the kinds of `schemas/standard/kinds/` and `schemas/tests/kinds/`:
-
-- `valid/`: every file passes `schema-valid` without an error.
-- `invalid/`: every file passes the profile and fails the schema checks. `invalid/expected.txt` has one line per file: the file name, the code (Section 7), and the JSON Pointer.
-- `profile/invalid/`: every file violates the profile. `profile/invalid/expected.txt` has one line per file: the file name and the code `yaml-profile`.
-- `hash/`: content hashes. `valid/decision-accepted.md` carries the hash of its content in its `review` block, and `hash/decision-reformatted.md` is the same content in other YAML notation.
-
-A gate test case is a directory `schemas/tests/check/<case>/`:
-
-- `project/`: the checked directory, including `.hone/resolved.json`, the snapshots, and the plugins (`.wasm` and `lock.yaml`) the case needs.
-- `base/` (optional): the base state of the call (Section 9, "Runtime").
-- `lock.yaml` (optional): the lockfile the caller supplies instead of `project/.hone/lock.yaml`, as CI does with the lockfile of the base state (Section 9).
-- `data/` (optional): the base directory of the process store, with the store of the project's scope IDs (Section 4).
-- `input.yaml` (optional): `ticket`, `step`, and `changed_paths` of the call, each optional.
-- `expected.txt`: one line per finding, `<level> <gate> <code> <path> <pointer>`, sorted. `<gate>` is the gate name of a directory gate or `<step>/<label>` of a ticket gate. `<path>` and `<pointer>` are `-` when the finding has none. An empty file means that every gate passed without a finding.
-
-A failing case contains exactly one finding of level `error`, except for `ids-unique`, which reports every file involved. An implementation must report every line of `expected.txt`, and a finding of level `error` exactly when the file contains one. Beyond that, it may report more findings.
-
-The replication contract (Section 4) has three kinds of test cases. They compare what is read, not bytes, because every store cuts its segments itself. A read test case is a directory `schemas/tests/read/<case>/`:
-
-- `store/`: a process store of the project `prj-8m2k4d7q` (`log/<device>/<number>.ndjson`).
-- `cursor.json`: the cursor of the call.
-- `expected.ndjson`: the returned events, one canonical line each, sorted by device and then by `seq`. An empty file means that nothing is returned.
-
-A sync test case is a directory `schemas/tests/sync/<case>/`:
-
-- `local/`: the local store before the sync, with `device` when the device has written. A case without `local/` starts without a local store.
-- `folder/`: the shared-folder root before the sync, `<workspace>/<project>/log/…`.
-- `cursor.json`: the cursors after one sync, `{"local": …, "folder": …}`, each the cursor of the store as read afterwards.
-- `expected.txt`: one line per reported problem, `<code> <path> <line>`, sorted. `<path>` is relative to the case directory (`folder/…` or `local/…`), `<line>` is `-` for a whole file. An empty file means a sync without problems.
-
-An append test case checks what a server stores and answers (Question 34). It is a directory `schemas/tests/append/<case>/`:
-
-- `store/`: the server's store of the project `prj-8m2k4d7q` before the call. A case without `store/` starts with an empty store.
-- `request.json`: `{"identity": …, "actors": …}`, the authenticated identity and the actors the server knows for the project.
-- `events.ndjson`: the body of the request.
-- `expected.json`: `{"status": …, "code"?: …, "seq"?: …, "event"?: …, "cursor": …}`, the HTTP status and the answer without `message`. `cursor` is the server's cursor afterwards, also after a rejection, so it shows what was stored.
-
-The read test cases also run against a server, through `GET …/events`. The codes of a whole call (`invalid-request`, `unauthenticated`, `forbidden`, `not-found`, `too-large`) and the subscription concern the transport, not a store, and are tested by each implementation itself.
+The test suites and the format of every test case are normative text in [`spec/conformance.md`](../spec/conformance.md) (Question 41).
 
 **Licenses** (Question 25). Anyone may do anything with it, including closed forks and hosted services.
 
@@ -1405,6 +1358,8 @@ All questions of this draft are decided. The numbers stay stable because the tex
 
 40. **`module-anchors-resolve`:** Decided without review (listed in `docs/review/autonomous-decisions.md`). A plugin in `plugins/` that checks the anchors and `interface.code` of the artifacts of one kind against the checked state, resolving Rust symbols with `syn`. Errors `anchor-missing`, `symbol-missing`, `unparsable`; warnings `symbol-unchecked` and `other-repository` (Section 5).
 
+41. **Specification layout:** Decided without review (listed in `docs/review/autonomous-decisions.md`). `spec/` is written chapter by chapter, one file per area, with BCP 14 key words. A written chapter is normative and wins over the concept, whose section then points to it; areas without a chapter stay specified by the concept. The first chapters are the conventions and levels, and conformance with every test case format, moved out of Section 14 (Section 16, step 11).
+
 ## 16. Next steps
 
 1. Done: format (Question 1) and the artifact schema with tests (`schemas/`), adapted to all decisions (ID format, `reach`, lifecycles instead of fixed types, presets under `schemas/standard/`, module with `interface`, `context.observed`, hash normalization).
@@ -1417,7 +1372,7 @@ All questions of this draft are decided. The numbers stay stable because the tex
 8. Done: the plugin contract (Question 32) with Extism as the runtime and `schemas/plugin.schema.json`, the gate `public-api-has-decision` in Rust under `plugins/`, capabilities and hash pinning checked on every run against a lockfile the caller may replace, `exec` gates with approved commands and `evaluate`, and `--base` and `--lock` on the command line and over MCP.
 9. Done: the replication contract in the decided scope (Question 26, Question 33, Question 34, Question 35: unreadable entries of a shared folder are skipped and reported) with the test cases `schemas/tests/read/`, `schemas/tests/sync/`, and `schemas/tests/append/`, the shared folder as the first reference backend (`hone sync --folder`), the reference server as the crate `hone-server` (`hone serve`: HTTP, NDJSON, Server-Sent Events, bearer authentication, every error code of Section 4), and the client (`hone sync --server [--watch]`, the MCP tool `sync` with `--sync-folder` or `--sync-server`).
 10. In progress: the desktop GUI `hone-gui` over the command line and `hone log` (Question 36), approvals and condensation as commands (Question 37), the Git branch as a shared folder (Question 38), contexts (Question 39), and the Rust plugin `module-anchors-resolve` (Question 40) are done. Open: plugins for other languages, credentials in an OS keyring, `export` and `forget`, and delivery.
-11. Turn this concept into the normative specification in `spec/`.
+11. In progress: the normative specification in `spec/` (Question 41). Written: the conventions and levels (`spec/README.md`) and conformance with every test case format (`spec/conformance.md`). Open: artifacts, configuration, gates, plugins, process store, replication, and review, each moved out of this concept chapter by chapter.
 
 ## Sources
 

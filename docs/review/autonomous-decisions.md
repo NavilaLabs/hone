@@ -86,3 +86,11 @@ Decisions taken without the maintainer, during an autonomous run on the branch `
 62. **Codes.** Errors `anchor-missing`, `symbol-missing`, `unparsable`; warnings `symbol-unchecked` (symbol in a non-Rust file whose file exists) and `other-repository` (`repository:path`, not visible to the check). Each finding carries the artifact's path and the anchor's pointer (`/anchors/<i>`, `/interface/code`).
 63. **Test cases.** One cause per case, as the gate test suite requires. The test projects' module kind has no extra schema, so `interface` shows the warning `unknown-field` of `schema-valid`; the expected lines include it.
 64. **A binding holds the checkout's root.** An automated security review noted that a context was bound by the project ID from the repository's own `.hone/config.yaml`, so a foreign checkout could claim a bound project's ID and inherit its peer and author. A binding is now `{ context, root }` with the canonical root; in another checkout `hone sync` and the writing commands fail with a message to bind that checkout. Alternative: ask for confirmation, rejected because hone has no interactive prompts.
+
+## Specification (concept Question 41, step 11)
+
+65. **Chapter by chapter.** `spec/` holds one file per area with BCP 14 key words; a written chapter is normative and wins over the concept, whose section then points to it. Alternative: translate the whole concept at once, rejected because a half-checked normative text is worse than a clear boundary between written and pending chapters.
+66. **First chapters.** `spec/README.md` (status, conventions, levels, chapter map) and `spec/conformance.md` (test suites and every test case format, moved out of concept Section 14 so that it exists once).
+67. **Levels of the suites.** `valid/`, `invalid/`, `profile/`, `hash/`, `check/`, and `config/` are Core, `events/` is Flow, `resolve/`, `read/`, `sync/`, and `append/` are Extended; a gate case belongs to the level of its gates. The concept named the levels but did not assign the suites.
+68. **Tests outside the suite.** Transport codes, the subscription, and permission errors in a shared folder cannot be expressed as repository files; the conformance chapter says each implementation tests them itself.
+69. **Pending chapters:** artifacts, configuration, gates, plugins, process store, replication, review.

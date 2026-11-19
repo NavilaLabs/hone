@@ -32,7 +32,7 @@ Write the decisions into the concept: the normative sections, Section 12 for too
 
 ## 5. Build
 
-Implement in `hone-core` behind a narrow interface, then the thin adapters in `hone-cli` and `hone-mcp`. Write the test cases as the concept's test-case format prescribes (Section 14). Whenever building reveals a rule the concept does not state, note it for the report rather than deciding it silently; ask if it changes behaviour others rely on. Done when the four checks of `CLAUDE.md` pass and every negative and positive case behaves as `CLAUDE.md` "Tests and fixtures" requires.
+Implement in `hone-core` behind a narrow interface, then the thin adapters in `hone-cli` and `hone-mcp`. Write the test cases as `spec/conformance.md` prescribes. Whenever building reveals a rule the concept does not state, note it for the report rather than deciding it silently; ask if it changes behaviour others rely on. Done when the four checks of `CLAUDE.md` pass and every negative and positive case behaves as `CLAUDE.md` "Tests and fixtures" requires.
 
 ## 6. Commit and report
 

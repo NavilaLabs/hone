@@ -26,7 +26,7 @@ hone is an open protocol and a reference implementation for recording design art
 | `docs/`               | The protocol concept, the source for the specification     |
 | `schemas/`            | JSON Schemas and conformance test cases (`schemas/tests/`) |
 | `schemas/standard/`   | The presets of the package `hone/standard`                 |
-| `spec/`               | Planned: the normative protocol specification              |
+| `spec/`               | The normative protocol specification, chapter by chapter   |
 | `crates/hone-core/`   | The Rust reference implementation as a library             |
 | `crates/hone-cli/`    | The CLI (binary `hone`), the base for a later GUI          |
 | `crates/hone-mcp/`    | The MCP server over stdio, started by `hone mcp`           |
