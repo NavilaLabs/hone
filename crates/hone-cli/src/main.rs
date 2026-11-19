@@ -43,9 +43,16 @@ enum Command {
     Step(process::Step),
     /// Show the process state of a ticket: events, threads, steps, and invalid events.
     Events(process::EventsArguments),
-    /// Sync the process store with a shared folder. Exits with 0 when the sync found no problem,
-    /// 1 when it reported problems, and 2 when it could not run.
+    /// Sync the process store with a shared folder or a server. Exits with 0 when the sync found
+    /// no problem, 1 when it reported problems, and 2 when it could not run.
     Sync(process::SyncArguments),
+    /// Run the reference replication server until Ctrl-C or SIGTERM. Exits with 2 when it
+    /// cannot start.
+    Serve {
+        /// The server configuration, a YAML file.
+        #[arg(long)]
+        config: PathBuf,
+    },
     /// Serve the MCP tools of the project over stdio.
     Mcp {
         /// Project root, the directory that contains `.hone/`.
@@ -61,8 +68,11 @@ enum Command {
         #[arg(long, env = "HONE_ROLE", requires = "author")]
         role: Option<String>,
         /// The shared folder of the tool `sync`.
-        #[arg(long, env = "HONE_SYNC_FOLDER")]
+        #[arg(long, env = "HONE_SYNC_FOLDER", conflicts_with = "sync_server")]
         sync_folder: Option<PathBuf>,
+        /// The replication server of the tool `sync`, reached with the token in `HONE_TOKEN`.
+        #[arg(long, env = "HONE_SYNC_SERVER")]
+        sync_server: Option<String>,
     },
     /// Run hone as a hook of an agent.
     #[command(subcommand)]
@@ -99,22 +109,49 @@ fn main() -> ExitCode {
         Command::Step(step) => process::run_step(step),
         Command::Events(arguments) => process::run_events(&arguments),
         Command::Sync(arguments) => process::run_sync(&arguments),
+        Command::Serve { config } => match hone_server::Config::load(&config) {
+            Ok(config) => match hone_server::serve(config) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("hone serve: {error}");
+                    ExitCode::from(2)
+                }
+            },
+            Err(message) => {
+                eprintln!("hone serve: {message}");
+                ExitCode::from(2)
+            }
+        },
         Command::Mcp {
             root,
             packages,
             author,
             role,
             sync_folder,
+            sync_server,
         } => {
             let author = author
                 .zip(role)
                 .map(|(name, role)| hone_core::Author { name, role });
+            let sync_peer = match (sync_folder, sync_server) {
+                (Some(folder), _) => Some(hone_mcp::SyncPeer::Folder(folder)),
+                (None, Some(url)) => match process::token() {
+                    Ok(token) => Some(hone_mcp::SyncPeer::Server(hone_core::Server::new(
+                        &url, &token,
+                    ))),
+                    Err(message) => {
+                        eprintln!("hone mcp: {message}");
+                        return ExitCode::FAILURE;
+                    }
+                },
+                (None, None) => None,
+            };
             let project = hone_mcp::Project {
                 root,
                 packages,
                 data_directory: None,
                 author,
-                sync_folder,
+                sync_peer,
             };
             match hone_mcp::serve_stdio(project) {
                 Ok(()) => ExitCode::SUCCESS,

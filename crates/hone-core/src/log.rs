@@ -342,6 +342,19 @@ pub(crate) fn append_lines(
     Ok(())
 }
 
+pub(crate) fn lock(store: &Path) -> std::io::Result<File> {
+    // Held until the file is dropped, so that two processes never hand out the same `seq` or
+    // import while the other appends.
+    std::fs::create_dir_all(store.join("log"))?;
+    let lock = File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(store.join("lock"))?;
+    lock.lock()?;
+    Ok(lock)
+}
+
 pub(crate) fn segment_path(store: &Path, device: &str, number: u64) -> PathBuf {
     store
         .join("log")
@@ -428,10 +441,7 @@ fn read_device(
         for (index, raw) in lines.iter().enumerate() {
             let line_number = index + 1;
             let unterminated = complete < bytes.len() && index + 1 == lines.len() && !is_open;
-            let Some(event) = std::str::from_utf8(raw)
-                .ok()
-                .and_then(|text| serde_json::from_str::<Value>(text).ok())
-            else {
+            let Some(event) = parse_line(raw) else {
                 invalid(line_number, None, "the line is not JSON".into());
                 continue;
             };
@@ -446,12 +456,8 @@ fn read_device(
             }
             let problem = if unterminated {
                 Some("the last line of a closed segment does not end with a newline".to_owned())
-            } else if canonical::to_canonical(&event) != line {
-                Some("the line is not in the canonical form of RFC 8785".to_owned())
-            } else if let Some(violation) = event::schema_violations(&event).into_iter().next() {
-                Some(format!(
-                    "the event does not match the event schema: {violation}"
-                ))
+            } else if let Some(problem) = line_problem(&event, &line) {
+                Some(problem)
             } else if event["device"] != device {
                 Some(format!(
                     "the event of `{}` lies in the log of `{device}`",
@@ -498,6 +504,67 @@ fn read_device(
         previous = next.map(|next| (number, next));
     }
     Ok(())
+}
+
+pub(crate) fn from_lines(lines: &[&[u8]], project: &str) -> Log {
+    // A server's answer has no files: every event is located by its line alone.
+    let mut log = Log::default();
+    let mut seen = BTreeSet::new();
+    for (index, raw) in lines.iter().enumerate() {
+        let line_number = index + 1;
+        let mut invalid = |device: Option<&str>, ticket: Option<&str>, message: String| {
+            log.invalid.push(InvalidEvent {
+                path: device.map_or_else(String::new, |device| format!("log/{device}")),
+                line: Some(line_number),
+                ticket: ticket.map(str::to_owned),
+                message,
+            });
+        };
+        let Some(event) = parse_line(raw) else {
+            invalid(None, None, "the line is not JSON".into());
+            continue;
+        };
+        let line = String::from_utf8_lossy(raw);
+        let device = event["device"].as_str();
+        let ticket = event["ticket"].as_str();
+        let id = event["id"].as_str().unwrap_or_default().to_owned();
+        let problem = line_problem(&event, &line).or_else(|| {
+            if event["project"] != project {
+                Some(format!(
+                    "the event belongs to the project `{}`, not `{project}`",
+                    event["project"].as_str().unwrap_or_default()
+                ))
+            } else if seen.contains(&id) {
+                Some(format!("the answer carries the ID `{id}` twice"))
+            } else {
+                None
+            }
+        });
+        if let Some(message) = problem {
+            invalid(device, ticket, message);
+            continue;
+        }
+        seen.insert(id.clone());
+        log.locations.insert(id, (String::new(), line_number));
+        log.events.push(event);
+    }
+    log
+}
+
+pub(crate) fn parse_line(raw: &[u8]) -> Option<Value> {
+    std::str::from_utf8(raw)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+}
+
+pub(crate) fn line_problem(event: &Value, line: &str) -> Option<String> {
+    if canonical::to_canonical(event) != line {
+        return Some("the line is not in the canonical form of RFC 8785".to_owned());
+    }
+    event::schema_violations(event)
+        .into_iter()
+        .next()
+        .map(|violation| format!("the event does not match the event schema: {violation}"))
 }
 
 fn remove_conflicts(candidates: Vec<Candidate>, log: &mut Log) -> Vec<Value> {

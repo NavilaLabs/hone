@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use hone_core::{
-    Author, Change, Cursor, ProcessError, ProcessStore, StepStatus, SyncCode, SyncReport,
+    Author, Change, Cursor, Peer, ProcessError, ProcessStore, StepStatus, SyncCode, SyncReport,
 };
 use serde_json::{Value, json};
 
@@ -123,12 +123,13 @@ fn problem_lines(report: &SyncReport, scratch: &Scratch) -> String {
         .problems
         .iter()
         .map(|problem| {
-            let path = if let Ok(rest) = problem.path.strip_prefix(scratch.folder()) {
+            let path = Path::new(&problem.path);
+            let path = if let Ok(rest) = path.strip_prefix(scratch.folder()) {
                 Path::new("folder").join(rest)
-            } else if let Ok(rest) = problem.path.strip_prefix(scratch.local_store()) {
+            } else if let Ok(rest) = path.strip_prefix(scratch.local_store()) {
                 Path::new("local").join(rest)
             } else {
-                problem.path.clone()
+                path.to_path_buf()
             };
             let code = serde_json::to_value(problem.code).expect("serializable");
             let line = problem.line.map_or("-".to_owned(), |line| line.to_string());
@@ -153,7 +154,7 @@ fn sync_cases_reach_the_expected_cursors_and_problems() {
         copy_directory(&case.join("folder"), &scratch.folder());
         let store = scratch.store();
 
-        let report = store.sync(&scratch.folder()).expect("syncs");
+        let report = store.sync(Peer::Folder(&scratch.folder())).expect("syncs");
         let expected = std::fs::read_to_string(case.join("expected.txt")).expect("readable");
         assert_eq!(problem_lines(&report, &scratch), expected, "case {name}");
         let cursors = read_json(&case.join("cursor.json"));
@@ -172,7 +173,9 @@ fn sync_cases_reach_the_expected_cursors_and_problems() {
             "case {name}: a sync must not create a device ID"
         );
 
-        let again = store.sync(&scratch.folder()).expect("syncs again");
+        let again = store
+            .sync(Peer::Folder(&scratch.folder()))
+            .expect("syncs again");
         assert!(
             again.received.is_empty() && again.sent.is_empty(),
             "case {name}: a second sync moves nothing: {again:?}"
@@ -187,7 +190,10 @@ fn sync_counts_what_it_moves() {
     let scratch = Scratch::new("counts");
     copy_directory(&case.join("local"), &scratch.local_store());
     copy_directory(&case.join("folder"), &scratch.folder());
-    let report = scratch.store().sync(&scratch.folder()).expect("syncs");
+    let report = scratch
+        .store()
+        .sync(Peer::Folder(&scratch.folder()))
+        .expect("syncs");
     assert_eq!(
         serde_json::to_value(&report.received).expect("JSON"),
         json!({ "dev-7q2m8x4c": 3 })
@@ -211,7 +217,7 @@ fn sync_counts_what_it_moves() {
 #[test]
 fn a_missing_folder_is_unavailable_and_creates_nothing() {
     let scratch = Scratch::new("missing-folder");
-    let outcome = scratch.store().sync(&scratch.folder());
+    let outcome = scratch.store().sync(Peer::Folder(&scratch.folder()));
     assert!(
         matches!(&outcome, Err(ProcessError::Unavailable { message }) if message.contains("no shared folder")),
         "{outcome:?}"
@@ -281,14 +287,14 @@ fn two_devices_converge_through_a_shared_folder() {
     assert!(
         alice
             .store()
-            .sync(&scratch.folder())
+            .sync(Peer::Folder(&scratch.folder()))
             .expect("syncs")
             .problems
             .is_empty()
     );
     assert!(
         bob.store()
-            .sync(&scratch.folder())
+            .sync(Peer::Folder(&scratch.folder()))
             .expect("syncs")
             .problems
             .is_empty()
@@ -296,7 +302,7 @@ fn two_devices_converge_through_a_shared_folder() {
     let answer = bob.set_step("bob", StepStatus::Done);
     assert!(
         bob.store()
-            .sync(&scratch.folder())
+            .sync(Peer::Folder(&scratch.folder()))
             .expect("syncs")
             .problems
             .is_empty()
@@ -304,7 +310,7 @@ fn two_devices_converge_through_a_shared_folder() {
     assert!(
         alice
             .store()
-            .sync(&scratch.folder())
+            .sync(Peer::Folder(&scratch.folder()))
             .expect("syncs")
             .problems
             .is_empty()
@@ -356,9 +362,15 @@ mod links {
         std::fs::create_dir_all(&device).expect("creatable");
         symlink(outside.join("1.ndjson"), device.join("1.ndjson")).expect("linkable");
 
-        let report = scratch.store().sync(&scratch.folder()).expect("syncs");
+        let report = scratch
+            .store()
+            .sync(Peer::Folder(&scratch.folder()))
+            .expect("syncs");
         assert_eq!(codes(&report), [SyncCode::UnsafePath]);
-        assert_eq!(report.problems[0].path, device.join("1.ndjson"));
+        assert_eq!(
+            report.problems[0].path,
+            device.join("1.ndjson").display().to_string()
+        );
         assert!(report.received.is_empty(), "{report:?}");
     }
 
@@ -372,7 +384,10 @@ mod links {
         std::fs::create_dir_all(scratch.folder().join("local")).expect("creatable");
         symlink(&outside, scratch.folder().join("local").join(PROJECT)).expect("linkable");
 
-        let report = scratch.store().sync(&scratch.folder()).expect("syncs");
+        let report = scratch
+            .store()
+            .sync(Peer::Folder(&scratch.folder()))
+            .expect("syncs");
         assert_eq!(codes(&report), [SyncCode::UnsafePath]);
         assert!(report.sent.is_empty());
         assert_eq!(
@@ -393,7 +408,10 @@ mod links {
         std::fs::create_dir_all(&log).expect("creatable");
         symlink(&outside, log.join("dev-3k9a5h2t")).expect("linkable");
 
-        let report = scratch.store().sync(&scratch.folder()).expect("syncs");
+        let report = scratch
+            .store()
+            .sync(Peer::Folder(&scratch.folder()))
+            .expect("syncs");
         assert!(codes(&report).contains(&SyncCode::UnsafePath), "{report:?}");
         assert!(report.sent.is_empty());
         assert_eq!(std::fs::read_dir(&outside).expect("readable").count(), 0);
@@ -414,7 +432,10 @@ mod links {
         std::fs::create_dir_all(&log).expect("creatable");
         std::fs::hard_link(&outside, log.join("1.ndjson")).expect("linkable");
 
-        let report = scratch.store().sync(&scratch.folder()).expect("syncs");
+        let report = scratch
+            .store()
+            .sync(Peer::Folder(&scratch.folder()))
+            .expect("syncs");
         assert!(codes(&report).contains(&SyncCode::UnsafePath), "{report:?}");
         assert!(report.sent.is_empty());
         assert_eq!(std::fs::read(&outside).expect("readable"), b"");
@@ -440,7 +461,10 @@ mod links {
         std::fs::create_dir_all(&log).expect("creatable");
         std::fs::hard_link(&outside, log.join("1.ndjson")).expect("linkable");
 
-        let report = scratch.store().sync(&scratch.folder()).expect("syncs");
+        let report = scratch
+            .store()
+            .sync(Peer::Folder(&scratch.folder()))
+            .expect("syncs");
         assert_eq!(codes(&report), [SyncCode::UnsafePath]);
         assert!(report.received.is_empty(), "{report:?}");
     }
@@ -459,7 +483,10 @@ mod links {
         std::fs::create_dir_all(&log).expect("creatable");
         symlink(&outside, log.join("1.ndjson")).expect("linkable");
 
-        let report = scratch.store().sync(&scratch.folder()).expect("syncs");
+        let report = scratch
+            .store()
+            .sync(Peer::Folder(&scratch.folder()))
+            .expect("syncs");
         assert!(codes(&report).contains(&SyncCode::UnsafePath), "{report:?}");
         assert!(report.sent.is_empty());
         assert!(!outside.exists(), "no file is created through the link");
@@ -480,7 +507,10 @@ mod links {
             .expect("mkfifo runs");
         assert!(status.success());
 
-        let report = scratch.store().sync(&scratch.folder()).expect("syncs");
+        let report = scratch
+            .store()
+            .sync(Peer::Folder(&scratch.folder()))
+            .expect("syncs");
         assert_eq!(codes(&report), [SyncCode::UnsafePath]);
         assert!(report.received.is_empty());
     }

@@ -11,6 +11,7 @@ mod anchor;
 mod artifact;
 mod canonical;
 mod check;
+mod client;
 mod complete;
 mod directory;
 mod error;
@@ -19,6 +20,7 @@ mod exec;
 mod finding;
 mod gates;
 mod host;
+mod hosted;
 mod layer;
 mod log;
 mod manifest;
@@ -30,6 +32,7 @@ mod replication;
 mod resolved_file;
 mod schema_valid;
 mod source;
+mod transport;
 mod validate;
 mod yaml;
 
@@ -42,16 +45,19 @@ pub use check::{
     CheckError, CheckReport, CheckRequest, GateClass, GateReport, check, check_artifact,
     check_edit, content_hash,
 };
+pub use client::Server;
 pub use error::{Category, Location, Origin, Problem, ResolveError};
 pub use finding::{Code, Finding, Level};
+pub use hosted::{AppendError, Appender, HostedStore, Rejection};
 pub use log::{Cursor, InvalidEvent};
 pub use process::{
-    Appended, Author, Change, ProcessError, ProcessStore, StepState, StepStatus, ThreadAnchor,
-    ThreadState, ThreadStatus, TicketEvents,
+    Appended, Author, Change, Peer, ProcessError, ProcessStore, StepState, StepStatus,
+    ThreadAnchor, ThreadState, ThreadStatus, TicketEvents,
 };
 pub use replication::{SyncCode, SyncProblem, SyncReport};
 pub use resolved_file::{ResolvedFile, ResolvedFileError, compare_resolved, write_resolved};
 pub use source::{NoPackages, PackageDirectory, PackageSource};
+pub use transport::{ServerCode, is_project_id, parse_cursor_query};
 pub use yaml::YamlProfileError;
 
 use crate::error::pointer_problem;

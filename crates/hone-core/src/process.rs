@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::File;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -8,6 +9,7 @@ use serde_json::{Map, Value, json};
 
 use crate::canonical;
 use crate::check::load_ticket;
+use crate::client::{self, Server, Session};
 use crate::directory::Directory;
 use crate::event::{
     self, STEP_CHANGED, THREAD_MESSAGE, THREAD_OPENED, THREAD_REOPENED, THREAD_RESOLVED,
@@ -194,18 +196,36 @@ pub struct TicketEvents {
     pub invalid: Vec<InvalidEvent>,
 }
 
+/// A peer to sync with (concept Section 4, "Replication").
+#[derive(Debug, Clone, Copy)]
+pub enum Peer<'a> {
+    /// A shared folder: its root, which holds `<workspace>/<project>/log/…`.
+    Folder(&'a Path),
+    /// A replication server.
+    Server(&'a Server),
+}
+
 /// A call of [`ProcessStore`] could not finish.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "kebab-case")]
 pub enum ProcessError {
-    /// The store directory or the shared folder does not exist, for example in CI.
+    /// The store directory or the shared folder does not exist, for example in CI, or the
+    /// server cannot be reached.
     Unavailable {
-        /// The directory that was looked for.
+        /// What was looked for, and the cause.
         message: String,
     },
     /// The request does not fit the project, for example an unknown step, thread, or role.
     Invalid {
         /// What is wrong.
+        message: String,
+    },
+    /// The server refused the call as a whole, for example an invalid token (concept Section 4,
+    /// "Error codes").
+    Refused {
+        /// The server's error code, or `http-<status>` for a status without one.
+        code: String,
+        /// The server's message.
         message: String,
     },
     /// The project configuration, the ticket, or the store could not be read or written.
@@ -221,6 +241,7 @@ impl fmt::Display for ProcessError {
             Self::Unavailable { message }
             | Self::Invalid { message }
             | Self::IoError { message } => formatter.write_str(message),
+            Self::Refused { code, message } => write!(formatter, "{code}: {message}"),
         }
     }
 }
@@ -304,17 +325,59 @@ impl ProcessStore {
         Ok(self.load_existing()?.after(cursor))
     }
 
-    /// Syncs the store with the shared folder `folder` (concept Section 4, "Shared folder"):
-    /// imports the missing events of every device from `<folder>/<workspace>/<project>/`, then
-    /// writes the missing part of this device's own log there. The local store is created if
-    /// it does not exist. Forks, conflicts, invalid lines, and unsafe paths are reported, not
-    /// raised.
+    /// Syncs the store with `peer` (concept Section 4, "Replication"). The local store is
+    /// created if it does not exist. Forks, conflicts, invalid lines, unsafe paths, and events
+    /// the server rejects are reported, not raised.
+    ///
+    /// With a shared folder, it imports the missing events of every device from
+    /// `<folder>/<workspace>/<project>/`, then writes the missing part of this device's own log
+    /// there. With a server, it appends this device's events the server lacks, then imports
+    /// the events the local store lacks.
     ///
     /// # Errors
     ///
-    /// Returns [`ProcessError::Unavailable`] if `folder` is not a directory, without creating
-    /// anything, and [`ProcessError::IoError`] if a store cannot be read or written.
-    pub fn sync(&self, folder: &Path) -> Result<SyncReport, ProcessError> {
+    /// Returns [`ProcessError::Unavailable`] if the folder is not a directory, without creating
+    /// anything, or if the server cannot be reached, [`ProcessError::Refused`] if the server
+    /// refuses the call, and [`ProcessError::IoError`] if a store cannot be read or written.
+    pub fn sync(&self, peer: Peer<'_>) -> Result<SyncReport, ProcessError> {
+        match peer {
+            Peer::Folder(folder) => self.sync_folder(folder),
+            Peer::Server(server) => {
+                let own = self.existing_device()?;
+                client::run(|| {
+                    let session =
+                        Session::new(server, &self.directory, &self.project, own.as_deref())?;
+                    client::block_on(session.sync())
+                })
+            }
+        }
+    }
+
+    /// Syncs the store with `server` once, then stays subscribed (concept Section 12, "Sync
+    /// with a server"): imports every event as it arrives, appends new own events every 2
+    /// seconds, and subscribes again after a dropped connection. `on_report` receives the
+    /// result of the first sync and of every later batch received or sent. Returns when
+    /// `until` completes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProcessError::Unavailable`] if the server cannot be reached for the first
+    /// sync, [`ProcessError::Refused`] if the server refuses a call, and
+    /// [`ProcessError::IoError`] if the store cannot be read or written.
+    pub fn watch(
+        &self,
+        server: &Server,
+        until: impl Future<Output = ()> + Send,
+        on_report: impl FnMut(&SyncReport) + Send,
+    ) -> Result<(), ProcessError> {
+        let own = self.existing_device()?;
+        client::run(|| {
+            let session = Session::new(server, &self.directory, &self.project, own.as_deref())?;
+            client::block_on(session.watch(until, on_report))
+        })
+    }
+
+    fn sync_folder(&self, folder: &Path) -> Result<SyncReport, ProcessError> {
         if !folder.is_dir() {
             return Err(ProcessError::Unavailable {
                 message: format!("no shared folder at {}", folder.display()),
@@ -425,17 +488,7 @@ impl ProcessStore {
     }
 
     fn lock(&self) -> Result<File, ProcessError> {
-        // Held until the file is dropped, so that two hone processes never hand out the same
-        // `seq` or import while the other appends.
-        std::fs::create_dir_all(self.directory.join("log")).map_err(|error| self.io(&error))?;
-        let lock = File::options()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(self.directory.join("lock"))
-            .map_err(|error| self.io(&error))?;
-        lock.lock().map_err(|error| self.io(&error))?;
-        Ok(lock)
+        log::lock(&self.directory).map_err(|error| self.io(&error))
     }
 
     fn io(&self, error: &std::io::Error) -> ProcessError {

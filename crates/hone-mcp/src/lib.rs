@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use hone_core::{
     Author, Change, CheckReport, CheckRequest, GateClass, NoPackages, PackageDirectory,
-    PackageSource, ProcessError, ProcessStore, Resolved, StepStatus, ThreadAnchor,
+    PackageSource, Peer, ProcessError, ProcessStore, Resolved, StepStatus, ThreadAnchor,
 };
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -28,9 +28,18 @@ pub struct Project {
     /// The author of every event the server writes, fixed for the session so that an agent
     /// cannot choose it per call. Without one, the writing tools fail.
     pub author: Option<Author>,
-    /// The shared folder of the tool `sync`, fixed for the session so that an agent cannot
-    /// sync into an arbitrary path. Without one, `sync` fails.
-    pub sync_folder: Option<PathBuf>,
+    /// The peer of the tool `sync`, fixed for the session so that an agent cannot sync into an
+    /// arbitrary path or server. Without one, `sync` fails.
+    pub sync_peer: Option<SyncPeer>,
+}
+
+/// The peer the tool `sync` syncs with.
+#[derive(Debug, Clone)]
+pub enum SyncPeer {
+    /// A shared folder: its root.
+    Folder(PathBuf),
+    /// A replication server.
+    Server(hone_core::Server),
 }
 
 /// Serves the MCP tools for `project` over stdin and stdout until the client disconnects.
@@ -374,15 +383,20 @@ impl Server {
     }
 
     #[tool(
-        description = "Sync the process store with the shared folder the server was started with: the events `received` and `sent` per device, and the `problems` (fork, id-conflict, invalid-event, unsafe-path)."
+        description = "Sync the process store with the shared folder or the replication server the MCP server was started with: the events `received` and `sent` per device, and the `problems` (fork, id-conflict, invalid-event, unsafe-path, scope-mismatch, identity-mismatch, role-mismatch, seq-gap)."
     )]
     fn sync(&self) -> CallToolResult {
-        let Some(folder) = &self.project.sync_folder else {
-            return CallToolResult::structured_error(to_value(&ProcessError::Invalid {
-                message: "the server has no shared folder: start it with --sync-folder".into(),
-            }));
+        let peer = match &self.project.sync_peer {
+            Some(SyncPeer::Folder(folder)) => Peer::Folder(folder),
+            Some(SyncPeer::Server(server)) => Peer::Server(server),
+            None => {
+                return CallToolResult::structured_error(to_value(&ProcessError::Invalid {
+                    message: "the server has no peer: start it with --sync-folder or --sync-server"
+                        .into(),
+                }));
+            }
         };
-        match self.store().and_then(|store| store.sync(folder)) {
+        match self.store().and_then(|store| store.sync(peer)) {
             Ok(report) => CallToolResult::structured(to_value(&report)),
             Err(error) => CallToolResult::structured_error(to_value(&error)),
         }

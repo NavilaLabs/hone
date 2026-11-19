@@ -3,8 +3,8 @@ use std::process::ExitCode;
 
 use clap::{Args, Subcommand, ValueEnum};
 use hone_core::{
-    Appended, Author, Change, ProcessError, ProcessStore, StepStatus, SyncReport, ThreadAnchor,
-    ThreadStatus, TicketEvents,
+    Appended, Author, Change, Peer, ProcessError, ProcessStore, Server, StepStatus, SyncReport,
+    ThreadAnchor, ThreadStatus, TicketEvents,
 };
 use serde::Serialize;
 
@@ -242,24 +242,73 @@ pub(crate) struct SyncArguments {
     #[command(flatten)]
     target: Target,
     /// The shared folder: below it, `<workspace>/<project>/log/`.
-    #[arg(long, env = "HONE_SYNC_FOLDER")]
-    folder: PathBuf,
+    #[arg(
+        long,
+        env = "HONE_SYNC_FOLDER",
+        conflicts_with = "server",
+        required_unless_present = "server"
+    )]
+    folder: Option<PathBuf>,
+    /// The base URL of a replication server, reached with the token in `HONE_TOKEN`.
+    #[arg(long, env = "HONE_SYNC_SERVER")]
+    server: Option<String>,
+    /// Stay connected to the server: import events as they arrive and send new own events.
+    /// Ends with Ctrl-C.
+    #[arg(long, requires = "server")]
+    watch: bool,
+}
+
+pub(crate) fn token() -> Result<String, String> {
+    std::env::var("HONE_TOKEN")
+        .ok()
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| "no token for the server: set HONE_TOKEN".to_owned())
 }
 
 pub(crate) fn run_sync(arguments: &SyncArguments) -> ExitCode {
     let target = &arguments.target;
-    let outcome =
-        ProcessStore::locate(&target.root, None).and_then(|store| store.sync(&arguments.folder));
-    match (&outcome, target.json) {
-        (Ok(report), true) => println!("{}", to_json(report)),
-        (Ok(report), false) => print_sync(report),
-        (Err(error), true) => println!("{}", to_json(error)),
-        (Err(error), false) => eprintln!("{error}"),
+    let outcome = ProcessStore::locate(&target.root, None).and_then(|store| {
+        match (&arguments.folder, &arguments.server) {
+            (Some(folder), _) => store.sync(Peer::Folder(folder)),
+            (None, Some(url)) => {
+                let server = Server::new(
+                    url,
+                    &token().map_err(|message| ProcessError::Invalid { message })?,
+                );
+                if arguments.watch {
+                    let json = target.json;
+                    let ctrl_c = async {
+                        let _ = tokio::signal::ctrl_c().await;
+                    };
+                    return store
+                        .watch(&server, ctrl_c, |report| print_report(report, json))
+                        .map(|()| SyncReport::default());
+                }
+                store.sync(Peer::Server(&server))
+            }
+            (None, None) => Err(ProcessError::Invalid {
+                message: "name a peer: --folder or --server".into(),
+            }),
+        }
+    });
+    match &outcome {
+        Ok(report) if !arguments.watch => print_report(report, target.json),
+        Ok(_) => {}
+        Err(error) if target.json => println!("{}", to_json(error)),
+        Err(error) => eprintln!("{}", printable(&error.to_string())),
     }
     match outcome {
         Ok(report) if report.problems.is_empty() => ExitCode::SUCCESS,
         Ok(_) => ExitCode::FAILURE,
         Err(_) => ExitCode::from(2),
+    }
+}
+
+fn print_report(report: &SyncReport, json: bool) {
+    if json {
+        println!("{}", to_json(report));
+    } else {
+        print_sync(report);
     }
 }
 
@@ -278,7 +327,7 @@ fn print_sync(report: &SyncReport) {
         eprintln!(
             "{} {}{line}: {}",
             code.as_str().unwrap_or_default(),
-            printable(&problem.path.display().to_string()),
+            printable(&problem.path),
             printable(&problem.message)
         );
     }

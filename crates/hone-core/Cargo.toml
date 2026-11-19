@@ -12,11 +12,13 @@ extism.workspace = true
 getrandom.workspace = true
 jsonschema.workspace = true
 regex.workspace = true
+reqwest.workspace = true
 ryu-js.workspace = true
 saphyr-parser.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+tokio = { workspace = true, features = ["rt", "time", "macros"] }
 unicode-normalization.workspace = true
 
 [target.'cfg(unix)'.dependencies]

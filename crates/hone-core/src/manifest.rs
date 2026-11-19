@@ -164,6 +164,14 @@ pub(crate) fn is_device_id(text: &str) -> bool {
     DEVICE_ID.is_match(text)
 }
 
+pub(crate) fn is_project_id(text: &str) -> bool {
+    PROJECT_ID.is_match(text)
+}
+
+pub(crate) fn is_workspace_id(text: &str) -> bool {
+    WORKSPACE_ID.is_match(text)
+}
+
 pub(crate) fn read_package_config(
     root: &Path,
     origin: &Origin,

@@ -20,6 +20,14 @@ pub enum SyncCode {
     InvalidEvent,
     /// A path that leads outside the shared folder.
     UnsafePath,
+    /// The server rejected an own event of another project.
+    ScopeMismatch,
+    /// The server rejected an own event whose author is not the authenticated identity.
+    IdentityMismatch,
+    /// The server rejected an own approval whose role `actors` does not give its author.
+    RoleMismatch,
+    /// The server rejected an own event that does not continue the device's log there.
+    SeqGap,
 }
 
 /// A problem a sync found. Nothing after it is imported from or written for that device.
@@ -27,8 +35,9 @@ pub enum SyncCode {
 pub struct SyncProblem {
     /// The kind of the problem.
     pub code: SyncCode,
-    /// The file concerned, in the shared folder or in the local store.
-    pub path: PathBuf,
+    /// The file concerned, in the shared folder or in the local store, or the URL of a request
+    /// to a server.
+    pub path: String,
     /// The line in the file, counted from 1, or `None` if the whole file is concerned.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line: Option<usize>,
@@ -49,10 +58,16 @@ pub struct SyncReport {
 }
 
 impl SyncReport {
-    fn problem(&mut self, code: SyncCode, path: PathBuf, line: Option<usize>, message: String) {
+    pub(crate) fn problem(
+        &mut self,
+        code: SyncCode,
+        path: impl Into<String>,
+        line: Option<usize>,
+        message: String,
+    ) {
         self.problems.push(SyncProblem {
             code,
-            path,
+            path: path.into(),
             line,
             message,
         });
@@ -72,7 +87,7 @@ pub(crate) fn sync_folder(
     if remote_exists && !log::below(&remote, folder) {
         report.problem(
             SyncCode::UnsafePath,
-            remote,
+            remote.display().to_string(),
             None,
             "the project directory leads outside the shared folder".into(),
         );
@@ -92,12 +107,18 @@ pub(crate) fn sync_folder(
         };
         report.problem(
             code,
-            remote.join(&invalid.path),
+            remote.join(&invalid.path).display().to_string(),
             invalid.line,
             invalid.message.clone(),
         );
     }
-    pull(local, &local_log, &remote, &remote_log, &mut report)?;
+    pull(
+        local,
+        &local_log,
+        &Origin::Folder(&remote),
+        &remote_log,
+        &mut report,
+    )?;
     if let Some(own) = own {
         push(
             local,
@@ -107,18 +128,59 @@ pub(crate) fn sync_folder(
             &mut report,
         )?;
     }
-    report.problems.sort();
-    // Pull and push can find the same fork or link; it is one problem.
-    report.problems.dedup_by(|later, earlier| {
-        (later.code, &later.path, later.line) == (earlier.code, &earlier.path, earlier.line)
-    });
+    report.finish();
     Ok(report)
 }
 
-fn pull(
+impl SyncReport {
+    pub(crate) fn finish(&mut self) {
+        self.problems.sort();
+        // Pull and push can find the same fork or link; it is one problem.
+        self.problems.dedup_by(|later, earlier| {
+            (later.code, &later.path, later.line) == (earlier.code, &earlier.path, earlier.line)
+        });
+    }
+}
+
+pub(crate) enum Origin<'a> {
+    Folder(&'a Path),
+    Server(&'a str),
+}
+
+impl Origin<'_> {
+    fn locate(&self, remote_log: &Log, id: &str) -> (String, Option<usize>) {
+        let location = remote_log.locations.get(id);
+        match self {
+            Self::Folder(root) => location
+                .map_or((root.display().to_string(), None), |(path, number)| {
+                    (root.join(path).display().to_string(), Some(*number))
+                }),
+            Self::Server(url) => ((*url).to_owned(), location.map(|(_, number)| *number)),
+        }
+    }
+
+    // A server has no files to name, so a conflict names the local event at that place.
+    fn locate_conflict(
+        &self,
+        local: &Path,
+        local_log: &Log,
+        remote_log: &Log,
+        held: &str,
+        incoming: &str,
+    ) -> (String, Option<usize>) {
+        match (self, local_log.locations.get(held)) {
+            (Self::Server(_), Some((path, number))) => {
+                (local.join(path).display().to_string(), Some(*number))
+            }
+            _ => self.locate(remote_log, incoming),
+        }
+    }
+}
+
+pub(crate) fn pull(
     local: &Path,
     local_log: &Log,
-    remote: &Path,
+    origin: &Origin<'_>,
     remote_log: &Log,
     report: &mut SyncReport,
 ) -> std::io::Result<()> {
@@ -154,7 +216,9 @@ fn pull(
             {
                 report.problem(
                     SyncCode::InvalidEvent,
-                    log::segment_path(local, device, open.number),
+                    log::segment_path(local, device, open.number)
+                        .display()
+                        .to_string(),
                     None,
                     format!(
                         "the local log of `{device}` does not end at `seq` {local_end}, nothing is imported"
@@ -169,13 +233,9 @@ fn pull(
             let id = event["id"].as_str().unwrap_or_default();
             let seq = event["seq"].as_u64().unwrap_or_default();
             let line = canonical::to_canonical(event);
-            let (path, line_number) = remote_log
-                .locations
-                .get(id)
-                .map_or((remote.to_path_buf(), None), |(path, number)| {
-                    (remote.join(path), Some(*number))
-                });
-            let conflict = match slots.get(&(device, seq)) {
+            let (path, line_number) = origin.locate(remote_log, id);
+            let held = slots.get(&(device, seq));
+            let conflict = match held {
                 Some(held) if canonical::to_canonical(held) == line => continue,
                 Some(held) if held["id"] == id => Some((
                     SyncCode::IdConflict,
@@ -195,6 +255,9 @@ fn pull(
                 None => None,
             };
             if let Some((code, message)) = conflict {
+                let held_id = held.and_then(|held| held["id"].as_str()).unwrap_or(id);
+                let (path, line_number) =
+                    origin.locate_conflict(local, local_log, remote_log, held_id, id);
                 report.problem(code, path, line_number, message);
                 break;
             }
@@ -258,7 +321,7 @@ fn push(
         let Some(mut file) = opened else {
             report.problem(
                 SyncCode::UnsafePath,
-                target,
+                target.display().to_string(),
                 None,
                 "the segment leads outside the shared folder".into(),
             );
@@ -277,7 +340,7 @@ fn push(
             let line = held[..common].iter().filter(|byte| **byte == b'\n').count() + 1;
             report.problem(
                 SyncCode::Fork,
-                target,
+                target.display().to_string(),
                 Some(line),
                 format!("the folder copy of the log of `{own}` differs from the local one"),
             );
@@ -314,7 +377,7 @@ fn directory_below(
         if !log::below(&path, root) {
             report.problem(
                 SyncCode::UnsafePath,
-                path,
+                path.display().to_string(),
                 None,
                 "the directory leads outside the shared folder".into(),
             );

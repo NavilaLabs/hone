@@ -5,7 +5,7 @@ use rmcp::model::CallToolRequestParams;
 use rmcp::service::{RoleClient, RunningService, ServiceError};
 use serde_json::{Value, json};
 
-use crate::{Project, Server};
+use crate::{Project, Server, SyncPeer};
 
 const TICKET: &str = "tk-9f2x4a8m";
 
@@ -23,7 +23,7 @@ fn project(root: PathBuf) -> Project {
         packages: None,
         data_directory: None,
         author: None,
-        sync_folder: None,
+        sync_peer: None,
     }
 }
 
@@ -41,7 +41,7 @@ fn resolve_case(name: &str) -> Project {
         packages: packages.exists().then_some(packages),
         data_directory: None,
         author: None,
-        sync_folder: None,
+        sync_peer: None,
     }
 }
 
@@ -499,7 +499,7 @@ fn process_case(name: &str, author: Option<(&str, &str)>) -> Project {
             name: name.into(),
             role: role.into(),
         }),
-        sync_folder: None,
+        sync_peer: None,
     }
 }
 
@@ -653,7 +653,7 @@ async fn sync_moves_events_through_the_fixed_folder() {
     let folder = bob.root.parent().expect("temporary root").join("folder");
     std::fs::create_dir_all(&folder).expect("creatable");
     let bob = Project {
-        sync_folder: Some(folder.clone()),
+        sync_peer: Some(SyncPeer::Folder(folder.clone())),
         ..bob
     };
     let step = json!({ "ticket": TICKET, "step": "decision", "status": "done" });
