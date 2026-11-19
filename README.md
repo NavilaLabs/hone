@@ -129,6 +129,15 @@ HONE_TOKEN=… hone sync --server https://hone.example --watch   # stay connecte
 
 The server checks every event against the authenticated identity, the project, and for approvals the actors in its configuration, and rejects it with a fixed error code (concept Section 4). A token is configured only as its SHA-256 (`printf %s "$TOKEN" | sha256sum`). `--watch` imports events as they arrive and sends new own events every 2 seconds.
 
+At the end of an engagement, `hone export` archives the project's store and `hone forget` removes it from the device:
+
+```sh
+hone export --to ~/archive/payments      # every device's log, in the layout of a shared folder
+hone forget --confirm prj-8m2k4d7q       # removes the local store and the context binding
+```
+
+The export directory must be new or empty; `hone sync --folder` imports it again. `hone forget` takes the project ID once more, because nothing it removes comes back, and leaves the copies in a shared folder or on a server alone.
+
 ## MCP server
 
 `hone mcp` serves the tools `resolve`, `check`, `check_edit`, `check_artifact`, `content_hash`, `thread_open`, `thread_reply`, `thread_resolve`, `thread_reopen`, `step_set`, `events`, and `sync` over stdio for one project (`--root`, default `.`, and `--packages`). The author of every event it writes is fixed at the start with `--author` and `--role` (or `HONE_AUTHOR` and `HONE_ROLE`), so that an agent cannot write as someone else; without one, the writing tools return an error. `sync` uses the folder fixed with `--sync-folder` (or `HONE_SYNC_FOLDER`), the server fixed with `--sync-server` (or `HONE_SYNC_SERVER`, the token from `HONE_TOKEN`), or the branch fixed with `--sync-git` and `--sync-remote`. Without these flags, the server takes the author and the peer from the project's context (`hone context use`) when it starts. The tools return the same JSON as `--json`. A failed gate is a normal result with `status: failed`; a tool that could not run, or a call with invalid arguments, returns a result marked `isError`. `check_edit` asks beforehand what the hook would decide, and `check_artifact` checks a draft before it is written. For Claude Code:

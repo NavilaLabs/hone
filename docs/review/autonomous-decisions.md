@@ -77,7 +77,7 @@ Decisions taken without the maintainer, during an autonomous run on the branch `
 56. **The file is written anew.** `hone context set` and `use` rewrite it in the strict profile; comments are lost. Unknown keys, a peer with more than one kind, and a binding to an unknown context are rejected when reading.
 57. **Names.** A context name is lowercase letters, digits, and `-`, not starting with `-`.
 58. **The GUI leaves the author to the context** when its author or role field is empty, instead of passing empty flags.
-59. **Not done:** the MCP server does not read contexts yet (it keeps `--author`, `--sync-*`); `export` and `forget`; tokens in an OS keyring. (The MCP server reads contexts since item 78.)
+59. **Not done:** the MCP server does not read contexts yet (it keeps `--author`, `--sync-*`); `export` and `forget`; tokens in an OS keyring. (The MCP server reads contexts since item 78; `export` and `forget` exist since item 82.)
 
 ## `module-anchors-resolve` (concept Question 40)
 
@@ -109,3 +109,13 @@ Decisions taken without the maintainer, during an autonomous run on the branch `
 79. **A context it cannot use stops the start.** A malformed `contexts.yaml`, a binding made in another checkout, and a context server whose token variable is empty end `hone mcp` with exit code 1 and `hone mcp: <message>` on standard error, as a missing `HONE_TOKEN` with `--sync-server` already did. The context is read only when a flag is missing, so a fully configured server never reads it. Alternative: start without author or peer and fail per call, rejected because the reason would only show on the first writing call.
 80. **An unreadable project has no context.** If the project's scope cannot be read (no `.hone/config.yaml`, no data directory), there is no project ID to bind, so the server starts without a context; its writing tools and `sync` then report the broken project themselves, and `resolve` stays usable to repair it.
 81. **`--sync-remote`.** `hone mcp --sync-remote <name>` (default `origin`) names the remote of `--sync-git`, like `hone sync --remote`, because a context's Git peer carries a remote and the server now needs one. It has no environment variable, as `--remote` has none.
+
+## `export` and `forget` (concept Question 43)
+
+82. **Export is a shared folder.** `hone export --to <dir>` copies the complete lines of every device's segments, byte for byte, below `<dir>/<workspace>/<project>/log/`, reusing the push of a folder sync. A sync with the directory as the folder imports it again, so no new format and no import command are needed. Invalid lines are copied as they are, because an archive keeps what was there. The device ID is not exported: an archive is not a device. Alternative: a single file (NDJSON or tar), rejected because it needs its own reader.
+83. **Only into a new or empty directory.** A non-empty target is refused (`invalid`), and a project without a store is `unavailable`, both before anything is created, so an export never mixes with an existing state. The store is locked while copying.
+84. **Forget asks for the project ID.** `hone forget --confirm <project>` must repeat the project ID of the root; anything else is `invalid` and removes nothing. hone has no interactive prompts (item 64), so the repetition is the confirmation. A project without a store is forgotten with zero events, so a repeated call succeeds.
+85. **What forget removes.** The whole store directory (every device's log, the device ID, the lock file, the Git worktrees), an empty workspace directory above it, and the project's binding in `contexts.yaml`; the context stays, because other projects of the tenant may use it. It does not follow symbolic links. `contexts.yaml` is read before anything is removed. Copies in a shared folder or on a server stay; the result names the removed events per device and the unbound context.
+86. **Git worktrees.** After removing worktrees of `hone sync --git`, hone runs `git worktree prune` in the project root and ignores its failure, because Git drops stale registrations itself. Not covered by tests yet.
+87. **No MCP tools.** An export writes outside the project, which the MCP server avoids (its sync peer is fixed for the same reason), and forgetting is a decision of a person, as approvals are (item 42).
+88. **Not done:** encrypting the local store per project, which the concept names as optional.
