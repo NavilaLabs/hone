@@ -932,13 +932,15 @@ The file holds no secret: a context names the environment variable of its token,
 
 **MCP server.** `hone mcp [--root <dir>] [--packages <dir>]` serves exactly one project, the same as `hone resolve` (default root `.`). The tools take no root, because an agent run receives context from exactly one project (tenant separation). The server uses the official Rust SDK `rmcp`. It offers one tool per public function of `hone-core`, named like the function without a prefix (the client adds the server name, for example `mcp__hone__check`):
 
-| Tool             | Input                                                                     | Result                                                                                   |
-| ---------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `resolve`        | `check` (optional, only compare, write nothing)                           | Like `hone resolve --json`: `status` (`written`, `up-to-date`, `out-of-date`) and `hash` |
-| `check`          | `ticket`, `step`, `changed_paths`, `class`, `base`, `lock` (all optional) | Like `hone check --json`: `status` (`passed`, `failed`) and `gates`                      |
-| `check_edit`     | `ticket`, `path` (relative to the root)                                   | The same as the agent hook, asked beforehand: `status` and `gates`                       |
-| `check_artifact` | `path`, `content` (both required)                                         | `status` and `findings`, `failed` exactly when a finding is an `error`                   |
-| `content_hash`   | `path`, `content` (both required)                                         | `hash`                                                                                   |
+| Tool              | Input                                                                     | Result                                                                                   |
+| ----------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `resolve`         | `check` (optional, only compare, write nothing)                           | Like `hone resolve --json`: `status` (`written`, `up-to-date`, `out-of-date`) and `hash` |
+| `check`           | `ticket`, `step`, `changed_paths`, `class`, `base`, `lock` (all optional) | Like `hone check --json`: `status` (`passed`, `failed`) and `gates`                      |
+| `check_edit`      | `ticket`, `path` (relative to the root)                                   | The same as the agent hook, asked beforehand: `status` and `gates`                       |
+| `check_artifact`  | `path`, `content` (both required)                                         | `status` and `findings`, `failed` exactly when a finding is an `error`                   |
+| `content_hash`    | `path`, `content` (both required)                                         | `hash`                                                                                   |
+| `catalog`         | –                                                                         | Like `hone artifacts --json`: `project`, `artifacts`, `unreadable`                       |
+| `ticket_overview` | `ticket` (required)                                                       | Like `hone ticket show --json`: profile, attributes, roles, and steps in order           |
 
 `check_artifact` and `content_hash` take the content as text, so that an agent checks a draft before it writes the file. Results map to MCP like the exit codes of the command line: a failed gate is a normal result with `status: failed`, because it is an answer and not an error. A tool that could not run (exit code 2, a failed resolution, content outside the YAML profile for `content_hash`) returns a result marked `isError` with `status` (`error`, `failed`, or `io-error`) and `message`, `problems` (resolution), or `violations` (`content_hash`). Invalid arguments, such as a missing `path` or `step` without `ticket`, are also a result marked `isError` and not a protocol error, so that the agent reads the reason and corrects the call (the behaviour of the MCP specification and of `rmcp`). Writing and comparing `resolved.json` and reading it for `check_artifact` live in `hone-core`, so that the command line and the MCP server cannot drift apart.
 
