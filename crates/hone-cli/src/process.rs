@@ -4,8 +4,8 @@ use std::process::ExitCode;
 use clap::{Args, Subcommand, ValueEnum};
 use hone_core::{
     Appended, Author, BoundContext, Change, Condensed, Context, ContextPeer, Contexts, Cursor,
-    Forgotten, Peer, ProcessError, ProcessStore, Server, StepStatus, SyncReport, ThreadAnchor,
-    ThreadStatus, TicketEvents,
+    Forgotten, Peer, ProcessError, ProcessStore, ReviewState, Server, StepStatus, SyncReport,
+    ThreadAnchor, ThreadStatus, TicketEvents,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -192,6 +192,17 @@ pub(crate) enum Review {
         #[arg(long, value_name = "FILE")]
         summary: Option<PathBuf>,
     },
+    /// Show the review of an artifact in a ticket: its current content hash, every person's
+    /// last decision, the confirmations, and the `review` block of its file.
+    Show {
+        #[command(flatten)]
+        target: Target,
+        /// The ticket.
+        #[arg(long)]
+        ticket: String,
+        /// The artifact ID.
+        artifact: String,
+    },
     /// Confirm the condensed `review` block of an artifact.
     Confirm {
         #[command(flatten)]
@@ -228,12 +239,47 @@ pub(crate) fn run_review(review: Review) -> ExitCode {
                 .and_then(|store| store.condense(&ticket, &artifact, summary.as_deref()));
             finish(target.json, outcome, print_condensed)
         }
+        Review::Show {
+            target,
+            ticket,
+            artifact,
+        } => {
+            let outcome = ProcessStore::locate(&target.root, None)
+                .and_then(|store| store.review(&ticket, &artifact));
+            finish(target.json, outcome, print_review)
+        }
         Review::Confirm {
             target,
             writer,
             ticket,
             artifact,
         } => append(&target, &writer, Change::ConfirmReview { ticket, artifact }),
+    }
+}
+
+fn print_review(review: &ReviewState) {
+    println!("{} {} ({})", review.artifact, review.hash, review.path);
+    for decision in &review.decisions {
+        let current = if decision.current {
+            ""
+        } else {
+            " (older content)"
+        };
+        println!(
+            "  {} · {} {}{current} {}",
+            decision.name, decision.role, decision.decision, decision.date
+        );
+    }
+    for confirmation in &review.confirmations {
+        let current = if confirmation.current {
+            ""
+        } else {
+            " (older content)"
+        };
+        println!(
+            "  confirmed by {} · {}{current} {}",
+            confirmation.name, confirmation.role, confirmation.date
+        );
     }
 }
 

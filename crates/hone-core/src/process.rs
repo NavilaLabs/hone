@@ -166,6 +166,61 @@ pub struct Condensed {
     pub review: Value,
 }
 
+/// The review of an artifact in a ticket, the result of [`ProcessStore::review`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ReviewState {
+    /// The artifact ID.
+    pub artifact: String,
+    /// The artifact's path, relative to the project root.
+    pub path: String,
+    /// The artifact's current content hash.
+    pub hash: String,
+    /// For every person and role, their last `approval.given` for the artifact in the ticket,
+    /// sorted by name and role. An approval counts when its decision is `approved` and its
+    /// hash is the current one.
+    pub decisions: Vec<ReviewDecision>,
+    /// The `review.confirmed` events for the artifact in the ticket, in their order.
+    pub confirmations: Vec<ReviewConfirmation>,
+    /// The `review` block in the artifact's file, if it has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review: Option<Value>,
+}
+
+/// A person's last decision on an artifact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReviewDecision {
+    /// The author's handle.
+    pub name: String,
+    /// The author's role.
+    pub role: String,
+    /// `approved` or `changes-requested`.
+    pub decision: String,
+    /// The content hash the decision was given for.
+    pub hash: String,
+    /// Whether `hash` is the artifact's current content hash.
+    pub current: bool,
+    /// The UTC date of the event.
+    pub date: String,
+    /// The proof, if given.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proof: Option<String>,
+}
+
+/// A confirmation of an artifact's condensed `review` block.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReviewConfirmation {
+    /// The author's handle.
+    pub name: String,
+    /// The author's role.
+    pub role: String,
+    /// The content hash that was confirmed.
+    pub hash: String,
+    /// Whether `hash` is the artifact's current content hash.
+    pub current: bool,
+    /// The UTC date of the event.
+    pub date: String,
+}
+
 /// The result of [`ProcessStore::append`].
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Appended {
@@ -612,6 +667,70 @@ impl ProcessStore {
             git::prune_worktrees(&self.project_root);
         }
         Ok(forgotten)
+    }
+
+    /// The review of the artifact `artifact` in `ticket`: its current content hash, every
+    /// person's last decision, the confirmations, and the `review` block of its file. A store
+    /// that does not exist yet has no decisions. Writes nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProcessError::Invalid`] if the ticket or the artifact does not exist, and
+    /// [`ProcessError::IoError`] if the store cannot be read.
+    pub fn review(&self, ticket: &str, artifact: &str) -> Result<ReviewState, ProcessError> {
+        load_ticket(&self.project_root, ticket)?;
+        let current = Resolved::load(&self.project_root)?;
+        let directory = Directory::scan(&self.project_root, current.document());
+        let found = directory
+            .artifacts
+            .iter()
+            .find(|candidate| candidate.id() == Some(artifact))
+            .ok_or_else(|| invalid(format!("no artifact `{artifact}` in the project")))?;
+        let hash = found.content.hash();
+        let events: Vec<Value> = if self.directory.is_dir() {
+            self.load()?
+                .events
+                .into_iter()
+                .filter(|event| event["ticket"] == ticket)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let text = |value: &Value| value.as_str().unwrap_or_default().to_owned();
+        let date = |event: &Value| condense::date_of(event["id"].as_str().unwrap_or_default());
+        let decisions = condense::last_decisions(&events, artifact)
+            .into_iter()
+            .map(|((name, role), event)| ReviewDecision {
+                name,
+                role,
+                decision: text(&event["payload"]["decision"]),
+                hash: text(&event["payload"]["hash"]),
+                current: event["payload"]["hash"] == hash.as_str(),
+                date: date(event),
+                proof: event["payload"]["proof"].as_str().map(str::to_owned),
+            })
+            .collect();
+        let confirmations = events
+            .iter()
+            .filter(|event| {
+                event["type"] == REVIEW_CONFIRMED && event["payload"]["artifact"] == artifact
+            })
+            .map(|event| ReviewConfirmation {
+                name: text(&event["author"]["name"]),
+                role: text(&event["author"]["role"]),
+                hash: text(&event["payload"]["hash"]),
+                current: event["payload"]["hash"] == hash.as_str(),
+                date: date(event),
+            })
+            .collect();
+        Ok(ReviewState {
+            artifact: artifact.to_owned(),
+            path: found.path.clone(),
+            review: found.content.data.get("review").cloned(),
+            hash,
+            decisions,
+            confirmations,
+        })
     }
 
     /// Writes the `review` block into the artifact `artifact` of `ticket` (concept Section 12,

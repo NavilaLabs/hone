@@ -100,7 +100,8 @@ fn the_catalog_lists_every_artifact_with_title_and_effective_status() {
                 "ticket": "tk-9f2x4a8m",
                 "title": "Payments run synchronously",
                 "status": "accepted",
-                "effective": "accepted"
+                "effective": "accepted",
+                "links": { "supersedes": ["dec-7k3m2q8p"] }
             },
             {
                 "id": "dec-7k3m2q8p",
@@ -108,7 +109,8 @@ fn the_catalog_lists_every_artifact_with_title_and_effective_status() {
                 "path": "design/decisions/dec-7k3m2q8p-payment-async.md",
                 "ticket": "tk-9f2x4a8m",
                 "status": "accepted",
-                "effective": "superseded"
+                "effective": "superseded",
+                "links": { "affects": ["mod-4t8w2n6c"] }
             },
             {
                 "id": "mod-4t8w2n6c",

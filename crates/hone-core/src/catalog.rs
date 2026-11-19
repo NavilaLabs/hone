@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 use crate::Resolved;
 use crate::check::{CheckError, load_ticket};
 use crate::directory::{Artifact, Directory, Place};
-use crate::gates::Scope;
+use crate::gates::{ID_LINKS, Scope};
 use crate::manifest;
 
 /// The artifacts of a project's checked directory.
@@ -50,6 +50,10 @@ pub struct CatalogEntry {
     /// A ticket record's external tickets.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub external: Vec<ExternalTicket>,
+    /// The ID links under `links`, by link type (`supersedes`, `affects`, `verifies`,
+    /// `depends-on`, `relates`), each with the IDs it names.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub links: BTreeMap<String, Vec<String>>,
 }
 
 /// A file that matches an artifact pattern but cannot be read.
@@ -211,7 +215,25 @@ fn entry(artifact: &Artifact, effective: Option<&str>) -> CatalogEntry {
         } else {
             Vec::new()
         },
+        links: id_links(&artifact.content.data),
     }
+}
+
+fn id_links(data: &Map<String, Value>) -> BTreeMap<String, Vec<String>> {
+    ID_LINKS
+        .iter()
+        .filter_map(|&link| {
+            let ids: Vec<String> = data
+                .get("links")?
+                .get(link)?
+                .as_array()?
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect();
+            (!ids.is_empty()).then(|| (link.to_owned(), ids))
+        })
+        .collect()
 }
 
 fn heading(body: &str) -> Option<String> {

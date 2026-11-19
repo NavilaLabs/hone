@@ -41,7 +41,8 @@ fn artifacts_lists_every_artifact_of_the_checked_directory() {
                     "path": "design/decisions/dec-7k3m2q8p-payment-async.md",
                     "ticket": "tk-9f2x4a8m",
                     "status": "accepted",
-                    "effective": "accepted"
+                    "effective": "accepted",
+                    "links": { "affects": ["mod-4t8w2n6c"] }
                 },
                 {
                     "id": "mod-4t8w2n6c",

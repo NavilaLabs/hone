@@ -6,6 +6,32 @@ use crate::artifact;
 /// "Approvals and condensation"): for every person and role, the last `approval.given` in the
 /// order of `events` counts, and enters when it approves `hash`. Sorted by name and role.
 pub(crate) fn approved_by(events: &[Value], artifact: &str, hash: &str) -> Vec<Value> {
+    last_decisions(events, artifact)
+        .into_iter()
+        .filter(|(_, event)| {
+            event["payload"]["decision"] == "approved" && event["payload"]["hash"] == hash
+        })
+        .map(|((name, role), event)| {
+            let mut entry = json!({
+                "name": name,
+                "role": role,
+                "hash": hash,
+                "date": date_of(event["id"].as_str().unwrap_or_default()),
+            });
+            if let Some(proof) = event["payload"].get("proof") {
+                entry["proof"] = proof.clone();
+            }
+            entry
+        })
+        .collect()
+}
+
+/// For every person and role, the last `approval.given` for `artifact` in the order of
+/// `events`. Sorted by name and role.
+pub(crate) fn last_decisions<'e>(
+    events: &'e [Value],
+    artifact: &str,
+) -> Vec<((String, String), &'e Value)> {
     let mut last: Vec<((String, String), &Value)> = Vec::new();
     for event in events {
         if event["type"] != "approval.given" || event["payload"]["artifact"] != artifact {
@@ -27,23 +53,7 @@ pub(crate) fn approved_by(events: &[Value], artifact: &str, hash: &str) -> Vec<V
         }
     }
     last.sort_by(|(left, _), (right, _)| left.cmp(right));
-    last.into_iter()
-        .filter(|(_, event)| {
-            event["payload"]["decision"] == "approved" && event["payload"]["hash"] == hash
-        })
-        .map(|((name, role), event)| {
-            let mut entry = json!({
-                "name": name,
-                "role": role,
-                "hash": hash,
-                "date": date_of(event["id"].as_str().unwrap_or_default()),
-            });
-            if let Some(proof) = event["payload"].get("proof") {
-                entry["proof"] = proof.clone();
-            }
-            entry
-        })
-        .collect()
+    last
 }
 
 /// Checks a summary file's content: a list of `{ q, a }` or `{ rejected }` with text values.
@@ -171,7 +181,7 @@ fn scalar(value: &Value) -> String {
 
 /// The UTC date `YYYY-MM-DD` of a UUIDv7 event ID, from its first 48 bits (milliseconds since
 /// the Unix epoch).
-fn date_of(event_id: &str) -> String {
+pub(crate) fn date_of(event_id: &str) -> String {
     let hex: String = event_id
         .trim_start_matches("ev-")
         .chars()

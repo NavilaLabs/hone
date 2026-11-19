@@ -16,7 +16,8 @@ pub(crate) const PROCESS_GATES: [&str; 3] = [
     "threads-answered",
     "steps-complete",
 ];
-const ID_LINKS: [&str; 5] = ["supersedes", "affects", "verifies", "depends-on", "relates"];
+pub(crate) const ID_LINKS: [&str; 5] =
+    ["supersedes", "affects", "verifies", "depends-on", "relates"];
 
 pub(crate) struct Scope<'a> {
     config: &'a Value,
