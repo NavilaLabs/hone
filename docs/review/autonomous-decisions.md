@@ -67,7 +67,7 @@ Decisions taken without the maintainer, during an autonomous run on the branch `
 49. **Commit and push.** Only `log/<own device>/` is staged; no change means no commit. Message `hone: log of <device>`. A rejected push is retried three times after a fetch and a rebase, which cannot conflict. Commits use the repository's Git identity.
 50. **Names.** Remote and branch may hold only ASCII letters, digits, `/`, `.`, `_`, `-`, must not start with `-` and must not contain `..`, because both reach the Git command line as arguments.
 51. **Errors.** A failing Git command ends the sync as `unavailable` with Git's message.
-52. **MCP.** `hone mcp --sync-git <branch>` (or `HONE_SYNC_GIT`) uses the remote `origin`; there is no `--sync-remote` yet.
+52. **MCP.** `hone mcp --sync-git <branch>` (or `HONE_SYNC_GIT`) uses the remote `origin`; there is no `--sync-remote` yet. (Since item 81, `--sync-remote` exists.)
 53. **Not covered by tests yet:** the push retry after a rejected push.
 
 ## Contexts (concept Question 39)
@@ -77,7 +77,7 @@ Decisions taken without the maintainer, during an autonomous run on the branch `
 56. **The file is written anew.** `hone context set` and `use` rewrite it in the strict profile; comments are lost. Unknown keys, a peer with more than one kind, and a binding to an unknown context are rejected when reading.
 57. **Names.** A context name is lowercase letters, digits, and `-`, not starting with `-`.
 58. **The GUI leaves the author to the context** when its author or role field is empty, instead of passing empty flags.
-59. **Not done:** the MCP server does not read contexts yet (it keeps `--author`, `--sync-*`); `export` and `forget`; tokens in an OS keyring.
+59. **Not done:** the MCP server does not read contexts yet (it keeps `--author`, `--sync-*`); `export` and `forget`; tokens in an OS keyring. (The MCP server reads contexts since item 78.)
 
 ## `module-anchors-resolve` (concept Question 40)
 
@@ -102,3 +102,10 @@ Decisions taken without the maintainer, during an autonomous run on the branch `
 75. **Configuration moved.** `spec/configuration.md` holds the rules of concept Section 8 (the resolved configuration, roles, actors, selection, snapshots, layers, merging, packages, the lockfile, kind schemas, plugins in the configuration, defaults, overrides, generators, the resolution order, and the error categories); the concept keeps the levels, the full example, and the reasons. No rule was changed. Stated from the schema: the top-level keys and the shape of a role. Stated from the concept's example: the entry of `generate` (`plugin`, `hash`, `capabilities`, `into`); the reference implementation still rejects a non-empty `generate` as `manifest`, so generators are specified but not built.
 76. **Plugins moved.** `spec/plugins.md` holds the rules of concept Section 9 (contract, input and output of `check`, runtime, capabilities and trust, `exec` gates); the concept keeps the examples and reasons. No rule was changed. With it every area has a chapter and step 11 is done.
 77. **Open: the hash of every artifact in the plugin input.** `schemas/plugin.schema.json` requires `hash` for every entry of `artifacts`, and the reference implementation computes it by the content-hash rule also for living artifacts and ticket records, although `spec/artifacts.md` says only lifecycle `decided` has a content hash. The plugin chapter states what the schema and the code do. Either the entry drops `hash` where there is no content hash, or the artifacts chapter names it a hash of the content that only `decided` artifacts bind approvals to; for the maintainer.
+
+## Contexts in the MCP server (concept Question 42)
+
+78. **Same precedence, read once.** `hone mcp` takes the author and the peer of the tool `sync` from the bound context when its flags and their environment variables leave them out, each on its own: `--author` with a context peer is allowed, and the other way round. It reads the context once at the start, so the author and the peer stay fixed for the session as before, and an agent that edits `contexts.yaml` during the session changes nothing. Alternative: read the context per call, rejected because it would let the author change mid-session.
+79. **A context it cannot use stops the start.** A malformed `contexts.yaml`, a binding made in another checkout, and a context server whose token variable is empty end `hone mcp` with exit code 1 and `hone mcp: <message>` on standard error, as a missing `HONE_TOKEN` with `--sync-server` already did. The context is read only when a flag is missing, so a fully configured server never reads it. Alternative: start without author or peer and fail per call, rejected because the reason would only show on the first writing call.
+80. **An unreadable project has no context.** If the project's scope cannot be read (no `.hone/config.yaml`, no data directory), there is no project ID to bind, so the server starts without a context; its writing tools and `sync` then report the broken project themselves, and `resolve` stays usable to repair it.
+81. **`--sync-remote`.** `hone mcp --sync-remote <name>` (default `origin`) names the remote of `--sync-git`, like `hone sync --remote`, because a context's Git peer carries a remote and the server now needs one. It has no environment variable, as `--remote` has none.
