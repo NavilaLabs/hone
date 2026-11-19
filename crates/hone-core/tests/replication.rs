@@ -760,3 +760,123 @@ mod permissions {
         assert!(report.received.is_empty() && report.sent.is_empty());
     }
 }
+
+mod git_branch {
+    use std::process::Command;
+
+    use super::*;
+
+    const BRANCH: &str = "hone/process";
+
+    fn git(directory: &Path, arguments: &[&str]) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(directory)
+            .args(arguments)
+            .output()
+            .expect("git runs");
+        assert!(
+            output.status.success(),
+            "git {arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    // A Git repository holding the project, with `remote` as `origin`.
+    fn repository(scratch: &Scratch, remote: &Path) {
+        let project = scratch.root.join("project");
+        git(&project, &["init", "--quiet", "--initial-branch", "main"]);
+        git(&project, &["config", "user.name", "hone test"]);
+        git(&project, &["config", "user.email", "test@example.invalid"]);
+        git(&project, &["add", "."]);
+        git(&project, &["commit", "--quiet", "-m", "project"]);
+        git(
+            &project,
+            &["remote", "add", "origin", &remote.display().to_string()],
+        );
+    }
+
+    fn peer() -> Peer<'static> {
+        Peer::Git {
+            remote: "origin",
+            branch: BRANCH,
+        }
+    }
+
+    #[test]
+    fn two_devices_exchange_through_a_branch() {
+        let remote_scratch = Scratch::new("git-remote");
+        let remote = remote_scratch.root.join("remote.git");
+        git(
+            &remote_scratch.root,
+            &["init", "--quiet", "--bare", "remote.git"],
+        );
+        let case = schemas().join("tests/sync/exchange");
+
+        let alice = Scratch::new("git-alice");
+        repository(&alice, &remote);
+        copy_directory(&case.join("local"), &alice.local_store());
+        let report = alice.store().sync(peer()).expect("syncs");
+        assert_eq!(
+            serde_json::to_value(&report.sent).expect("JSON"),
+            json!({ "dev-3k9a5h2t": 2 })
+        );
+        let pushed = git(
+            &remote,
+            &[
+                "show",
+                &format!("{BRANCH}:local/{PROJECT}/log/dev-3k9a5h2t/1.ndjson"),
+            ],
+        );
+        assert_eq!(
+            pushed.as_bytes(),
+            std::fs::read(case.join("local/log/dev-3k9a5h2t/1.ndjson")).expect("readable"),
+            "the own log is committed byte for byte"
+        );
+        assert_eq!(git(&remote, &["rev-list", "--count", BRANCH]).trim(), "1");
+
+        let again = alice.store().sync(peer()).expect("syncs again");
+        assert!(
+            again.sent.is_empty() && again.received.is_empty(),
+            "{again:?}"
+        );
+        assert_eq!(
+            git(&remote, &["rev-list", "--count", BRANCH]).trim(),
+            "1",
+            "nothing new, no commit"
+        );
+
+        let bob = Scratch::new("git-bob");
+        repository(&bob, &remote);
+        let report = bob.store().sync(peer()).expect("syncs");
+        assert_eq!(
+            serde_json::to_value(&report.received).expect("JSON"),
+            json!({ "dev-3k9a5h2t": 2 })
+        );
+        assert!(
+            report.sent.is_empty() && report.problems.is_empty(),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn a_branch_name_like_an_option_is_rejected() {
+        let scratch = Scratch::new("git-option");
+        let outcome = scratch.store().sync(Peer::Git {
+            remote: "origin",
+            branch: "--upload-pack=touch",
+        });
+        let Err(ProcessError::Invalid { message }) = outcome else {
+            panic!("expected an invalid request, got {outcome:?}");
+        };
+        assert!(
+            message.starts_with("`origin` / `--upload-pack=touch` is not"),
+            "{message}"
+        );
+        assert!(
+            !scratch.local_store().join("git").exists(),
+            "nothing is created"
+        );
+    }
+}
