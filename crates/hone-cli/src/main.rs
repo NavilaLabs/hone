@@ -53,6 +53,9 @@ enum Command {
     /// Sync the process store with a shared folder or a server. Exits with 0 when the sync found
     /// no problem, 1 when it reported problems, and 2 when it could not run.
     Sync(process::SyncArguments),
+    /// Manage the contexts of this device: peers, authors, and which project uses which.
+    #[command(subcommand)]
+    Context(process::ContextCommand),
     /// Run the reference replication server until Ctrl-C or SIGTERM. Exits with 2 when it
     /// cannot start.
     Serve {
@@ -123,6 +126,7 @@ fn main() -> ExitCode {
         Command::Events(arguments) => process::run_events(&arguments),
         Command::Log(target) => process::run_log(&target),
         Command::Sync(arguments) => process::run_sync(&arguments),
+        Command::Context(command) => process::run_context(command),
         Command::Serve { config } => match hone_server::Config::load(&config) {
             Ok(config) => match hone_server::serve(config) {
                 Ok(()) => ExitCode::SUCCESS,

@@ -324,6 +324,12 @@ impl ProcessStore {
         })
     }
 
+    /// The project ID from `.hone/config.yaml`.
+    #[must_use]
+    pub fn project(&self) -> &str {
+        &self.project
+    }
+
     /// The store directory, which holds `log/`.
     #[must_use]
     pub fn directory(&self) -> &Path {

@@ -3,8 +3,9 @@ use std::process::ExitCode;
 
 use clap::{Args, Subcommand, ValueEnum};
 use hone_core::{
-    Appended, Author, Change, Condensed, Cursor, Peer, ProcessError, ProcessStore, Server,
-    StepStatus, SyncReport, ThreadAnchor, ThreadStatus, TicketEvents,
+    Appended, Author, BoundContext, Change, Condensed, Context, ContextPeer, Contexts, Cursor,
+    Peer, ProcessError, ProcessStore, Server, StepStatus, SyncReport, ThreadAnchor, ThreadStatus,
+    TicketEvents,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -21,20 +22,31 @@ pub(crate) struct Target {
 
 #[derive(Args)]
 pub(crate) struct Writer {
-    /// The handle of the author.
-    #[arg(long, env = "HONE_AUTHOR")]
-    author: String,
+    /// The handle of the author. Without it and `HONE_AUTHOR`, the author of the project's
+    /// context.
+    #[arg(long, env = "HONE_AUTHOR", requires = "role")]
+    author: Option<String>,
     /// The role of the author. It must exist in the ticket's configuration.
-    #[arg(long, env = "HONE_ROLE")]
-    role: String,
+    #[arg(long, env = "HONE_ROLE", requires = "author")]
+    role: Option<String>,
 }
 
 impl Writer {
-    pub(crate) fn author(&self) -> Author {
-        Author {
-            name: self.author.clone(),
-            role: self.role.clone(),
+    fn author(&self, store: &ProcessStore) -> Result<Author, ProcessError> {
+        if let (Some(name), Some(role)) = (&self.author, &self.role) {
+            return Ok(Author {
+                name: name.clone(),
+                role: role.clone(),
+            });
         }
+        Contexts::load()?
+            .of_project(store.project())
+            .and_then(|bound| bound.context.author)
+            .ok_or_else(|| ProcessError::Invalid {
+                message:
+                    "no author: pass --author and --role, or set an author in the project's context"
+                        .into(),
+            })
     }
 }
 
@@ -355,12 +367,7 @@ pub(crate) struct SyncArguments {
     #[command(flatten)]
     target: Target,
     /// The shared folder: below it, `<workspace>/<project>/log/`.
-    #[arg(
-        long,
-        env = "HONE_SYNC_FOLDER",
-        conflicts_with_all = ["server", "git"],
-        required_unless_present_any = ["server", "git"]
-    )]
+    #[arg(long, env = "HONE_SYNC_FOLDER", conflicts_with_all = ["server", "git"])]
     folder: Option<PathBuf>,
     /// A branch of the project's Git repository used as the shared folder, for example
     /// `hone/process`.
@@ -379,10 +386,160 @@ pub(crate) struct SyncArguments {
 }
 
 pub(crate) fn token() -> Result<String, String> {
-    std::env::var("HONE_TOKEN")
+    token_from("HONE_TOKEN")
+}
+
+fn token_from(variable: &str) -> Result<String, String> {
+    std::env::var(variable)
         .ok()
         .filter(|token| !token.is_empty())
-        .ok_or_else(|| "no token for the server: set HONE_TOKEN".to_owned())
+        .ok_or_else(|| format!("no token for the server: set {variable}"))
+}
+
+fn sync_with_context(store: &ProcessStore) -> Result<SyncReport, ProcessError> {
+    let bound = Contexts::load()?
+        .of_project(store.project())
+        .ok_or_else(|| ProcessError::Invalid {
+            message: "name a peer: --folder, --server, or --git, or bind the project to a context with hone context use".into(),
+        })?;
+    match &bound.context.peer {
+        ContextPeer::Folder { folder } => store.sync(Peer::Folder(folder)),
+        ContextPeer::Git { git, remote } => store.sync(Peer::Git {
+            remote,
+            branch: git,
+        }),
+        ContextPeer::Server { server } => {
+            let variable = bound.context.token_env.as_deref().unwrap_or("HONE_TOKEN");
+            let token =
+                token_from(variable).map_err(|message| ProcessError::Invalid { message })?;
+            store.sync(Peer::Server(&Server::new(server, &token)))
+        }
+    }
+}
+
+#[derive(Subcommand)]
+pub(crate) enum ContextCommand {
+    /// Create or replace a context: its peer, author, and the variable of its token.
+    Set {
+        /// The context's name: lowercase letters, digits, and `-`.
+        name: String,
+        /// A replication server by base URL.
+        #[arg(long, group = "peer")]
+        server: Option<String>,
+        /// A shared folder.
+        #[arg(long, group = "peer")]
+        folder: Option<PathBuf>,
+        /// A branch of the project's Git repository.
+        #[arg(long, group = "peer")]
+        git: Option<String>,
+        /// The remote of `--git`.
+        #[arg(long, default_value = "origin", requires = "git")]
+        remote: String,
+        /// The author of events written in this context.
+        #[arg(long, requires = "role")]
+        author: Option<String>,
+        /// The role of that author.
+        #[arg(long, requires = "author")]
+        role: Option<String>,
+        /// The environment variable that holds the server's token (default `HONE_TOKEN`).
+        #[arg(long)]
+        token_env: Option<String>,
+        /// Print the result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Bind the project of the root to a context.
+    Use {
+        #[command(flatten)]
+        target: Target,
+        /// The context's name.
+        name: String,
+    },
+    /// Show the context the project of the root is bound to.
+    Show {
+        #[command(flatten)]
+        target: Target,
+    },
+}
+
+pub(crate) fn run_context(command: ContextCommand) -> ExitCode {
+    match command {
+        ContextCommand::Set {
+            name,
+            server,
+            folder,
+            git,
+            remote,
+            author,
+            role,
+            token_env,
+            json,
+        } => {
+            let peer = match (server, folder, git) {
+                (Some(server), _, _) => ContextPeer::Server { server },
+                (_, Some(folder), _) => ContextPeer::Folder { folder },
+                (_, _, Some(git)) => ContextPeer::Git { git, remote },
+                (None, None, None) => {
+                    let error = ProcessError::Invalid {
+                        message: "name the context's peer: --server, --folder, or --git".into(),
+                    };
+                    return finish(json, Err::<BoundContext, _>(error), print_context);
+                }
+            };
+            let context = Context {
+                peer,
+                author: author.zip(role).map(|(name, role)| Author { name, role }),
+                token_env,
+            };
+            let outcome = Contexts::load().and_then(|mut contexts| {
+                contexts.set(&name, context.clone())?;
+                contexts.save()?;
+                Ok(BoundContext { name, context })
+            });
+            finish(json, outcome, print_context)
+        }
+        ContextCommand::Use { target, name } => {
+            let outcome = ProcessStore::locate(&target.root, None).and_then(|store| {
+                let mut contexts = Contexts::load()?;
+                contexts.bind(store.project(), &name)?;
+                contexts.save()?;
+                contexts
+                    .of_project(store.project())
+                    .ok_or_else(|| ProcessError::Invalid {
+                        message: format!("no context `{name}`"),
+                    })
+            });
+            finish(target.json, outcome, print_context)
+        }
+        ContextCommand::Show { target } => {
+            let outcome = ProcessStore::locate(&target.root, None).and_then(|store| {
+                Contexts::load()?
+                    .of_project(store.project())
+                    .ok_or_else(|| ProcessError::Invalid {
+                        message: format!(
+                            "the project `{}` is bound to no context",
+                            store.project()
+                        ),
+                    })
+            });
+            finish(target.json, outcome, print_context)
+        }
+    }
+}
+
+fn print_context(bound: &BoundContext) {
+    let peer = match &bound.context.peer {
+        ContextPeer::Server { server } => format!("server {server}"),
+        ContextPeer::Folder { folder } => format!("folder {}", folder.display()),
+        ContextPeer::Git { git, remote } => format!("git {git} via {remote}"),
+    };
+    println!("{}: {peer}", bound.name);
+    if let Some(author) = &bound.context.author {
+        println!("author {} · {}", author.name, author.role);
+    }
+    if let Some(variable) = &bound.context.token_env {
+        println!("token from {variable}");
+    }
 }
 
 pub(crate) fn run_sync(arguments: &SyncArguments) -> ExitCode {
@@ -393,6 +550,9 @@ pub(crate) fn run_sync(arguments: &SyncArguments) -> ExitCode {
                 remote: &arguments.remote,
                 branch,
             });
+        }
+        if arguments.folder.is_none() && arguments.server.is_none() {
+            return sync_with_context(&store);
         }
         match (&arguments.folder, &arguments.server) {
             (Some(folder), _) => store.sync(Peer::Folder(folder)),
@@ -475,7 +635,7 @@ fn printable(text: &str) -> String {
 
 fn append(target: &Target, writer: &Writer, change: Change) -> ExitCode {
     let outcome = ProcessStore::locate(&target.root, None)
-        .and_then(|store| store.append(&writer.author(), change));
+        .and_then(|store| store.append(&writer.author(&store)?, change));
     finish(target.json, outcome, print_appended)
 }
 

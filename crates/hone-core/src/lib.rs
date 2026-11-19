@@ -14,6 +14,7 @@ mod check;
 mod client;
 mod complete;
 mod condense;
+mod contexts;
 mod directory;
 mod error;
 mod event;
@@ -48,6 +49,7 @@ pub use check::{
     check_edit, content_hash,
 };
 pub use client::Server;
+pub use contexts::{BoundContext, Context, ContextPeer, Contexts};
 pub use error::{Category, Location, Origin, Problem, ResolveError};
 pub use finding::{Code, Finding, Level};
 pub use hosted::{AppendError, Appender, HostedStore, Rejection};
