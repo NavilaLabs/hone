@@ -147,6 +147,14 @@ hone export --to ~/archive/payments      # every device's log, in the layout of 
 hone forget --confirm prj-8m2k4d7q       # removes the local store and the context binding
 ```
 
+A ticket starts with its attributes; `select` picks the profile, and the record, the frozen configuration, and the event `ticket.started` are written together:
+
+```sh
+hone ticket start --attribute risk=high --attribute size=3 --external github:8798
+hone ticket set-attributes --ticket tk-9f2x4a8m --attribute risk=low
+hone ticket switch-config --ticket tk-9f2x4a8m     # move to the current rules
+```
+
 The export directory must be new or empty; `hone sync --folder` imports it again. `hone forget` takes the project ID once more, because nothing it removes comes back, and leaves the copies in a shared folder or on a server alone.
 
 ## MCP server

@@ -132,6 +132,16 @@ Decisions taken without the maintainer, during an autonomous run on the branch `
 
 94. **Open: the contract of `resolve` and `public_api`.** `spec/plugins.md` names the entry points `resolve(anchor)` and `public_api(path)` of a language plugin, but neither `schemas/plugin.schema.json` nor the concept gives their input and output, how the host picks the language plugin for a file (by extension, by configuration), or which gate calls them. Today `module-anchors-resolve` and `public-api-has-decision` resolve Rust inside the gate itself. A plugin for another language could be built now only by copying such a gate per language, which would settle the design that the entry points are meant to answer, so it is not built in this run. For the maintainer: (a, recommended) a language plugin exports `resolve` and `public_api` with shapes in `plugin.schema.json`, the configuration maps file extensions to language plugins, and the two gates call the mapped plugin for files that are not theirs; (b) one gate per language with the codes of `module-anchors-resolve`, and the entry points are dropped from the specification; (c) the gates stay Rust-only until a team asks for another language. The maintainer chose (a); the contract is designed as a step of its own before any plugin for another language is built.
 
+## The commands of a ticket (concept Question 45, build-time rules)
+
+The decisions of Question 45 were taken with the maintainer; these rules came up while building and are reported for confirmation.
+
+95. **The record's shape.** `id`, `type`, `project`, `profile`, `config` in this order, then `attributes` as one flow map and `external` as a list of flow maps, every string double-quoted, so the record stays in the strict YAML profile whatever a value holds. The record is checked like any artifact (`schema-valid` rules) before it is written.
+96. **Rewriting a record.** `set-attributes` and `switch-config` remove the top-level key and the lines that continue it, and append the new `key: value` at the end, so every other byte (comments too) stays. An empty attribute set removes `attributes`. A record with carriage returns is refused.
+97. **Order and rollback.** Every command checks everything first, then writes the snapshot (if new), the record, and the event; if the event cannot be written, the record (and a snapshot it created) is removed or gets its old bytes back. Files below the project root are created through directory handles that follow no symbolic link (`below.rs`, as condensing does since item 45).
+98. **A switch without change is refused**: `the ticket <tk> already uses the current configuration`, so the log gets no empty `ticket.config_changed`.
+99. **Values and IDs.** `--attribute` integers are 64-bit; `--external` splits at the first `:` and the first `=`, so a URL may contain both. A new ticket ID is rolled again while its record path exists (item 73). The MCP tool `ticket_start` takes the attributes as typed JSON and uses the server's packages directory.
+
 ## GUI (maintainer request)
 
 Tool decisions taken for the maintainer's request to rebrand the GUI, replace free text by selection, add a ticket tracker, and show a ticket's progress. None changes `schemas/`, `spec/`, or `.hone/config.yaml`.
