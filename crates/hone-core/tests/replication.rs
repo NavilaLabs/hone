@@ -515,3 +515,248 @@ mod links {
         assert!(report.received.is_empty());
     }
 }
+
+#[cfg(unix)]
+mod permissions {
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::*;
+
+    const PLANTED: &str = "dev-5p8r2w6n";
+
+    // Restores the permissions of `path` on drop, so that the scratch directory stays removable.
+    struct Locked {
+        path: PathBuf,
+        mode: u32,
+    }
+
+    impl Locked {
+        // `None` when the lock has no effect, as for root, which reads everything.
+        fn new(path: &Path, mode: u32) -> Option<Self> {
+            let original = std::fs::metadata(path)
+                .expect("present")
+                .permissions()
+                .mode();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+                .expect("lockable");
+            let locked = Self {
+                path: path.to_path_buf(),
+                mode: original,
+            };
+            let readable = mode & 0o444 != 0;
+            let effective = match (path.is_dir(), readable) {
+                (true, false) => std::fs::read_dir(path).is_err(),
+                (true, true) => std::fs::File::create(path.join("probe")).is_err(),
+                (false, false) => std::fs::File::open(path).is_err(),
+                (false, true) => std::fs::File::options().append(true).open(path).is_err(),
+            };
+            effective.then_some(locked)
+        }
+    }
+
+    impl Drop for Locked {
+        fn drop(&mut self) {
+            let _ =
+                std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(self.mode));
+        }
+    }
+
+    fn exchange(name: &str) -> Scratch {
+        let case = schemas().join("tests/sync/exchange");
+        let scratch = Scratch::new(name);
+        copy_directory(&case.join("local"), &scratch.local_store());
+        copy_directory(&case.join("folder"), &scratch.folder());
+        scratch
+    }
+
+    fn log_of(scratch: &Scratch, device: &str) -> PathBuf {
+        scratch
+            .folder()
+            .join("local")
+            .join(PROJECT)
+            .join("log")
+            .join(device)
+    }
+
+    fn problems(report: &SyncReport) -> Vec<(SyncCode, String)> {
+        report
+            .problems
+            .iter()
+            .map(|problem| (problem.code, problem.path.clone()))
+            .collect()
+    }
+
+    fn assert_exchanged(report: &SyncReport) {
+        assert_eq!(
+            serde_json::to_value(&report.received).expect("JSON"),
+            json!({ "dev-7q2m8x4c": 3 }),
+            "{report:?}"
+        );
+        assert_eq!(
+            serde_json::to_value(&report.sent).expect("JSON"),
+            json!({ "dev-3k9a5h2t": 2 }),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_segment_is_skipped_and_the_rest_synced() {
+        let scratch = exchange("unreadable-segment");
+        let planted = log_of(&scratch, PLANTED);
+        std::fs::create_dir_all(&planted).expect("creatable");
+        std::fs::copy(
+            log_of(&scratch, "dev-7q2m8x4c").join("1.ndjson"),
+            planted.join("1.ndjson"),
+        )
+        .expect("copyable");
+        let Some(_lock) = Locked::new(&planted.join("1.ndjson"), 0o000) else {
+            return;
+        };
+
+        let report = scratch
+            .store()
+            .sync(Peer::Folder(&scratch.folder()))
+            .expect("syncs");
+        assert_eq!(
+            problems(&report),
+            [(
+                SyncCode::PermissionDenied,
+                planted.join("1.ndjson").display().to_string()
+            )]
+        );
+        assert_exchanged(&report);
+    }
+
+    #[test]
+    fn an_unreadable_device_directory_is_skipped_and_the_rest_synced() {
+        let scratch = exchange("unreadable-device");
+        let planted = log_of(&scratch, PLANTED);
+        std::fs::create_dir_all(&planted).expect("creatable");
+        let Some(_lock) = Locked::new(&planted, 0o000) else {
+            return;
+        };
+
+        let report = scratch
+            .store()
+            .sync(Peer::Folder(&scratch.folder()))
+            .expect("syncs");
+        assert_eq!(
+            problems(&report),
+            [(SyncCode::PermissionDenied, planted.display().to_string())]
+        );
+        assert_exchanged(&report);
+    }
+
+    #[test]
+    fn an_unwritable_own_directory_is_reported_and_the_rest_pulled() {
+        let scratch = exchange("unwritable-own");
+        let own = log_of(&scratch, "dev-3k9a5h2t");
+        std::fs::create_dir_all(&own).expect("creatable");
+        let Some(_lock) = Locked::new(&own, 0o555) else {
+            return;
+        };
+
+        let report = scratch
+            .store()
+            .sync(Peer::Folder(&scratch.folder()))
+            .expect("syncs");
+        assert_eq!(
+            problems(&report),
+            [(
+                SyncCode::PermissionDenied,
+                own.join("1.ndjson").display().to_string()
+            )]
+        );
+        assert!(report.sent.is_empty(), "{report:?}");
+        assert_eq!(
+            serde_json::to_value(&report.received).expect("JSON"),
+            json!({ "dev-7q2m8x4c": 3 })
+        );
+    }
+
+    #[test]
+    fn a_read_only_own_segment_is_reported_and_the_rest_pulled() {
+        let scratch = exchange("read-only-own-segment");
+        let own = log_of(&scratch, "dev-3k9a5h2t");
+        std::fs::create_dir_all(&own).expect("creatable");
+        let local = scratch.local_store().join("log/dev-3k9a5h2t/1.ndjson");
+        let first_line = std::fs::read_to_string(local)
+            .expect("readable")
+            .lines()
+            .next()
+            .map(|line| format!("{line}\n"))
+            .expect("a line");
+        std::fs::write(own.join("1.ndjson"), &first_line).expect("writable");
+        let Some(_lock) = Locked::new(&own.join("1.ndjson"), 0o444) else {
+            return;
+        };
+
+        let report = scratch
+            .store()
+            .sync(Peer::Folder(&scratch.folder()))
+            .expect("syncs");
+        assert_eq!(
+            problems(&report),
+            [(
+                SyncCode::PermissionDenied,
+                own.join("1.ndjson").display().to_string()
+            )]
+        );
+        assert!(report.sent.is_empty(), "{report:?}");
+        assert_eq!(
+            std::fs::read_to_string(own.join("1.ndjson")).expect("readable"),
+            first_line
+        );
+        assert_eq!(
+            serde_json::to_value(&report.received).expect("JSON"),
+            json!({ "dev-7q2m8x4c": 3 })
+        );
+    }
+
+    #[test]
+    fn a_read_only_workspace_directory_is_reported_on_push() {
+        let case = schemas().join("tests/sync/exchange");
+        let scratch = Scratch::new("read-only-workspace");
+        copy_directory(&case.join("local"), &scratch.local_store());
+        let workspace = scratch.folder().join("local");
+        std::fs::create_dir_all(&workspace).expect("creatable");
+        let Some(_lock) = Locked::new(&workspace, 0o555) else {
+            return;
+        };
+
+        let report = scratch
+            .store()
+            .sync(Peer::Folder(&scratch.folder()))
+            .expect("syncs");
+        assert_eq!(
+            problems(&report),
+            [(
+                SyncCode::PermissionDenied,
+                workspace.join(PROJECT).display().to_string()
+            )]
+        );
+        assert!(report.sent.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn an_unexaminable_workspace_directory_is_reported() {
+        let scratch = exchange("unexaminable-workspace");
+        let workspace = scratch.folder().join("local");
+        let Some(_lock) = Locked::new(&workspace, 0o000) else {
+            return;
+        };
+
+        let report = scratch
+            .store()
+            .sync(Peer::Folder(&scratch.folder()))
+            .expect("syncs");
+        assert_eq!(
+            problems(&report),
+            [(
+                SyncCode::PermissionDenied,
+                workspace.join(PROJECT).display().to_string()
+            )]
+        );
+        assert!(report.received.is_empty() && report.sent.is_empty());
+    }
+}
