@@ -2,7 +2,7 @@
 
 Status: draft, built chapter by chapter from the protocol concept (`docs/protocol-concept.md`). Nothing is stable before version 1.
 
-The concept explains why; this specification states what an implementation must do. Where a chapter exists here, it is normative and the concept section points to it; where the two disagree, this specification wins and the disagreement is a bug in the concept. Areas without a chapter yet are specified by the concept.
+The concept explains why; this specification states what an implementation must do. Where a chapter exists here, it is normative and the concept section points to it; where the two disagree, this specification wins and the disagreement is a bug in the concept. Every area of the protocol has a chapter; the concept keeps the reasons and the tool layer.
 
 ## Conventions
 
@@ -22,16 +22,16 @@ An implementation claims one level and proves it with the test cases of that lev
 
 ## Chapters
 
-| Chapter                           | Content                                                          | State             |
-| --------------------------------- | ---------------------------------------------------------------- | ----------------- |
-| [Conformance](conformance.md)     | Levels, the test suites, and the format of every test case       | Written           |
-| [Artifacts](artifacts.md)         | Format, YAML profile, content hash, IDs, links, lifecycle        | Written           |
-| [Configuration](configuration.md) | The resolved configuration, layers, packages, snapshots          | Written           |
-| [Gates](gates.md)                 | Steps, profiles, the standard gates and their codes              | Written           |
-| Plugins                           | The plugin contract, capabilities, and trust                     | Concept Section 9 |
-| [Process store](process-store.md) | Logs, segments, events, the reading rules, the order, the cursor | Written           |
-| [Replication](replication.md)     | `read`, `append`, `sync`, the shared folder, the HTTP transport  | Written           |
-| [Review](review.md)               | Approvals, threads, and condensation                             | Written           |
+| Chapter                           | Content                                                          | State   |
+| --------------------------------- | ---------------------------------------------------------------- | ------- |
+| [Conformance](conformance.md)     | Levels, the test suites, and the format of every test case       | Written |
+| [Artifacts](artifacts.md)         | Format, YAML profile, content hash, IDs, links, lifecycle        | Written |
+| [Configuration](configuration.md) | The resolved configuration, layers, packages, snapshots          | Written |
+| [Gates](gates.md)                 | Steps, profiles, the standard gates and their codes              | Written |
+| [Plugins](plugins.md)             | The plugin contract, capabilities, and trust                     | Written |
+| [Process store](process-store.md) | Logs, segments, events, the reading rules, the order, the cursor | Written |
+| [Replication](replication.md)     | `read`, `append`, `sync`, the shared folder, the HTTP transport  | Written |
+| [Review](review.md)               | Approvals, threads, and condensation                             | Written |
 
 ## License
 

@@ -1,6 +1,6 @@
 # Configuration
 
-Level: Core for reading the resolved configuration; Extended for resolution from layers and packages and for frozen snapshots ([README](README.md#conformance-levels)). Schema: `schemas/config.schema.json`. Test cases: `schemas/tests/config/` and `schemas/tests/resolve/` ([conformance](conformance.md#resolution)). Steps, profiles, and gates: [gates](gates.md). Plugins: concept Section 9.
+Level: Core for reading the resolved configuration; Extended for resolution from layers and packages and for frozen snapshots ([README](README.md#conformance-levels)). Schema: `schemas/config.schema.json`. Test cases: `schemas/tests/config/` and `schemas/tests/resolve/` ([conformance](conformance.md#resolution)). Steps, profiles, and gates: [gates](gates.md). Plugins: [plugins](plugins.md).
 
 ## The resolved configuration
 

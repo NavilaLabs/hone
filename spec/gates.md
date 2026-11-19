@@ -1,6 +1,6 @@
 # Steps, gates, and profiles
 
-Level: Core for findings, the directory gates, and the gates over artifacts; Flow for steps, profiles, and the gates that read the process store ([README](README.md#conformance-levels)). Schema: `schemas/config.schema.json` (`steps`, `profiles`). Test cases: `schemas/tests/check/` ([conformance](conformance.md#gates)). Artifacts and their status: [artifacts](artifacts.md). Plugin gates and `exec`: concept Section 9.
+Level: Core for findings, the directory gates, and the gates over artifacts; Flow for steps, profiles, and the gates that read the process store ([README](README.md#conformance-levels)). Schema: `schemas/config.schema.json` (`steps`, `profiles`). Test cases: `schemas/tests/check/` ([conformance](conformance.md#gates)). Artifacts and their status: [artifacts](artifacts.md). Plugin gates and `exec`: [plugins](plugins.md).
 
 ## Steps
 
