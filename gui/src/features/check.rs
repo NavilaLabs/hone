@@ -1,11 +1,11 @@
 use dioxus::prelude::*;
 
-use super::Session;
 use super::common::{Empty, FailureAlert, Field, Mark, PageHeader, SectionLabel, StatusMark};
-use crate::hone::{CheckRun as Run, Failure, Gate};
+use super::{LastCheck, Project, Session};
+use crate::hone::{CheckRun as Run, Gate, GateScope};
 use crate::ui::{
-    Button, Input, Skeleton, Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-    TableWrapper,
+    Button, Choice, Combobox, Skeleton, Table, TableBody, TableCell, TableHead, TableHeader,
+    TableRow, TableWrapper,
 };
 
 /// The gates of a run, failed first, each group in the order of the run.
@@ -43,16 +43,20 @@ fn class(gate: &Gate) -> &'static str {
 #[component]
 pub(crate) fn CheckRun() -> Element {
     let session = use_context::<Session>();
+    let project = use_context::<Project>();
     let mut ticket = use_signal(|| (session.ticket)().unwrap_or_default());
-    let mut outcome = use_signal(|| None::<Result<Run, Failure>>);
+    let mut last = session.last_check;
+    let mut duration = use_signal(|| None::<std::time::Duration>);
     let mut running = use_signal(|| false);
     let mut run = move || {
         running.set(true);
         spawn(async move {
             let hone = (session.hone)();
-            let ticket = ticket();
-            let ticket = Some(ticket.trim()).filter(|ticket| !ticket.is_empty());
-            outcome.set(Some(hone.check(ticket).await));
+            let ticket = Some(ticket().trim().to_owned()).filter(|ticket| !ticket.is_empty());
+            let started = std::time::Instant::now();
+            let outcome = hone.check(ticket.as_deref(), GateScope::All).await;
+            duration.set(Some(started.elapsed()));
+            last.set(Some(LastCheck { ticket, outcome }));
             running.set(false);
         });
     };
@@ -69,8 +73,16 @@ pub(crate) fn CheckRun() -> Element {
             },
         }
         div { class: "flex flex-wrap items-end gap-4",
-            Field { label: "Ticket (optional, without it only the directory gates run)",
-                Input { class: "font-mono w-72", value: ticket(), placeholder: "tk-9f2x4a8m", oninput: move |value| ticket.set(value) }
+            Field { label: "Ticket (without one, only the directory gates run)",
+                div { class: "w-96",
+                    Combobox {
+                        value: ticket(),
+                        choices: std::iter::once(Choice::plain("").label("no ticket: directory gates only")).chain(project.ticket_choices()).collect::<Vec<_>>(),
+                        placeholder: "no ticket: directory gates only",
+                        label: "Ticket",
+                        onselect: move |value: String| ticket.set(value),
+                    }
+                }
             }
         }
         pre { class: "m-0 bg-surface border border-line p-4 font-mono text-[13px] overflow-x-auto",
@@ -80,25 +92,35 @@ pub(crate) fn CheckRun() -> Element {
         if running() {
             Skeleton { class: "h-24 w-full" }
         } else {
-            match outcome() {
-                None => rsx! { Empty { text: "No run yet. Run hone check to see the gates." } },
-                Some(Err(failure)) => rsx! { FailureAlert { failure } },
-                Some(Ok(run)) => rsx! { RunResult { run } },
+            match last() {
+                None => rsx! { Empty { text: "No run yet. Run hone check to see every gate, exec gates included." } },
+                Some(LastCheck { outcome: Err(failure), .. }) => rsx! { FailureAlert { failure } },
+                Some(LastCheck { ticket: ran_for, outcome: Ok(run) }) => rsx! {
+                    if ran_for.as_deref().unwrap_or_default() != ticket().trim() {
+                        p { class: "m-0 text-[13px] text-ink-muted",
+                            {format!("Showing the last run, for {}. Run again for the chosen ticket.", ran_for.as_deref().unwrap_or("no ticket"))}
+                        }
+                    }
+                    RunResult { run, duration: duration() }
+                },
             }
         }
     }
 }
 
 #[component]
-fn RunResult(run: Run) -> Element {
+fn RunResult(run: Run, duration: Option<std::time::Duration>) -> Element {
     let failed = run.gates.iter().filter(|gate| !gate.ok).count();
     let passed = run.gates.len() - failed;
     let exit = i32::from(failed > 0);
     rsx! {
-        div { class: "grid grid-cols-3 border border-line",
-            Stat { label: "Exit", value: exit.to_string(), bad: exit == 1 }
+        div { class: "grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] border border-line",
+            Stat { label: "Exit", value: exit.to_string(), bad: exit == 1, note: if exit == 1 { "a gate failed" } else { "every gate passed" } }
             Stat { label: "Passed", value: passed.to_string(), bad: false }
-            Stat { label: "Failed", value: failed.to_string(), bad: false }
+            Stat { label: "Failed", value: failed.to_string(), bad: false, alarm: failed > 0 }
+            if let Some(duration) = duration {
+                Stat { label: "Duration", value: format!("{:.1}", duration.as_secs_f64()), unit: "s", bad: false }
+            }
         }
         section {
             SectionLabel { label: "Gates", aside: format!("{} gates", run.gates.len()) }
@@ -148,11 +170,26 @@ fn RunResult(run: Run) -> Element {
 }
 
 #[component]
-fn Stat(label: String, value: String, bad: bool) -> Element {
+fn Stat(
+    label: String,
+    value: String,
+    bad: bool,
+    #[props(optional)] alarm: bool,
+    #[props(into, optional)] unit: Option<String>,
+    #[props(into, optional)] note: Option<String>,
+) -> Element {
     rsx! {
         div { class: if bad { "p-5 flex flex-col gap-2 bg-bad text-bg border-r border-line" } else { "p-5 flex flex-col gap-2 border-r border-line" },
             span { class: "font-mono text-[11px] tracking-[0.08em] uppercase", "{label}" }
-            span { class: "font-mono text-[40px] leading-10 font-bold", "{value}" }
+            span { class: if alarm { "font-mono text-[40px] leading-10 font-bold text-bad" } else { "font-mono text-[40px] leading-10 font-bold" },
+                "{value}"
+                if let Some(unit) = unit {
+                    span { class: "text-[16px] font-medium opacity-70", "{unit}" }
+                }
+            }
+            if let Some(note) = note {
+                span { class: "text-[13px] font-medium", "{note}" }
+            }
         }
     }
 }

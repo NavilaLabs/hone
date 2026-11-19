@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use hone_gui::hone::{Anchor, Hone, Peer, StepStatus, Write, Writer};
+use hone_gui::hone::{Anchor, GateScope, Hone, Peer, StepStatus, Write, Writer};
 
 const TICKET: &str = "tk-9f2x4a8m";
 const THREAD: &str = "th-0193a8f0-9b2c-7e4d-a1f3-000000000001";
@@ -179,7 +179,11 @@ async fn writing_appends_and_rejects_with_the_reason() {
 #[tokio::test]
 async fn a_failed_gate_is_a_result() {
     let scratch = Scratch::new("check").with_store();
-    let run = scratch.hone().check(Some(TICKET)).await.expect("ran");
+    let run = scratch
+        .hone()
+        .check(Some(TICKET), GateScope::All)
+        .await
+        .expect("ran");
     assert_eq!(run.status, "failed");
     let failed: Vec<_> = run.gates.iter().filter(|gate| !gate.ok).collect();
     assert_eq!(failed.len(), 1);
@@ -189,7 +193,10 @@ async fn a_failed_gate_is_a_result() {
     assert_eq!(failed[0].findings[0].level, "error");
 
     let elsewhere = Hone::with_binary(binary(), scratch.root.join("nowhere"));
-    let failure = elsewhere.check(None).await.expect_err("could not run");
+    let failure = elsewhere
+        .check(None, GateScope::All)
+        .await
+        .expect_err("could not run");
     assert_eq!(failure.status, "error");
 }
 

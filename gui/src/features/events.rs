@@ -1,26 +1,59 @@
 use dioxus::prelude::*;
 
 use super::Session;
-use super::common::{Empty, FailureAlert, Field, Loading, PageHeader, SectionLabel};
+use super::common::{Empty, FailureAlert, Field, Loading, PageHeader, SectionLabel, event_time};
 use crate::hone::{Event, InvalidEvent};
 use crate::ui::{
-    Button, ButtonSize, ButtonVariant, Card, CardContent, CardHeader, CardTitle, Input, Table,
-    TableBody, TableCell, TableHead, TableHeader, TableRow, TableWrapper,
+    Button, ButtonSize, ButtonVariant, Card, CardContent, CardHeader, CardTitle, Choice, Combobox,
+    Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableWrapper,
 };
 
-/// The events whose type and ticket contain the filters, ignoring case.
+/// The events whose type and ticket equal the filters; an empty filter lets every event through.
 fn filtered<'a>(events: &'a [Event], kind: &str, ticket: &str) -> Vec<&'a Event> {
-    let kind = kind.trim().to_lowercase();
-    let ticket = ticket.trim().to_lowercase();
     events
         .iter()
-        .filter(|event| event.kind.to_lowercase().contains(&kind))
-        .filter(|event| {
-            ticket.is_empty()
-                || event
-                    .ticket
-                    .as_deref()
-                    .is_some_and(|value| value.to_lowercase().contains(&ticket))
+        .filter(|event| kind.is_empty() || event.kind == kind)
+        .filter(|event| ticket.is_empty() || event.ticket.as_deref() == Some(ticket))
+        .collect()
+}
+
+/// The choices of the two filters: every type and every ticket of `events`, each after an empty
+/// choice that clears the filter.
+fn filter_choices(events: &[Event]) -> (Vec<Choice>, Vec<Choice>) {
+    let mut types: Vec<String> = events.iter().map(|event| event.kind.clone()).collect();
+    let mut tickets: Vec<String> = events
+        .iter()
+        .filter_map(|event| event.ticket.clone())
+        .collect();
+    for values in [&mut types, &mut tickets] {
+        values.sort();
+        values.dedup();
+    }
+    let with_all = |values: Vec<String>, all: &str| {
+        std::iter::once(Choice::plain("").label(all))
+            .chain(values.into_iter().map(Choice::plain))
+            .collect()
+    };
+    (
+        with_all(types, "every type"),
+        with_all(tickets, "every ticket"),
+    )
+}
+
+/// The lines of pretty JSON, each split after its key (`"name":`), so that keys can be muted.
+/// A line without a key has an empty first part.
+fn json_lines(json: &str) -> Vec<(String, String)> {
+    json.lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with('"')
+                && let Some(end) = trimmed.find("\": ")
+            {
+                let split = line.len() - trimmed.len() + end + 2;
+                (line[..split].to_owned(), line[split..].to_owned())
+            } else {
+                (String::new(), line.to_owned())
+            }
         })
         .collect()
 }
@@ -46,6 +79,10 @@ pub(crate) fn EventLog() -> Element {
         let hone = (session.hone)();
         hone.log().await
     });
+    let (type_choices, ticket_choices) = match &*log.read() {
+        Some(Ok(log)) => filter_choices(&log.events),
+        _ => (Vec::new(), Vec::new()),
+    };
     let mut kind = use_signal(String::new);
     let mut ticket = use_signal(String::new);
     let mut selected = use_signal(|| None::<String>);
@@ -53,10 +90,26 @@ pub(crate) fn EventLog() -> Element {
         PageHeader { context: "process store", title: "Event log" }
         div { class: "flex flex-wrap gap-4",
             Field { label: "Type",
-                Input { class: "font-mono w-56", value: kind(), placeholder: "thread.", oninput: move |value| kind.set(value) }
+                div { class: "w-56",
+                    Combobox {
+                        value: kind(),
+                        choices: type_choices,
+                        placeholder: "every type",
+                        label: "Type",
+                        onselect: move |value: String| kind.set(value),
+                    }
+                }
             }
             Field { label: "Ticket",
-                Input { class: "font-mono w-56", value: ticket(), placeholder: "tk-", oninput: move |value| ticket.set(value) }
+                div { class: "w-56",
+                    Combobox {
+                        value: ticket(),
+                        choices: ticket_choices,
+                        placeholder: "every ticket",
+                        label: "Ticket",
+                        onselect: move |value: String| ticket.set(value),
+                    }
+                }
             }
         }
         match &*log.read() {
@@ -69,12 +122,12 @@ pub(crate) fn EventLog() -> Element {
                 let shown: Vec<Event> = filtered(&log.events, &kind(), &ticket()).into_iter().cloned().collect();
                 let detail = selected().and_then(|id| log.events.iter().find(|event| event.id == id).cloned());
                 rsx! {
-                    div { class: "grid grid-cols-[minmax(0,1fr)_minmax(280px,420px)] gap-6 items-start",
+                    div { class: "grid grid-cols-[minmax(0,1fr)_minmax(280px,360px)] gap-6 items-start",
                         TableWrapper {
                             Table { class: "font-mono text-[12.5px]",
                                 TableHeader { class: "bg-surface font-sans",
                                     TableRow {
-                                        TableHead { "Device · seq" }
+                                        TableHead { "Time (UTC)" }
                                         TableHead { "Type" }
                                         TableHead { "Author" }
                                         TableHead { "Payload" }
@@ -88,12 +141,15 @@ pub(crate) fn EventLog() -> Element {
                                                 let id = event.id.clone();
                                                 move |_| selected.set(Some(id.clone()))
                                             },
-                                            TableCell { class: "py-3 whitespace-nowrap", "{event.device} · {event.seq}" }
+                                            TableCell { class: "py-3 whitespace-nowrap",
+                                                span { class: "block", {event_time(&event.id).unwrap_or_else(|| "—".to_owned())} }
+                                                span { class: if selected().as_deref() == Some(event.id.as_str()) { "block" } else { "block text-ink-muted" }, "{event.device} · {event.seq}" }
+                                            }
                                             TableCell { class: "py-3", "{event.kind}" }
                                             TableCell { class: "py-3",
                                                 {event.author.as_ref().map(|author| author.name.clone()).unwrap_or_default()}
                                             }
-                                            TableCell { class: "py-3 max-w-[320px] truncate", {summary(&event)} }
+                                            TableCell { class: "py-3 max-w-[220px] truncate", {summary(&event)} }
                                         }
                                     }
                                 }
@@ -132,7 +188,13 @@ fn EventDetail(event: Event) -> Element {
                 }
             }
             CardContent { class: "p-4",
-                pre { class: "m-0 font-mono text-[12.5px] leading-[1.7] whitespace-pre-wrap break-all", "{json}" }
+                pre { class: "m-0 font-mono text-[12.5px] leading-[1.7] whitespace-pre-wrap break-all",
+                    for (key , rest) in json_lines(&json) {
+                        span { class: "text-ink-muted", "{key}" }
+                        span { class: if key.trim() == "\"type\":" { "text-signal" } else { "" }, "{rest}" }
+                        "\n"
+                    }
+                }
             }
         }
     }
@@ -186,7 +248,7 @@ mod tests {
     }
 
     #[test]
-    fn filters_match_parts_of_type_and_ticket_ignoring_case() {
+    fn filters_match_type_and_ticket_exactly() {
         let events = [
             event("thread.opened", Some("tk-9f2x4a8m"), json!({})),
             event("step.changed", Some("tk-9f2x4a8m"), json!({})),
@@ -199,11 +261,27 @@ mod tests {
                 .map(|event| event.kind.clone())
                 .collect()
         };
-        assert_eq!(kinds("THREAD", ""), ["thread.opened", "thread.message"]);
-        assert_eq!(kinds("", "9F2X"), ["thread.opened", "step.changed"]);
+        assert_eq!(kinds("thread.opened", ""), ["thread.opened"]);
+        assert_eq!(kinds("", "tk-9f2x4a8m"), ["thread.opened", "step.changed"]);
+        assert_eq!(kinds("step.changed", "tk-2b7n5k1q"), Vec::<String>::new());
         assert_eq!(
             kinds("", ""),
             ["thread.opened", "step.changed", "thread.message", "x-note"]
+        );
+    }
+
+    #[test]
+    fn json_lines_split_after_the_key() {
+        assert_eq!(
+            json_lines("{\n  \"type\": \"step.changed\",\n  \"after\": [\n    \"ev-1\"\n  ]\n}"),
+            [
+                (String::new(), "{".to_owned()),
+                ("  \"type\":".to_owned(), " \"step.changed\",".to_owned()),
+                ("  \"after\":".to_owned(), " [".to_owned()),
+                (String::new(), "    \"ev-1\"".to_owned()),
+                (String::new(), "  ]".to_owned()),
+                (String::new(), "}".to_owned()),
+            ]
         );
     }
 

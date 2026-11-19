@@ -4,6 +4,7 @@
 mod app;
 mod features;
 pub mod hone;
+mod tracker;
 mod ui;
 
 /// Opens the window for the project in `root` and runs until it is closed.

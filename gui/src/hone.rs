@@ -220,6 +220,106 @@ pub struct Appended {
     pub thread: Option<String>,
 }
 
+/// The result of `hone artifacts`: the artifacts of the checked directory.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Catalog {
+    /// The project ID.
+    pub project: String,
+    /// Every readable artifact, ticket records included, sorted by path.
+    pub artifacts: Vec<CatalogEntry>,
+    /// Files that match an artifact pattern but cannot be read.
+    pub unreadable: Vec<UnreadableFile>,
+}
+
+impl Catalog {
+    /// The ticket records.
+    pub fn tickets(&self) -> impl Iterator<Item = &CatalogEntry> {
+        self.artifacts.iter().filter(|entry| entry.kind == "ticket")
+    }
+}
+
+/// An artifact of a [`Catalog`].
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct CatalogEntry {
+    pub id: Option<String>,
+    /// The kind, or `ticket` for a ticket record.
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub path: String,
+    pub ticket: Option<String>,
+    pub title: Option<String>,
+    /// The declared status.
+    pub status: Option<String>,
+    /// The effective status: the declared one, or `superseded`.
+    pub effective: Option<String>,
+    /// A ticket record's profile.
+    pub profile: Option<String>,
+    /// A ticket record's external tickets.
+    #[serde(default)]
+    pub external: Vec<ExternalTicket>,
+}
+
+/// A file that matches an artifact pattern but cannot be read.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct UnreadableFile {
+    pub path: String,
+    pub message: String,
+}
+
+/// An entry of a ticket record's `external`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ExternalTicket {
+    /// The tracker, for example `jira` or `github`.
+    pub system: String,
+    pub key: String,
+    pub url: Option<String>,
+}
+
+/// The result of `hone ticket show`: a ticket with the steps of its profile.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TicketOverview {
+    pub ticket: String,
+    pub path: String,
+    pub profile: String,
+    /// The hash of the ticket's snapshot.
+    pub config: String,
+    pub attributes: serde_json::Map<String, Value>,
+    pub external: Vec<ExternalTicket>,
+    /// The roles of the ticket's snapshot.
+    pub roles: Vec<String>,
+    /// The profile's steps, each after the steps in its `after`.
+    pub steps: Vec<ProfileStep>,
+}
+
+/// A step of a ticket's profile.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ProfileStep {
+    pub step: String,
+    pub title: Option<String>,
+    /// `required` or `optional`.
+    pub requirement: String,
+    /// The steps of the profile that come before it.
+    pub after: Vec<String>,
+}
+
+/// The author a context writes as, from `hone context show`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextAuthor {
+    /// The context's name.
+    pub context: String,
+    /// The author, if the context has one.
+    pub author: Option<Author>,
+}
+
+/// Which gates a check runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateScope {
+    /// Every gate.
+    All,
+    /// Only pure gates: no `exec` gate runs a command.
+    Pure,
+}
+
 /// A running `hone serve`. Dropping it stops the server.
 #[derive(Debug)]
 pub struct ServerProcess {
@@ -299,17 +399,54 @@ impl Hone {
         })
     }
 
-    /// `hone check [--ticket <ticket>]`. A failed gate is a result, not a failure.
+    /// `hone check [--ticket <ticket>] [--class pure]`. A failed gate is a result, not a failure.
     ///
     /// # Errors
     ///
     /// Returns a [`Failure`] when the check could not run (exit code 2).
-    pub async fn check(&self, ticket: Option<&str>) -> Result<CheckRun, Failure> {
-        let mut arguments = vec!["check"];
-        if let Some(ticket) = ticket {
-            arguments.extend(["--ticket", ticket]);
+    pub async fn check(&self, ticket: Option<&str>, scope: GateScope) -> Result<CheckRun, Failure> {
+        self.run(&check_arguments(ticket, scope), &[0, 1]).await
+    }
+
+    /// `hone artifacts`: the artifacts of the checked directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`] `error` when the configuration cannot be read.
+    pub async fn artifacts(&self) -> Result<Catalog, Failure> {
+        self.run(&["artifacts"], &[0]).await
+    }
+
+    /// `hone ticket show --ticket <ticket>`: the ticket with the steps of its profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`] `error` when the ticket record or its snapshot cannot be read.
+    pub async fn ticket(&self, ticket: &str) -> Result<TicketOverview, Failure> {
+        self.run(&["ticket", "show", "--ticket", ticket], &[0])
+            .await
+    }
+
+    /// `hone context show`: the context the project is bound to and its author.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`], `invalid` when the project is bound to no context.
+    pub async fn context(&self) -> Result<ContextAuthor, Failure> {
+        #[derive(Deserialize)]
+        struct Bound {
+            name: String,
+            context: Fields,
         }
-        self.run(&arguments, &[0, 1]).await
+        #[derive(Deserialize)]
+        struct Fields {
+            author: Option<Author>,
+        }
+        let bound: Bound = self.run(&["context", "show"], &[0]).await?;
+        Ok(ContextAuthor {
+            context: bound.name,
+            author: bound.context.author,
+        })
     }
 
     /// `hone sync`. Problems are a result, not a failure.
@@ -467,6 +604,17 @@ fn binary() -> PathBuf {
         .unwrap_or_else(|| name.into())
 }
 
+fn check_arguments(ticket: Option<&str>, scope: GateScope) -> Vec<&str> {
+    let mut arguments = vec!["check"];
+    if let Some(ticket) = ticket {
+        arguments.extend(["--ticket", ticket]);
+    }
+    if scope == GateScope::Pure {
+        arguments.extend(["--class", "pure"]);
+    }
+    arguments
+}
+
 fn write_arguments(write: &Write) -> Vec<String> {
     let owned = |parts: &[&str]| {
         parts
@@ -555,4 +703,18 @@ fn event(raw: Value) -> Result<Event, Failure> {
         payload: fields.payload,
         raw,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pure_check_asks_for_the_pure_class_only() {
+        assert_eq!(
+            check_arguments(Some("tk-9f2x4a8m"), GateScope::Pure),
+            ["check", "--ticket", "tk-9f2x4a8m", "--class", "pure"]
+        );
+        assert_eq!(check_arguments(None, GateScope::All), ["check"]);
+    }
 }

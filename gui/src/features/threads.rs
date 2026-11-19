@@ -1,19 +1,20 @@
 use dioxus::prelude::*;
 
-use super::Session;
-use super::common::{
-    Empty, FailureAlert, Field, Loading, Mark, PageHeader, SectionLabel, StatusMark,
-};
-use crate::hone::{Anchor, Event, ThreadState, Write};
+use super::common::{Empty, FailureAlert, Field, Loading, PageHeader, SectionLabel, event_time};
+use super::{Project, Session};
+use crate::hone::{Anchor, CatalogEntry, Event, ThreadState, Write};
 use crate::ui::{
-    Badge, Button, ButtonVariant, Checkbox, Input, Separator, Tabs, TabsContent, TabsList,
-    TabsTrigger, TabsVariant, Textarea,
+    Badge, Button, ButtonVariant, Checkbox, Choice, Combobox, Input, Separator, Tabs, TabsContent,
+    TabsList, TabsTrigger, TabsVariant, Textarea,
 };
 
 /// One event of a thread, as the conversation shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Entry {
     author: String,
+    role: String,
+    /// When it was written, from the event ID.
+    time: Option<String>,
     /// `opened`, `message`, `resolved`, or `reopened`.
     kind: String,
     body: Option<String>,
@@ -40,16 +41,40 @@ fn conversation(events: &[Event], thread: &str) -> Vec<Entry> {
                 event.payload["thread"].as_str() == Some(thread)
             };
             belongs.then(|| Entry {
-                author: event.author.as_ref().map_or_else(
-                    || "unknown".to_owned(),
-                    |author| format!("{} · {}", author.name, author.role),
-                ),
+                author: event
+                    .author
+                    .as_ref()
+                    .map_or_else(|| "unknown".to_owned(), |author| author.name.clone()),
+                role: event
+                    .author
+                    .as_ref()
+                    .map(|author| author.role.clone())
+                    .unwrap_or_default(),
+                time: event_time(&event.id),
                 kind: kind.to_owned(),
                 body: event.payload["body"].as_str().map(str::to_owned),
                 anchor: (kind == "opened").then(|| anchor_text(&event.payload["anchor"])),
             })
         })
         .collect()
+}
+
+fn first_line(text: &str) -> String {
+    text.lines().next().unwrap_or_default().to_owned()
+}
+
+/// The first line of the opening message of `thread`, or its ID without one.
+fn headline(events: &[Event], thread: &str) -> String {
+    conversation(events, thread)
+        .into_iter()
+        .find_map(|entry| entry.body.as_deref().map(first_line))
+        .unwrap_or_else(|| thread.to_owned())
+}
+
+fn anchor_of(events: &[Event], thread: &str) -> Option<String> {
+    conversation(events, thread)
+        .into_iter()
+        .find_map(|entry| entry.anchor)
 }
 
 fn anchor_text(anchor: &serde_json::Value) -> String {
@@ -66,6 +91,41 @@ fn anchor_text(anchor: &serde_json::Value) -> String {
     }
 }
 
+/// The kinds hone/standard suggests (concept Section 10), then every other kind the log uses.
+fn kind_choices(seen: &[String]) -> Vec<Choice> {
+    let mut choices: Vec<Choice> = ["question", "concern", "suggestion", "note"]
+        .into_iter()
+        .map(|kind| Choice::plain(kind).note("hone/standard"))
+        .collect();
+    for kind in seen {
+        if !choices.iter().any(|choice| &choice.value == kind) {
+            choices.push(Choice::plain(kind.clone()).note("in the log"));
+        }
+    }
+    choices
+}
+
+/// The artifacts with an ID, the artifacts of `ticket` first, ticket records left out.
+fn artifact_choices(artifacts: &[CatalogEntry], ticket: &str) -> Vec<Choice> {
+    let mut own: Vec<Choice> = Vec::new();
+    let mut other: Vec<Choice> = Vec::new();
+    for entry in artifacts.iter().filter(|entry| entry.kind != "ticket") {
+        let Some(id) = entry.id.clone() else {
+            continue;
+        };
+        let choice = Choice::plain(id)
+            .label(entry.title.clone().unwrap_or_default())
+            .note(entry.kind.clone());
+        if entry.ticket.as_deref() == Some(ticket) {
+            own.push(choice);
+        } else {
+            other.push(choice);
+        }
+    }
+    own.extend(other);
+    own
+}
+
 /// The threads of the open ticket: the list, the conversation, and the reply.
 #[component]
 pub(crate) fn Threads() -> Element {
@@ -73,7 +133,7 @@ pub(crate) fn Threads() -> Element {
     let Some(ticket) = (session.ticket)() else {
         return rsx! {
             PageHeader { title: "Threads" }
-            Empty { text: "No ticket is open. Open a ticket under Tickets to see its threads." }
+            ChooseTicket {}
         };
     };
     let shown = ticket.clone();
@@ -113,6 +173,28 @@ pub(crate) fn Threads() -> Element {
 }
 
 #[component]
+fn ChooseTicket() -> Element {
+    let mut session = use_context::<Session>();
+    let project = use_context::<Project>();
+    rsx! {
+        div { class: "flex flex-col gap-2 max-w-xl",
+            Empty { text: "Threads belong to a ticket. Choose one to see and open its threads." }
+            Combobox {
+                value: "",
+                choices: project.ticket_choices(),
+                placeholder: "Search by ID, external key, or profile",
+                label: "Ticket",
+                empty: "No ticket matches.",
+                onselect: move |ticket: String| {
+                    session.thread.set(None);
+                    session.ticket.set(Some(ticket));
+                },
+            }
+        }
+    }
+}
+
+#[component]
 fn ThreadSplit(threads: Vec<ThreadState>, events: Vec<Event>) -> Element {
     let mut session = use_context::<Session>();
     if threads.is_empty() {
@@ -139,18 +221,18 @@ fn ThreadSplit(threads: Vec<ThreadState>, events: Vec<Event>) -> Element {
                             div { class: "flex gap-2 items-center",
                                 if thread.blocking {
                                     Badge { class: "font-mono", "BLOCKING" }
-                                } else {
-                                    Badge { variant: crate::ui::BadgeVariant::Outline, class: "font-mono", "{thread.kind}" }
                                 }
-                                StatusMark {
-                                    mark: if thread.status == "open" { Mark::Open } else { Mark::Done },
-                                    word: thread.status.clone(),
+                                Badge { variant: crate::ui::BadgeVariant::Outline, class: "font-mono", "{thread.kind}" }
+                                span { class: "ml-auto font-mono text-[12.5px] text-ink-muted",
+                                    {format!("{} · {}", thread.status, conversation(&events, &thread.thread).iter().filter(|entry| entry.body.is_some()).count())}
                                 }
                             }
-                            span { class: if thread.status == "open" { "font-mono text-[13px] break-all" } else { "font-mono text-[13px] break-all line-through text-ink-muted" },
-                                "{thread.thread}"
+                            span { class: if thread.status == "open" { "font-semibold break-words" } else { "font-semibold break-words line-through text-ink-muted" },
+                                {headline(&events, &thread.thread)}
                             }
-                            span { class: "font-mono text-[12.5px] text-ink-muted", "{thread.opened_by.name} · {thread.opened_by.role}" }
+                            span { class: "text-[13px] text-ink-muted break-words",
+                                {format!("{} · {}", anchor_of(&events, &thread.thread).unwrap_or_default(), thread.opened_by.name)}
+                            }
                         }
                     }
                 }
@@ -187,18 +269,29 @@ fn Conversation(thread: ThreadState, entries: Vec<Entry>) -> Element {
     let reply_id = id.clone();
     let open = thread.status == "open";
     let anchor = entries.iter().find_map(|entry| entry.anchor.clone());
+    let title = entries
+        .iter()
+        .find_map(|entry| entry.body.as_deref().map(first_line))
+        .unwrap_or_else(|| thread.kind.clone());
     rsx! {
         div { class: "flex flex-col gap-5 p-6 min-w-0",
-            h2 { class: "m-0 text-[22px] leading-7 font-bold tracking-[-0.01em]", "{thread.kind}" }
+            div { class: "flex flex-col gap-1",
+                span { class: "font-mono text-[13px] text-ink-muted break-all", "{thread.thread}" }
+                h2 { class: "m-0 text-[22px] leading-7 font-bold tracking-[-0.01em] break-words", "{title}" }
+            }
             if let Some(anchor) = anchor {
                 div { class: "bg-surface border border-line p-4 font-mono text-[13px] text-ink-muted break-words",
                     "anchored to {anchor}"
                 }
             }
             for entry in entries {
-                article { class: "flex flex-col gap-1 max-w-[640px]",
-                    div { class: "flex gap-2 items-baseline",
-                        span { class: "font-mono text-[12.5px] text-ink-muted", "{entry.author}" }
+                article { class: "flex flex-col gap-1 max-w-[720px]",
+                    div { class: "flex gap-2 items-baseline flex-wrap",
+                        span { class: "font-semibold", "{entry.author}" }
+                        span { class: "font-mono text-[12.5px] text-ink-muted", "{entry.role}" }
+                        if let Some(time) = entry.time.clone() {
+                            span { class: "font-mono text-[12.5px] text-ink-muted", "· {time}" }
+                        }
                         if entry.kind != "opened" && entry.kind != "message" {
                             span { class: "font-mono text-[12.5px]", "· {entry.kind}" }
                         }
@@ -249,7 +342,24 @@ fn OpenThread(ticket: String, tab: Signal<String>) -> Element {
     let mut body = use_signal(String::new);
     let mut failure = use_signal(|| None);
     let kind_tab = use_signal(|| "artifact".to_owned());
-    use_effect(move || anchor_kind.set(kind_tab()));
+    use_effect(move || {
+        anchor_kind.set(kind_tab());
+        target.set(String::new());
+    });
+    let project = use_context::<Project>();
+    let seen_kinds: Vec<String> = match &*project.log.read() {
+        Some(Ok(log)) => log
+            .events
+            .iter()
+            .filter(|event| event.kind == "thread.opened")
+            .filter_map(|event| event.payload["kind"].as_str().map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let artifact_choices = match &*project.catalog.read() {
+        Some(Ok(catalog)) => artifact_choices(&catalog.artifacts, &ticket),
+        _ => Vec::new(),
+    };
     let open = move |_| {
         let ticket = ticket.clone();
         spawn(async move {
@@ -287,7 +397,16 @@ fn OpenThread(ticket: String, tab: Signal<String>) -> Element {
             SectionLabel { label: "Open a thread" }
             div { class: "flex flex-wrap gap-4 items-end",
                 Field { label: "Kind",
-                    Input { class: "font-mono w-48", value: kind(), oninput: move |value| kind.set(value) }
+                    div { class: "w-56",
+                        Combobox {
+                            value: kind(),
+                            choices: kind_choices(&seen_kinds),
+                            label: "Kind",
+                            custom: true,
+                            empty: "Type a new kind and press Enter.",
+                            onselect: move |value: String| kind.set(value),
+                        }
+                    }
                 }
                 label { class: "h-11 flex items-center gap-2 text-sm",
                     Checkbox { checked: blocking(), aria_label: "Blocking", on_checked_change: move |value| blocking.set(value) }
@@ -308,7 +427,25 @@ fn OpenThread(ticket: String, tab: Signal<String>) -> Element {
                         "change" => "Reference",
                         _ => "Artifact ID",
                     },
-                    Input { class: "font-mono w-72", value: target(), oninput: move |value| target.set(value) }
+                    if anchor_kind() == "artifact" {
+                        div { class: "w-80",
+                            Combobox {
+                                value: target(),
+                                choices: artifact_choices.clone(),
+                                label: "Artifact",
+                                placeholder: "Search by ID, title, or kind",
+                                empty: "No artifact matches. An artifact appears once its file exists.",
+                                onselect: move |value: String| target.set(value),
+                            }
+                        }
+                    } else {
+                        Input {
+                            class: "font-mono w-80",
+                            value: target(),
+                            placeholder: if anchor_kind() == "code" { "src/payments/fee.rs#FeeCalculator" } else { "https://github.com/acme/payments/pull/7#L12-L20" },
+                            oninput: move |value| target.set(value),
+                        }
+                    }
                 }
                 if anchor_kind() == "artifact" {
                     Field { label: "Quote (optional)",
@@ -376,7 +513,9 @@ mod tests {
             event("ev-0006", "step.changed", json!({ "thread": "th-0001" })),
         ];
         let entry = |kind: &str, body: Option<&str>, anchor: Option<&str>| Entry {
-            author: "alice · architect".into(),
+            author: "alice".into(),
+            role: "architect".into(),
+            time: None,
             kind: kind.into(),
             body: body.map(str::to_owned),
             anchor: anchor.map(str::to_owned),

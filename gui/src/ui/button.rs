@@ -14,7 +14,7 @@ pub enum ButtonVariant {
 impl ButtonVariant {
     const fn as_str(&self) -> &'static str {
         match self {
-            Self::Default => "bg-primary text-primary-foreground shadow-xs hover:bg-primary/90",
+            Self::Default => "bg-primary text-primary-foreground shadow-xs hover:bg-signal-hover",
             Self::Outline => {
                 "border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/5"
             }

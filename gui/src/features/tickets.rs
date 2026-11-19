@@ -1,44 +1,58 @@
 use dioxus::prelude::*;
 
 use super::common::{
-    Empty, FailureAlert, Field, Loading, Mark, PageHeader, SectionLabel, StatusMark,
+    Empty, FailureAlert, Loading, Mark, PageHeader, SectionLabel, StatusMark, Tag,
 };
-use super::{Screen, Session};
-use crate::hone::{StepStatus, StoreLog, TicketEvents, Write};
+use super::progress::{self, Stage, StepTrack};
+use super::{Project, Screen, Session};
+use crate::hone::{CatalogEntry, GateScope, StoreLog, TicketEvents};
 use crate::ui::{
-    Badge, Button, ButtonVariant, Input, Table, TableBody, TableCell, TableHead, TableHeader,
+    Badge, Button, ButtonVariant, Combobox, Table, TableBody, TableCell, TableHead, TableHeader,
     TableRow, TableWrapper,
 };
 
-/// A ticket as the store knows it.
+/// A row of the ticket list: a ticket record, or a ticket the store knows without one.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct TicketSummary {
+struct TicketRow {
     ticket: String,
+    record: Option<CatalogEntry>,
     events: usize,
-    last: String,
+    last: Option<String>,
 }
 
-/// The tickets of the store, in the order their first event appears in the log, with the type
-/// of their last event in that order.
-fn summaries(log: &StoreLog) -> Vec<TicketSummary> {
-    let mut tickets: Vec<TicketSummary> = Vec::new();
-    for event in &log.events {
+/// The ticket records in the order of their paths, then the tickets of the store without a
+/// record in the order their first event appears in the log, each with its event count and the
+/// type of its last event.
+fn ticket_rows(records: &[CatalogEntry], log: Option<&StoreLog>) -> Vec<TicketRow> {
+    let mut rows: Vec<TicketRow> = records
+        .iter()
+        .filter_map(|record| {
+            Some(TicketRow {
+                ticket: record.id.clone()?,
+                record: Some(record.clone()),
+                events: 0,
+                last: None,
+            })
+        })
+        .collect();
+    for event in log.map(|log| log.events.as_slice()).unwrap_or_default() {
         let Some(ticket) = &event.ticket else {
             continue;
         };
-        match tickets.iter_mut().find(|summary| &summary.ticket == ticket) {
-            Some(summary) => {
-                summary.events += 1;
-                summary.last.clone_from(&event.kind);
+        match rows.iter_mut().find(|row| &row.ticket == ticket) {
+            Some(row) => {
+                row.events += 1;
+                row.last = Some(event.kind.clone());
             }
-            None => tickets.push(TicketSummary {
+            None => rows.push(TicketRow {
                 ticket: ticket.clone(),
+                record: None,
                 events: 1,
-                last: event.kind.clone(),
+                last: Some(event.kind.clone()),
             }),
         }
     }
-    tickets
+    rows
 }
 
 /// The tickets list, or the open ticket.
@@ -46,61 +60,48 @@ fn summaries(log: &StoreLog) -> Vec<TicketSummary> {
 pub(crate) fn Tickets() -> Element {
     let session = use_context::<Session>();
     match (session.ticket)() {
-        Some(ticket) => rsx! { TicketDetail { ticket } },
+        Some(ticket) => rsx! { TicketDetail { key: "{ticket}", ticket } },
         None => rsx! { TicketList {} },
     }
 }
 
 #[component]
 fn TicketList() -> Element {
-    let session = use_context::<Session>();
-    let log = use_resource(move || async move {
-        let _ = (session.revision)();
-        let hone = (session.hone)();
-        hone.log().await
-    });
-    let mut typed = use_signal(String::new);
+    let mut session = use_context::<Session>();
+    let project = use_context::<Project>();
+    let tracker = project.tracker();
     rsx! {
         PageHeader {
-            context: session.hone.read().root().display().to_string(),
+            context: project.project_id().unwrap_or_default(),
             title: "Tickets",
-        }
-        form {
-            class: "flex items-end gap-2 max-w-xl",
-            onsubmit: move |event| {
-                event.prevent_default();
-                if !typed().trim().is_empty() {
-                    session.open_ticket(typed().trim().to_owned());
+            actions: rsx! {
+                Button {
+                    variant: ButtonVariant::Outline,
+                    onclick: move |_| session.screen.set(Screen::Tracker),
+                    if let Some(tracker) = &tracker { "Browse {tracker.describe()}" } else { "Set up a tracker" }
                 }
             },
-            Field { label: "Open a ticket by ID",
-                Input {
-                    class: "font-mono",
-                    value: typed(),
-                    placeholder: "tk-9f2x4a8m",
-                    oninput: move |value| typed.set(value),
-                }
-            }
-            Button {
-                variant: ButtonVariant::Outline,
-                onclick: move |_| {
-                    if !typed().trim().is_empty() {
-                        session.open_ticket(typed().trim().to_owned());
-                    }
-                },
-                "Open"
+        }
+        div { class: "flex flex-col gap-1 max-w-xl",
+            span { class: "text-[13px] text-ink-muted", "Open a ticket" }
+            Combobox {
+                value: "",
+                choices: project.ticket_choices(),
+                placeholder: "Search by ID, external key, or profile",
+                label: "Open a ticket",
+                empty: "No ticket matches.",
+                onselect: move |ticket: String| session.open_ticket(ticket),
             }
         }
-        match &*log.read() {
-            None => rsx! { Loading {} },
-            Some(Err(failure)) if failure.status == "unavailable" => rsx! {
-                Empty { text: "No process store yet. Tickets appear here once an event is written or synced." }
-            },
-            Some(Err(failure)) => rsx! { FailureAlert { failure: failure.clone() } },
-            Some(Ok(log)) => {
-                let tickets = summaries(log);
-                if tickets.is_empty() {
-                    rsx! { Empty { text: "No ticket has events yet. Open a ticket by ID to write the first one." } }
+        match (&*project.catalog.read(), &*project.log.read()) {
+            (None, _) | (_, None) => rsx! { Loading {} },
+            (Some(Err(failure)), _) => rsx! { FailureAlert { failure: failure.clone() } },
+            (Some(Ok(catalog)), Some(log)) => {
+                let records: Vec<CatalogEntry> = catalog.tickets().cloned().collect();
+                let log = log.as_ref().ok();
+                let rows = ticket_rows(&records, log);
+                if rows.is_empty() {
+                    rsx! { Empty { text: "No ticket yet. A ticket appears here once its record exists under the ticket path of the configuration." } }
                 } else {
                     rsx! {
                         TableWrapper {
@@ -108,13 +109,15 @@ fn TicketList() -> Element {
                                 TableHeader { class: "bg-surface",
                                     TableRow {
                                         TableHead { "Ticket" }
-                                        TableHead { class: "text-right", "Events" }
+                                        TableHead { "External" }
+                                        TableHead { "Profile" }
+                                        TableHead { class: "w-[260px]", "Progress" }
                                         TableHead { "Last event" }
                                     }
                                 }
                                 TableBody {
-                                    for summary in tickets {
-                                        TicketRow { summary }
+                                    for row in rows {
+                                        TicketListRow { key: "{row.ticket}", row }
                                     }
                                 }
                             }
@@ -127,107 +130,274 @@ fn TicketList() -> Element {
 }
 
 #[component]
-fn TicketRow(summary: TicketSummary) -> Element {
+fn TicketListRow(row: TicketRow) -> Element {
     let session = use_context::<Session>();
-    let ticket = summary.ticket.clone();
+    let ticket = row.ticket.clone();
+    let shown = ticket.clone();
+    let has_record = row.record.is_some();
+    let progress = use_resource(move || {
+        let ticket = shown.clone();
+        async move {
+            let _ = (session.revision)();
+            if !has_record {
+                return None;
+            }
+            let hone = (session.hone)();
+            let overview = hone.ticket(&ticket).await.ok()?;
+            let state = hone.events(&ticket).await.ok();
+            Some(progress::progress(&overview, state.as_ref(), None))
+        }
+    });
+    let external = row
+        .record
+        .as_ref()
+        .map(|record| {
+            record
+                .external
+                .iter()
+                .map(|external| format!("{} {}", external.system, external.key))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
     rsx! {
         TableRow { class: "cursor-pointer", onclick: move |_| session.open_ticket(ticket.clone()),
-            TableCell { class: "font-mono underline", "{summary.ticket}" }
-            TableCell { class: "font-mono text-right", "{summary.events}" }
-            TableCell { class: "font-mono text-ink-muted", "{summary.last}" }
+            TableCell {
+                button { class: "font-mono underline text-left", "{row.ticket}" }
+            }
+            TableCell { class: "font-mono text-[12.5px] text-ink-muted", "{external}" }
+            TableCell { class: "font-mono text-[12.5px]",
+                match row.record.as_ref().and_then(|record| record.profile.clone()) {
+                    Some(profile) => rsx! { "{profile}" },
+                    None => rsx! { span { class: "text-ink-muted", "no record" } },
+                }
+            }
+            TableCell {
+                match &*progress.read() {
+                    Some(Some(steps)) => rsx! { MiniTrack { steps: steps.clone() } },
+                    Some(None) => rsx! { span { class: "text-ink-muted text-[13px]", "—" } },
+                    None => rsx! { span { class: "text-ink-muted text-[13px]", "…" } },
+                }
+            }
+            TableCell { class: "font-mono text-[12.5px] text-ink-muted",
+                {row.last.clone().map_or_else(|| "no events".to_owned(), |last| format!("{last} · {} event{}", row.events, if row.events == 1 { "" } else { "s" }))}
+            }
         }
     }
 }
 
-/// The steps the store knows for a ticket, in the order they were first changed.
-fn step_order(events: &TicketEvents) -> Vec<String> {
-    let mut order: Vec<String> = Vec::new();
-    for event in &events.events {
-        if event.kind == "step.changed"
-            && let Some(step) = event.payload["step"].as_str()
-            && !order.iter().any(|known| known == step)
-        {
-            order.push(step.to_owned());
+/// The steps as small segments, for a table row: filled when done, dashed when skipped, accent
+/// for the current step, empty when open.
+#[component]
+fn MiniTrack(steps: Vec<progress::StepProgress>) -> Element {
+    let finished = steps
+        .iter()
+        .filter(|step| matches!(step.stage, Stage::Done | Stage::Skipped))
+        .count();
+    let names: Vec<String> = steps
+        .iter()
+        .map(|step| {
+            let state = match step.stage {
+                Stage::Done => "done",
+                Stage::Skipped => "skipped",
+                Stage::Ready => "open",
+                Stage::Blocked => "waiting",
+            };
+            format!("{} {state}", step.step)
+        })
+        .collect();
+    rsx! {
+        div { class: "flex items-center gap-3", title: "{names.join(\", \")}",
+            div { class: "flex gap-[3px] flex-1",
+                for step in steps.iter() {
+                    span {
+                        class: match (step.stage, step.current) {
+                            (Stage::Done, _) => "h-2 flex-1 bg-ink",
+                            (Stage::Skipped, _) => "h-2 flex-1 border border-dashed border-ink-muted",
+                            (_, true) => "h-2 flex-1 bg-signal",
+                            _ => "h-2 flex-1 bg-surface-2",
+                        },
+                    }
+                }
+            }
+            span { class: "font-mono text-[12.5px] whitespace-nowrap", "{finished}/{steps.len()}" }
         }
     }
-    order
 }
 
 #[component]
 fn TicketDetail(ticket: String) -> Element {
     let mut session = use_context::<Session>();
+    let project = use_context::<Project>();
     let shown = ticket.clone();
-    let events = use_resource(move || {
+    let check = use_resource(move || {
         let ticket = shown.clone();
         async move {
             let _ = (session.revision)();
             let hone = (session.hone)();
-            hone.events(&ticket).await
+            hone.check(Some(&ticket), GateScope::Pure).await
         }
     });
     let check_ticket = ticket.clone();
+    let state: Option<TicketEvents> = match &*project.state.read() {
+        Some(Some(Ok(state))) => Some(state.clone()),
+        _ => None,
+    };
+    let state_failure = match &*project.state.read() {
+        Some(Some(Err(failure))) if failure.status != "unavailable" => Some(failure.clone()),
+        _ => None,
+    };
+    let tracker = project.tracker();
+    // The title lives in the tracker: the ticket record has none.
+    let linked = use_resource(move || async move {
+        let tracker = project.tracker()?;
+        let key = match &*project.overview.read() {
+            Some(Some(Ok(overview))) => overview
+                .external
+                .iter()
+                .find(|external| external.system.eq_ignore_ascii_case(tracker.system()))?
+                .key
+                .clone(),
+            _ => return None,
+        };
+        tracker.issue(&key).await.ok().flatten()
+    });
+    let linked_issue = linked.read().clone().flatten();
     rsx! {
-        PageHeader {
-            context: "ticket",
-            title: ticket.clone(),
-            actions: rsx! {
-                Button { variant: ButtonVariant::Outline, onclick: move |_| session.ticket.set(None),
-                    "All tickets"
+        match &*project.overview.read() {
+            Some(Some(Ok(overview))) => {
+                let external: Vec<String> = overview
+                    .external
+                    .iter()
+                    .map(|external| format!("{} {}", external.system, external.key))
+                    .collect();
+                let context = std::iter::once(ticket.clone()).chain(external).collect::<Vec<_>>().join(" · ");
+                rsx! {
+                    PageHeader {
+                        context,
+                        title: linked_issue.as_ref().map_or_else(|| ticket.clone(), |issue| issue.title.clone()),
+                        actions: rsx! {
+                            Button { variant: ButtonVariant::Outline, onclick: move |_| session.ticket.set(None), "All tickets" }
+                            Button {
+                                variant: ButtonVariant::Outline,
+                                title: "Every gate, exec gates included, on the Checks screen",
+                                onclick: move |_| {
+                                    session.ticket.set(Some(check_ticket.clone()));
+                                    session.screen.set(Screen::Check);
+                                },
+                                "Run full hone check"
+                            }
+                        },
+                    }
+                    div { class: "flex flex-wrap gap-2 -mt-5",
+                        for (name , value) in overview.attributes.iter() {
+                            Tag {
+                                bad: name == "risk" && value.as_str() == Some("high"),
+                                "{name}: {value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string())}"
+                            }
+                        }
+                        Tag { inverted: true, "profile: {overview.profile}" }
+                        Tag { muted: true, "config {short_hash(&overview.config)}" }
+                        for external in overview.external.iter() {
+                            if let Some(url) = external.url.clone().or_else(|| tracker.as_ref().filter(|tracker| tracker.system() == external.system).map(|tracker| tracker.issue_url(&external.key))) {
+                                ExternalLink { label: format!("{} {}", external.system, external.key), url }
+                            }
+                        }
+                    }
+                    StepTrack {
+                        ticket: ticket.clone(),
+                        overview: overview.clone(),
+                        state: state.clone(),
+                        run: check.read().clone(),
+                        checking: check.read().is_none(),
+                    }
                 }
-                Button {
-                    onclick: move |_| {
-                        session.ticket.set(Some(check_ticket.clone()));
-                        session.screen.set(Screen::Check);
+            }
+            Some(Some(Err(failure))) => rsx! {
+                PageHeader {
+                    context: "ticket",
+                    title: ticket.clone(),
+                    actions: rsx! {
+                        Button { variant: ButtonVariant::Outline, onclick: move |_| session.ticket.set(None), "All tickets" }
                     },
-                    "Run hone check"
                 }
+                FailureAlert { failure: failure.clone() }
+            },
+            _ => rsx! {
+                PageHeader { context: "ticket", title: ticket.clone() }
+                Loading {}
             },
         }
-        match &*events.read() {
-            None => rsx! { Loading {} },
-            Some(Err(failure)) if failure.status == "unavailable" => rsx! {
-                Empty { text: "No process store yet. Set a step or open a thread to write the first event." }
-                SetStep { ticket: ticket.clone() }
-            },
-            Some(Err(failure)) => rsx! { FailureAlert { failure: failure.clone() } },
-            Some(Ok(state)) => rsx! {
-                StepTrack { state: state.clone() }
-                SetStep { ticket: ticket.clone() }
-                ThreadTable { ticket: ticket.clone(), state: state.clone() }
-                if !state.invalid.is_empty() {
-                    super::events::InvalidPanel { invalid: state.invalid.clone() }
-                }
-            },
+        if let Some(failure) = state_failure {
+            FailureAlert { failure }
+        }
+        div { class: "grid grid-cols-[repeat(auto-fit,minmax(380px,1fr))] gap-8 items-start",
+            TicketArtifacts { ticket: ticket.clone() }
+            ThreadTable { ticket: ticket.clone(), state: state.clone() }
+        }
+        if let Some(state) = state.filter(|state| !state.invalid.is_empty()) {
+            super::events::InvalidPanel { invalid: state.invalid.clone() }
+        }
+    }
+}
+
+fn short_hash(hash: &str) -> String {
+    let hex = hash.strip_prefix("sha256:").unwrap_or(hash);
+    format!("sha256:{}…", hex.chars().take(8).collect::<String>())
+}
+
+#[component]
+fn ExternalLink(label: String, url: String) -> Element {
+    rsx! {
+        button {
+            class: "h-7 px-2 border border-line font-mono text-[12.5px] underline hover:bg-surface-2",
+            title: "Open {url} in the browser",
+            onclick: move |_| super::common::open_in_browser(&url),
+            "{label} ↗"
         }
     }
 }
 
 #[component]
-fn StepTrack(state: TicketEvents) -> Element {
-    let steps = step_order(&state);
-    let done = state
-        .steps
-        .values()
-        .filter(|step| step.status == "done")
-        .count();
-    let skipped = state
-        .steps
-        .values()
-        .filter(|step| step.status == "skipped")
-        .count();
+fn TicketArtifacts(ticket: String) -> Element {
+    let project = use_context::<Project>();
+    let artifacts: Vec<CatalogEntry> = match &*project.catalog.read() {
+        Some(Ok(catalog)) => catalog
+            .artifacts
+            .iter()
+            .filter(|entry| entry.ticket.as_deref() == Some(ticket.as_str()))
+            .cloned()
+            .collect(),
+        _ => Vec::new(),
+    };
     rsx! {
         section {
-            SectionLabel { label: "Steps", aside: format!("{done} done · {skipped} skipped") }
-            if steps.is_empty() {
-                Empty { text: "No step has a state yet. A step without one is open." }
+            SectionLabel { label: "Artifacts", aside: format!("{} of this ticket", artifacts.len()) }
+            if artifacts.is_empty() {
+                Empty { text: "No artifact names this ticket yet. Artifacts appear here once their file is written." }
             } else {
-                div { class: "grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] border border-line",
-                    for (index , step) in steps.into_iter().enumerate() {
-                        StepCell {
-                            number: index + 1,
-                            status: state.steps.get(&step).map(|state| state.status.clone()).unwrap_or_else(|| "open".into()),
-                            reason: state.steps.get(&step).and_then(|state| state.reason.clone()),
-                            step,
+                TableWrapper {
+                    Table {
+                        TableHeader { class: "bg-surface",
+                            TableRow {
+                                TableHead { "ID" }
+                                TableHead { "Kind" }
+                                TableHead { "Status" }
+                            }
+                        }
+                        TableBody {
+                            for artifact in artifacts {
+                                TableRow {
+                                    TableCell { class: "font-mono",
+                                        span { title: "{artifact.path}", {artifact.id.clone().unwrap_or_default()} }
+                                        if let Some(title) = artifact.title.clone() {
+                                            span { class: "block font-sans text-[13px] text-ink-muted", "{title}" }
+                                        }
+                                    }
+                                    TableCell { class: "font-mono text-[12.5px] text-ink-muted", "{artifact.kind}" }
+                                    TableCell { super::artifacts::EffectiveStatus { entry: artifact.clone() } }
+                                }
+                            }
                         }
                     }
                 }
@@ -237,102 +407,41 @@ fn StepTrack(state: TicketEvents) -> Element {
 }
 
 #[component]
-fn StepCell(number: usize, step: String, status: String, reason: Option<String>) -> Element {
-    let (edge, mark, struck) = match status.as_str() {
-        "done" => ("border-t-ink", Mark::Done, ""),
-        "skipped" => (
-            "border-t-ink-muted border-dashed",
-            Mark::Skip,
-            "line-through text-ink-muted",
-        ),
-        _ => ("border-t-line", Mark::Open, ""),
-    };
-    let word = match &reason {
-        Some(reason) => format!("{status} · {reason}"),
-        None => status.clone(),
-    };
-    rsx! {
-        div { class: "border-t-[3px] {edge} p-5 flex flex-col gap-3 border-r border-line min-w-0",
-            span { class: "font-mono text-[13px] text-ink-muted", "{number:02}" }
-            span { class: "font-semibold break-words {struck}", "{step}" }
-            StatusMark { mark, word }
-        }
-    }
-}
-
-#[component]
-fn SetStep(ticket: String) -> Element {
-    let session = use_context::<Session>();
-    let mut step = use_signal(String::new);
-    let mut reason = use_signal(String::new);
-    let mut failure = use_signal(|| None);
-    let set = move |status: StepStatus| {
-        let ticket = ticket.clone();
-        spawn(async move {
-            let write = Write::SetStep {
-                ticket,
-                step: step().trim().to_owned(),
-                status,
-                reason: Some(reason().trim().to_owned()).filter(|reason| !reason.is_empty()),
-            };
-            let hone = (session.hone)();
-            let writer = (session.writer)();
-            match hone.write(&writer, &write).await {
-                Ok(_) => {
-                    failure.set(None);
-                    step.set(String::new());
-                    reason.set(String::new());
-                    session.changed();
-                }
-                Err(error) => failure.set(Some(error)),
-            }
-        });
-    };
-    let done = set.clone();
-    let skip = set.clone();
-    let open = set;
-    rsx! {
-        section { class: "flex flex-col gap-3",
-            SectionLabel { label: "Set a step" }
-            div { class: "flex flex-wrap items-end gap-2",
-                Field { label: "Step of the ticket's profile",
-                    Input { class: "font-mono w-56", value: step(), placeholder: "decision", oninput: move |value| step.set(value) }
-                }
-                Field { label: "Reason (optional)",
-                    Input { class: "w-72", value: reason(), oninput: move |value| reason.set(value) }
-                }
-                Button { variant: ButtonVariant::Outline, onclick: move |_| open(StepStatus::Open), "Reopen" }
-                Button { variant: ButtonVariant::Outline, onclick: move |_| skip(StepStatus::Skipped), "Skip step" }
-                Button { variant: ButtonVariant::Outline, onclick: move |_| done(StepStatus::Done), "Mark done" }
-            }
-            if let Some(failure) = failure() {
-                FailureAlert { failure }
-            }
-        }
-    }
-}
-
-#[component]
-fn ThreadTable(ticket: String, state: TicketEvents) -> Element {
-    let session = use_context::<Session>();
+fn ThreadTable(ticket: String, state: Option<TicketEvents>) -> Element {
+    let mut session = use_context::<Session>();
+    let threads = state.map(|state| state.threads).unwrap_or_default();
+    let open = threads
+        .iter()
+        .filter(|thread| thread.status == "open")
+        .count();
+    let open_ticket = ticket.clone();
     rsx! {
         section {
-            SectionLabel { label: "Threads", aside: format!("{} total", state.threads.len()) }
-            if state.threads.is_empty() {
-                Empty { text: "No threads yet. Open one under Threads." }
+            SectionLabel { label: "Threads", aside: format!("{open} open of {}", threads.len()) }
+            if threads.is_empty() {
+                div { class: "flex flex-col gap-3 items-start",
+                    Empty { text: "No threads yet. Open one to ask, object, or note something on this ticket." }
+                    Button {
+                        variant: ButtonVariant::Outline,
+                        onclick: move |_| {
+                            session.ticket.set(Some(open_ticket.clone()));
+                            session.screen.set(Screen::Threads);
+                        },
+                        "Open a thread"
+                    }
+                }
             } else {
                 TableWrapper {
                     Table {
                         TableHeader { class: "bg-surface",
                             TableRow {
-                                TableHead { "Thread" }
                                 TableHead { "Kind" }
                                 TableHead { "Status" }
                                 TableHead { "Opened by" }
                             }
                         }
                         TableBody {
-                            for thread in state.threads.clone() {
+                            for thread in threads {
                                 TableRow {
                                     class: "cursor-pointer",
                                     onclick: {
@@ -340,9 +449,8 @@ fn ThreadTable(ticket: String, state: TicketEvents) -> Element {
                                         let id = thread.thread.clone();
                                         move |_| session.open_thread(ticket.clone(), id.clone())
                                     },
-                                    TableCell { class: "font-mono underline break-all", "{thread.thread}" }
                                     TableCell {
-                                        span { class: "font-mono", "{thread.kind}" }
+                                        span { class: "font-mono underline", "{thread.kind}" }
                                         if thread.blocking {
                                             Badge { class: "ml-2 font-mono", "BLOCKING" }
                                         }
@@ -353,7 +461,7 @@ fn ThreadTable(ticket: String, state: TicketEvents) -> Element {
                                             word: if thread.answered || thread.status != "open" { thread.status.clone() } else { format!("{} · unanswered", thread.status) },
                                         }
                                     }
-                                    TableCell { class: "font-mono", "{thread.opened_by.name} · {thread.opened_by.role}" }
+                                    TableCell { class: "font-mono text-[12.5px]", "{thread.opened_by.name} · {thread.opened_by.role}" }
                                 }
                             }
                         }
@@ -373,7 +481,7 @@ mod tests {
     use super::*;
     use crate::hone::Event;
 
-    fn event(id: &str, kind: &str, ticket: &str, payload: serde_json::Value) -> Event {
+    fn event(id: &str, kind: &str, ticket: &str) -> Event {
         Event {
             id: id.into(),
             device: "dev-3k9a5h2t".into(),
@@ -381,60 +489,59 @@ mod tests {
             kind: kind.into(),
             ticket: Some(ticket.into()),
             author: None,
-            payload,
+            payload: json!({}),
             raw: json!({}),
         }
     }
 
+    fn record(id: &str) -> CatalogEntry {
+        CatalogEntry {
+            id: Some(id.into()),
+            kind: "ticket".into(),
+            path: format!("design/tickets/{id}/ticket.yaml"),
+            ticket: None,
+            title: None,
+            status: None,
+            effective: None,
+            profile: Some("standard".into()),
+            external: Vec::new(),
+        }
+    }
+
     #[test]
-    fn tickets_appear_in_log_order_with_their_count_and_last_event() {
+    fn records_come_first_then_tickets_known_only_to_the_store() {
         let log = StoreLog {
             cursor: BTreeMap::new(),
             events: vec![
-                event("ev-1", "thread.opened", "tk-b", json!({})),
-                event(
-                    "ev-2",
-                    "step.changed",
-                    "tk-a",
-                    json!({ "step": "decision" }),
-                ),
-                event("ev-3", "thread.message", "tk-b", json!({})),
+                event("ev-1", "thread.opened", "tk-b"),
+                event("ev-2", "step.changed", "tk-a"),
+                event("ev-3", "thread.message", "tk-b"),
             ],
         };
+        let rows = ticket_rows(&[record("tk-a"), record("tk-c")], Some(&log));
+        let summary: Vec<(&str, bool, usize, Option<&str>)> = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.ticket.as_str(),
+                    row.record.is_some(),
+                    row.events,
+                    row.last.as_deref(),
+                )
+            })
+            .collect();
         assert_eq!(
-            summaries(&log),
+            summary,
             [
-                TicketSummary {
-                    ticket: "tk-b".into(),
-                    events: 2,
-                    last: "thread.message".into()
-                },
-                TicketSummary {
-                    ticket: "tk-a".into(),
-                    events: 1,
-                    last: "step.changed".into()
-                },
+                ("tk-a", true, 1, Some("step.changed")),
+                ("tk-c", true, 0, None),
+                ("tk-b", false, 2, Some("thread.message")),
             ]
         );
     }
 
     #[test]
-    fn steps_keep_the_order_of_their_first_change() {
-        let events = TicketEvents {
-            events: vec![
-                event("ev-1", "step.changed", "tk-a", json!({ "step": "specify" })),
-                event(
-                    "ev-2",
-                    "step.changed",
-                    "tk-a",
-                    json!({ "step": "decision" }),
-                ),
-                event("ev-3", "step.changed", "tk-a", json!({ "step": "specify" })),
-            ],
-            threads: Vec::new(),
-            steps: BTreeMap::new(),
-            invalid: Vec::new(),
-        };
-        assert_eq!(step_order(&events), ["specify", "decision"]);
+    fn a_hash_is_shortened_to_eight_digits() {
+        assert_eq!(short_hash("sha256:4c076d82c93f2647"), "sha256:4c076d82…");
     }
 }
