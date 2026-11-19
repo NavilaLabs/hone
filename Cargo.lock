@@ -1595,6 +1595,7 @@ dependencies = [
  "libc",
  "regex",
  "reqwest",
+ "rustix",
  "ryu-js",
  "saphyr-parser",
  "serde",

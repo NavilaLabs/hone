@@ -1128,21 +1128,75 @@ fn object(value: Value) -> Map<String, Value> {
 // of writing through it. The parent directory is checked below `root` before the file is created
 // and again just before the rename, which narrows, but does not close, the window in which a
 // writer of the directory can swap the parent for a link.
+fn outside_root() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "the directory leads outside the project root",
+    )
+}
+
+// Every directory below the root is opened through the one above it without following a
+// symbolic link, and the file is written and renamed through that handle, so a writer who swaps a
+// directory for a link meanwhile cannot redirect the rename.
+#[cfg(unix)]
+fn replace(path: &Path, root: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use rustix::fs::{AtFlags, CWD, Mode, OFlags, openat, renameat, unlinkat};
+    let relative = path.strip_prefix(root).map_err(|_| outside_root())?;
+    let name = relative.file_name().ok_or_else(outside_root)?;
+    let directory_flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    let mut directory = openat(CWD, root, directory_flags, Mode::empty())?;
+    for component in relative.parent().into_iter().flat_map(Path::components) {
+        let std::path::Component::Normal(part) = component else {
+            return Err(outside_root());
+        };
+        directory = openat(
+            &directory,
+            part,
+            directory_flags | OFlags::NOFOLLOW,
+            Mode::empty(),
+        )
+        .map_err(|error| {
+            if error == rustix::io::Errno::LOOP || error == rustix::io::Errno::NOTDIR {
+                outside_root()
+            } else {
+                error.into()
+            }
+        })?;
+    }
+    let mut temporary = std::ffi::OsString::from(".");
+    temporary.push(name);
+    temporary.push(".hone-condense");
+    let created = openat(
+        &directory,
+        &temporary,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::from_raw_mode(0o666),
+    )?;
+    let written = (|| {
+        let mut file = File::from(created);
+        std::io::Write::write_all(&mut file, bytes)?;
+        file.sync_all()?;
+        renameat(&directory, &temporary, &directory, name)?;
+        Ok(())
+    })();
+    if written.is_err() {
+        let _ = unlinkat(&directory, &temporary, AtFlags::empty());
+    }
+    written
+}
+
+// Without directory handles, the parent is checked before the write and again before the rename;
+// a writer of the project directory can still swap it in between.
+#[cfg(not(unix))]
 fn replace(path: &Path, root: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
     let parent = path.parent().unwrap_or(root);
-    let outside = || {
-        std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "the directory leads outside the project root",
-        )
-    };
     let canonical = parent.canonicalize()?;
     if !log::below(&canonical, root) {
-        return Err(outside());
+        return Err(outside_root());
     }
     let temporary = path.with_file_name(format!(".{name}.hone-condense"));
     let written = (|| {
@@ -1153,7 +1207,7 @@ fn replace(path: &Path, root: &Path, bytes: &[u8]) -> std::io::Result<()> {
         std::io::Write::write_all(&mut file, bytes)?;
         file.sync_all()?;
         if parent.canonicalize()? != canonical {
-            return Err(outside());
+            return Err(outside_root());
         }
         std::fs::rename(&temporary, path)
     })();
@@ -1181,5 +1235,45 @@ fn actor_has_role(config: &Value, name: &str, role: &str) -> bool {
 fn invalid(message: impl Into<String>) -> ProcessError {
     ProcessError::Invalid {
         message: message.into(),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::replace;
+
+    #[test]
+    fn replace_follows_no_symbolic_link_below_the_root() {
+        let root = std::env::temp_dir().join(format!("hone-replace-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("real")).expect("creatable");
+        std::fs::write(root.join("real/file.md"), "old").expect("writable");
+        std::os::unix::fs::symlink(root.join("real"), root.join("link")).expect("linkable");
+
+        let error = replace(&root.join("link/file.md"), &root, b"new")
+            .expect_err("a linked directory is refused, even one that stays below the root");
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            std::fs::read_to_string(root.join("real/file.md")).expect("readable"),
+            "old"
+        );
+        assert!(
+            !root.join("real/.file.md.hone-condense").exists(),
+            "no temporary file is left"
+        );
+
+        replace(&root.join("real/file.md"), &root, b"new").expect("a plain directory works");
+        assert_eq!(
+            std::fs::read_to_string(root.join("real/file.md")).expect("readable"),
+            "new"
+        );
+        assert_eq!(
+            std::fs::read_dir(root.join("real"))
+                .expect("readable")
+                .count(),
+            1,
+            "the temporary file was renamed"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
