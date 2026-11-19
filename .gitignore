@@ -22,3 +22,5 @@ __pycache__/
 
 # Node tooling (Prettier)
 node_modules/
+
+.scratch
