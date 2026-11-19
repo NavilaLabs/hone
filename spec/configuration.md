@@ -17,13 +17,13 @@ Level: Core for reading the resolved configuration; Extended for resolution from
 8. A role has `kind` (`human` or `ai`) and `can`, a subset of `act`, `comment`, and `approve`. Steps and gates name only roles.
 9. `actors` maps a handle to a list of roles. A person not listed in `actors` gets the roles of `"*"`; without `"*"`, such a person has no role.
 10. `select` holds `rules`, a list of `{ when, profile }`, and `default`. `when` compares the ticket's `attributes`: a scalar matches by equality, a list by set membership, and every attribute of `when` MUST match. The first matching rule wins, otherwise `default`. There is no expression language.
-11. A change of the attributes after the ticket started is the event `ticket.attributes_changed` ([process store](process-store.md)).
+11. A change of the attributes after the ticket started is the event `ticket.attributes_changed` ([process store](process-store.md)), and the ticket record holds the attributes after the change. The profile stays.
 
 ## Snapshots
 
-12. When a ticket starts, the resolved configuration with the ticket's `overrides` is stored as a snapshot `.hone/snapshots/<hex>.json`, where `<hex>` is its hash without `sha256:`, and the ticket record names that hash in `config`. Tickets with the same configuration share one snapshot.
+12. When a ticket starts, the resolved configuration with the ticket's `overrides` is stored as a snapshot `.hone/snapshots/<hex>.json`, where `<hex>` is its hash without `sha256:`, and the ticket record names that hash in `config`. Tickets with the same configuration share one snapshot. Starting a ticket writes the ticket record, the snapshot, and the event `ticket.started` with the record's `profile` and `config`. The profile is the result of `select` for the ticket's attributes, unless a human chooses another one at the start ([gates](gates.md#profiles)).
 13. Ticket gates check a ticket against its snapshot ([gates](gates.md#what-check-runs)).
-14. A deliberate switch of a ticket to a new configuration, including a change of its `overrides`, creates a new snapshot and the event `ticket.config_changed`.
+14. A deliberate switch of a ticket to a new configuration, including a change of its `overrides`, creates a new snapshot, writes its hash into the record's `config`, and creates the event `ticket.config_changed`. The profile stays; the new configuration MUST contain it.
 15. Plugins are not frozen: a plugin file exists once, and `lock.yaml` approves exactly one hash per plugin. A ticket whose snapshot names another hash fails its plugin gates with `plugin-hash` until it switches configuration.
 16. A snapshot MUST NOT be deleted while a ticket record, completed or not, refers to it.
 
@@ -79,7 +79,7 @@ Level: Core for reading the resolved configuration; Extended for resolution from
 
 ## Plugins in the configuration
 
-38. In a layer, `plugins/<name>.yaml` holds only `capabilities` and keys `x-<name>`. Every capability is REQUIRED except `net`, which defaults to `[]`. Any other key is an error (`shape`).
+38. In a layer, `plugins/<name>.yaml` holds only `capabilities`, OPTIONAL `language` (`{ extensions }`, for a language plugin, [plugins](plugins.md#language-plugins)), and keys `x-<name>`. Every capability is REQUIRED except `net`, which defaults to `[]`. Any other key is an error (`shape`). Two plugins that claim the same extension are an error (`language-conflict`).
 39. `resolve` adds `wasm: .hone/plugins/<name>.wasm` and `hash`, the SHA-256 of that file. If the file is missing, `lock.yaml` has no entry for the plugin, or the hashes differ, that is an error (`plugin-hash`).
 40. The capabilities MUST stay within the approved ones: `read` and `net` are subsets, `timeout_ms` and `memory_pages` are at most the approved values, and `net` is `[]`. Otherwise: `plugin-capabilities`.
 
@@ -132,6 +132,7 @@ Level: Core for reading the resolved configuration; Extended for resolution from
 | `schema-path`         | A kind schema path leaves its layer, does not exist, is not JSON, or inline | file     |
 | `plugin-hash`         | The `.wasm` file or its lock entry is missing, or the hashes differ         | file     |
 | `plugin-capabilities` | Capabilities beyond the approved ones, or `net` not empty                   | pointer  |
+| `language-conflict`   | Two language plugins claim the same file extension                          | pointer  |
 | `override-forbidden`  | A ticket override touches `protocol`, `ticket`, `plugins`, or a kind schema | pointer  |
 | `shape`               | The result does not match `schemas/config.schema.json`                      | pointer  |
 | `reference`           | A reference of the resolved document does not resolve                       | pointer  |

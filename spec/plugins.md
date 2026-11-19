@@ -9,13 +9,13 @@ Only the contract of this chapter is normative. The reference runtime (Extism) i
 1. A plugin is a WebAssembly module for WASI preview 1 that exports named entry points. Input and output are UTF-8 JSON in the shapes of `schemas/plugin.schema.json`.
 2. The entry points of the protocol:
 
-| Entry point        | Kind            | Input                                                                                            | Output                                                               |
-| ------------------ | --------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
-| `describe()`       | all             | –                                                                                                | Name, version, protocol version, entry points, required capabilities |
-| `check(input)`     | gate            | configuration, ticket, step, parameters, artifacts, optionally `changed_paths` and `tool_output` | `{ findings }`                                                       |
-| `generate(input)`  | generator       | layer, parameters, resolved configuration so far                                                 | patch                                                                |
-| `resolve(anchor)`  | language plugin | anchor (`path#symbol`)                                                                           | location or error                                                    |
-| `public_api(path)` | language plugin | path                                                                                             | list of public symbols                                               |
+| Entry point         | Kind            | Input                                                                                            | Output                                                               |
+| ------------------- | --------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `describe()`        | all             | –                                                                                                | Name, version, protocol version, entry points, required capabilities |
+| `check(input)`      | gate            | configuration, ticket, step, parameters, artifacts, optionally `changed_paths` and `tool_output` | `{ findings }`                                                       |
+| `generate(input)`   | generator       | layer, parameters, resolved configuration so far                                                 | patch                                                                |
+| `resolve(input)`    | language plugin | `state`, `symbols` (a list of `{ path, symbol }`)                                                | `{ results }`, one per symbol                                        |
+| `public_api(input)` | language plugin | `state`, `paths`                                                                                 | `{ results }`, one per path                                          |
 
 3. Custom entry points are named `x-<name>`.
 
@@ -57,3 +57,12 @@ Only the contract of this chapter is normative. The reference runtime (Extism) i
 25. Without `evaluate`, exit code 0 passes and any other exit code is `exec-failed`.
 26. With `evaluate`, the host passes the result as `tool_output: { exit, stdout, stderr, truncated }` to the plugin's `check`, where `truncated` is `true` when one of the outputs was cut. The plugin's findings alone decide. The plugin goes through the same pinning and the same failures as a plugin gate.
 27. The host provides no host functions with which a plugin starts commands.
+
+## Language plugins
+
+28. A language plugin resolves symbols and computes the public API of files of its languages. It exports `resolve` and `public_api`. Only the standard gates `module-anchors-resolve` and `public-api-has-decision` call them ([gates](gates.md#the-standard-gates)); a language plugin is not a gate.
+29. A language plugin in the resolved configuration has `language: { extensions }`, a non-empty list of file extensions without the dot, in lowercase. A file belongs to the plugin whose extensions hold the part of its name after the last `.`, compared in lowercase. Two plugins of one configuration MUST NOT claim the same extension.
+30. The input of `resolve` is `{ protocol, state, symbols }`: `protocol` (`1`), `state` (`project` or `base`, the state the plugin reads under `/project` or `/base`), and `symbols`, a non-empty list of `{ path, symbol }`, where `path` is the file relative to the project root and `symbol` the part of the anchor after `#`. The output is `{ results }`, a list of the same length and order. Each result is `{ status: "found" }` with an OPTIONAL `line` (counted from 1), `{ status: "missing" }`, or `{ status: "unparsable", message }`.
+31. The input of `public_api` is `{ protocol, state, paths }`, with a non-empty list of files. The output is `{ results }`, a list of the same length and order. Each result is `{ status: "ok", symbols }`, a list of strings, or `{ status: "unparsable", message }`. The host compares `symbols` only as sets of strings; what a string describes (a name, a signature) is the plugin's choice, and it MUST be the same for the same API in both states.
+32. The host calls a language plugin at most once per gate, entry point, and state, with every symbol or file of that gate for the plugin, and with a fresh instance. The rules of the runtime (items 10 to 13) and of capabilities and trust (items 15 to 18) apply as to a gate.
+33. If a language plugin fails as in item 14, or returns a list of another length, the gate gets the finding `plugin-failed` naming the plugin, and keeps the results of the other language plugins.
