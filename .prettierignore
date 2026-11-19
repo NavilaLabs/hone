@@ -22,3 +22,6 @@ package-lock.json
 # The resolved configuration and snapshots are the canonical form (RFC 8785) plus a newline.
 **/.hone/resolved.json
 **/.hone/snapshots/
+
+# Worktrees of agent sessions are separate checkouts with their own fixtures.
+.claude/worktrees/
