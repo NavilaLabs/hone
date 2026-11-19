@@ -495,7 +495,7 @@ impl ProcessStore {
         std::io::Read::read_to_end(&mut opened, &mut bytes).map_err(io)?;
         let condensed = condense::rewrite(&path, &bytes, &review)
             .map_err(|message| invalid(format!("{path}: {message}")))?;
-        replace(&file, &condensed).map_err(io)?;
+        replace(&file, &self.project_root, &condensed).map_err(io)?;
         Ok(Condensed { path, review })
     }
 
@@ -937,12 +937,25 @@ fn object(value: Value) -> Map<String, Value> {
 }
 
 // A new file next to `path`, renamed over it: a rename replaces a link planted at `path` instead
-// of writing through it.
-fn replace(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+// of writing through it. The parent directory is checked below `root` before the file is created
+// and again just before the rename, which narrows, but does not close, the window in which a
+// writer of the directory can swap the parent for a link.
+fn replace(path: &Path, root: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let parent = path.parent().unwrap_or(root);
+    let outside = || {
+        std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "the directory leads outside the project root",
+        )
+    };
+    let canonical = parent.canonicalize()?;
+    if !log::below(&canonical, root) {
+        return Err(outside());
+    }
     let temporary = path.with_file_name(format!(".{name}.hone-condense"));
     let written = (|| {
         let mut file = File::options()
@@ -951,6 +964,9 @@ fn replace(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
             .open(&temporary)?;
         std::io::Write::write_all(&mut file, bytes)?;
         file.sync_all()?;
+        if parent.canonicalize()? != canonical {
+            return Err(outside());
+        }
         std::fs::rename(&temporary, path)
     })();
     if written.is_err() {
