@@ -76,13 +76,12 @@ From artifact storage, the protocol requires only a directory that can be read a
 
 ### Process store
 
-- **The source of truth is an append-only event log, one log per device and project**, to which only that device appends. There are no competing writers. Merging means reading all logs and taking the union.
-- **Segments.** A device's log consists of segments: `log/<device>/<number>.ndjson`. The number is decimal without leading zeros and starts at 1. The segment with the highest number is open, every lower one is closed. A segment is closed after a fixed number of events or a fixed size (the thresholds are up to the tool). Closed segments are immutable and may be compressed (`.ndjson.zst`). Events are never rewritten, there is no compaction. Archiving and dropping (Section 10) operate on whole segments of completed tickets.
-- **Lines.** Every line of a segment is one event as JSON in the canonical form of RFC 8785, ending with `\n`, so that the bytes of an event are unambiguous (a later `sig` signs them). A last line without `\n` in the open segment is an interrupted write: readers ignore it, and the writer cuts it off before it appends again. In a closed segment, it is an error.
-- **Every event has a sequence number** (`seq`) in its device's log. It starts at 1 and grows by exactly 1. A gap is allowed only where whole segments are missing (archived or dropped). The **cursor** of a state is a map `device → last seq` and says exactly what a peer is missing (Section 4, "Replication").
-- **Order without a shared clock.** The order is deterministic: topological by `after` and, within one device, by `seq`. Ties are broken by `id`, which is a UUIDv7 and therefore starts with the time of writing (Question 11, Question 31). `after` expresses causality only: it lists, for every other device, the newest event the writer had read when it wrote. What an event refers to (a thread, an artifact) lives in `payload`. Diverging clocks therefore change at most the order of concurrent events, never the order of events that knew each other. A reference in `after` to an event that is not present (a lost or not yet synchronized device) does not count. A cycle cannot arise honestly, and if it does, the events in it are ordered by `id`.
+The rules of the process store (logs, segments, lines, the envelope, the event types, the reading rules, the order, and the cursor) are normative text in [`spec/process-store.md`](../spec/process-store.md) (Question 41). The reasons behind them:
+
+- **One log per device.** Only one device appends to a log, so there are no competing writers, and merging is a union. Diverging clocks change at most the order of concurrent events, never the order of events that knew each other, because `after` carries causality.
+- **Canonical lines.** RFC 8785 makes the bytes of an event unambiguous, which a later `sig` will sign. A torn last line is an interrupted write, not corruption.
+- **Full UUIDv7 IDs.** Duplicate IDs are ignored during sync, so a collision would silently swallow an event. The timestamp of the ID is the only time of an event, so two fields cannot contradict each other.
 - **Why no database format as the source of truth.** Database files from two devices cannot be merged without conflicts, neither through a shared folder nor through Git. Appended text files can. For fast queries, an implementation builds an index (for example an embedded database). It is a cache, can be rebuilt from the logs at any time, and is not part of the protocol (Section 12).
-- **Local storage:** a directory per workspace and project (hone: Section 12) with `log/` and the sync state. Without a server, the workspace is `local`. All clones and worktrees of a project share this storage, because a ticket lives across branches. If the directory does not exist, the process store is unavailable. If it exists but holds no events, the store is empty.
 - **Lost devices.** Whatever a device never synchronized is lost with it. If a device's `seq` ends, that is not an error.
 
 ```yaml
@@ -98,46 +97,9 @@ after: [ev-0193a8f1-...] # optional: the newest known event of every other devic
 payload: { thread: th-0193a8f0-..., body: "..." }
 ```
 
-Event IDs are UUIDv7: 128 bits, most of them random, available as a library in every language, and sortable by time. The full length is necessary because duplicate IDs are ignored during sync, and a collision would silently swallow an event. The timestamp of the UUIDv7 is the time of writing. It is the only time of an event, there is no separate `date`, so that two fields cannot contradict each other. The field `sig` is reserved for a later protocol version (signature by the device). Version 1 has no signatures, and an event with `sig` is invalid.
-
-**Envelope.** The fields above are the envelope: `id`, `project`, `ticket`, `device`, `seq`, `type`, `author` (`name`, a handle, and `role`, a role key), and `payload` are required, `after` is optional. Further fields exist only as `x-<name>`. The schema is `schemas/event.schema.json`.
-
-**Types of version 1** and their payloads:
-
-| Type                        | Payload                                                                    | Section |
-| --------------------------- | -------------------------------------------------------------------------- | ------- |
-| `thread.opened`             | `kind`, `blocking`, `anchor`, `body`                                       | 10      |
-| `thread.message`            | `thread`, `body`                                                           | 10      |
-| `thread.resolved`           | `thread`                                                                   | 10      |
-| `thread.reopened`           | `thread`                                                                   | 10      |
-| `approval.given`            | `artifact`, `hash`, `decision` (`approved`, `changes-requested`), `proof?` | 10      |
-| `review.confirmed`          | `artifact`, `hash`                                                         | 10      |
-| `step.changed`              | `step`, `status` (`open`, `done`, `skipped`), `reason?`                    | 5       |
-| `ticket.started`            | `profile`, `config`                                                        | 8       |
-| `ticket.attributes_changed` | `attributes`                                                               | 8       |
-| `ticket.config_changed`     | `config`                                                                   | 8       |
-
-A known type has a fixed payload schema. Custom types are named `x-<name>` and have a free payload. A type that is neither known nor `x-…` (for example from a newer protocol version) is kept and ordered, but ignored by every computed status.
-
-**Reading.** An event that violates the schema, lies in the log of another device, belongs to another project, breaks the rules of `seq`, or has the `id` of another event with different content is invalid. It is not read, and the reader reports it. The same event twice (same `id`, same content) counts once. Below `log/`, only directories named by a device ID and, in them, files named `<number>.ndjson` count. Everything else is ignored.
-
 ### Replication
 
-**Contract (per project):** `append(events)`, `read(cursor) → events`, `sync(peer)`. During sync, both sides exchange their cursors and send each other what is missing. Events are never changed, duplicate IDs are ignored. The tool computes status and order deterministically from the set (order: see above), so there are no merge conflicts. In detail (Question 33):
-
-- **Cursor.** A JSON object from device ID to `seq`, for example `{"dev-3k9a5h2t": 118, "dev-7q2m8x4c": 5}`. A device that is missing counts as 0. The cursor of a state names, for every device, the highest `seq` up to which its valid events are contiguous, counted from its first valid event. A valid event behind a hole (an invalid line in the middle) does not raise the cursor.
-- **`read(cursor)`** returns every event of the state with `seq` greater than the cursor's value for its device, up to that device's own cursor. The events of one device come in ascending `seq`, the devices in any order: the receiver computes the order of the set itself. Invalid events are never returned.
-- **`append(events)`** takes events in order. An event that is already present with the same content (same `id`, same bytes) is accepted and changes nothing. An event is stored only when it continues its device's log (`seq` is the cursor plus 1). The first event that cannot be stored ends the call: everything before it is stored, nothing after it.
-- **`sync(peer)`** is `read` and `append` in both directions, each side with the other's cursor.
-- **Segments of a replica.** Only `seq` is shared. Every store cuts the segments of every log with its own thresholds, including the logs of other devices it holds. A device's own log in a shared folder is the same log as the local one and is therefore written byte for byte.
-- **Duplicates and conflicts.** An incoming event is compared with the event the receiver holds at the same device and `seq`. The same bytes are a duplicate and are ignored. The same `id` with other content is an **`id-conflict`**, as is an `id` the receiver holds at another device or `seq`. Another `id` at the same device and `seq` is a **`fork`**: two machines write as one device, for example after a data directory was copied. In all conflict cases the receiver keeps its copy, does not store the incoming event or any later one of that device from this peer, and reports it. The states may then diverge until a person resolves the fork.
-
-**Shared folder.** A shared folder (a mounted directory, Nextcloud, Syncthing, a network drive) is a peer without a program on the other side. Its layout is normative, so that tools of different vendors can share one folder: below the folder root, the folder holds process stores in the layout of the local store, `<workspace>/<project>/log/<device>/<number>.ndjson`. One folder can therefore serve many projects, for example as a backup target. The reading rules apply to it unchanged. Sync with a folder means:
-
-- **Pull.** For every device, including the own one, the receiver imports the valid events after its cursor, as long as their `seq` is contiguous. It stops at the first gap, the first invalid line, or the first conflict, and reports that. A torn line, a gap left by a segment that has not arrived yet, or a closed segment that is still being written thus delays the import until the next sync and never causes a gap. Importing the own device restores a log from a backup.
-- **Push.** A device writes only its own log into the folder, never that of another device, so that two writers never touch the same file. For every segment of its own log, the folder copy must be a byte prefix of the local segment: the missing rest is appended, a missing file is created. If the folder copy is not a prefix, that is a `fork`, and the file stays untouched. Push never overwrites, renames, or deletes anything in the folder. Only complete lines are pushed.
-- **Untrusted content.** The folder is untrusted. As everywhere, directories that are not named by a device ID and files that are not named `<number>.ndjson` are ignored, including the conflict copies of sync tools and renamed logs such as `dev-7q2m8x4c-old/`. Only regular files are opened, never a FIFO or a device. Every path is resolved to its canonical form and must stay below the folder root, otherwise it is neither read nor written and is reported as **`unsafe-path`**. A file or directory hone may not read or write is skipped and reported as **`permission-denied`**, so that a planted entry cannot stop the sync of everyone else (Question 35). A line that breaks the reading rules is reported as **`invalid-event`**.
-- **Missing folder.** If the folder root does not exist, sync fails and creates nothing, because an unmounted share would otherwise fill a local directory. The project directory below the root is created on the first push. If the local store does not exist, sync creates it. It creates no device ID, because a device that has written nothing needs none.
+The replication contract (`append`, `read`, `sync`, duplicates and conflicts), the shared folder, and the server transport with its error codes are normative text in [`spec/replication.md`](../spec/replication.md) (Question 41). Events are never changed and status and order are computed from the set, so there are no merge conflicts; a `fork` (two machines writing as one device, for example after a copied data directory) is the one conflict a person resolves. A shared folder needs no program on the other side; its layout is normative so that tools of different vendors can share one folder, and one folder can serve many projects, for example as a backup target. Push never touches another device's files, so two writers never write the same file, and a planted entry in the folder cannot stop the sync of everyone else.
 
 A shared folder has no real time and no permissions below the access to the folder. A Git branch is a shared folder whose root is a worktree of that branch (Section 12).
 
@@ -155,48 +117,9 @@ A shared folder has no real time and no permissions below the access to the fold
 
 The replication contract is part of the protocol (Question 19). The server that speaks it and the user interface belong to the reference implementation and are open source. Anyone can build their own server or client or run the reference server themselves.
 
-**Normative scope of the server contract** (Question 26), so that third-party clients and servers fit together:
-
-- Replication: `append`, `read(cursor)`, `sync`.
-- Real-time subscription: new events from a cursor onwards as a stream.
-- Authentication only as a transport requirement: bearer token. How the client obtains it is governed by OAuth 2.0 or OpenID Connect.
-- Rejection of events outside the scope and of approvals with a mismatching role, with defined error codes.
-
-**Server transport** (Question 33). HTTP with JSON. The base URL comes from the context (Section 12), the project is part of the path, and every request carries `Authorization: Bearer <token>`.
-
-| Request                                                     | Meaning                                                                                                                                                        |
-| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /v1/projects/{project}/cursor`                         | The server's cursor as JSON                                                                                                                                    |
-| `POST /v1/projects/{project}/events`                        | `append`: the body is NDJSON, one event per line in its canonical form. Answer `200` with `{"cursor": …}`, the server's cursor after storing                   |
-| `GET /v1/projects/{project}/events?cursor=<device>:<seq>,…` | `read`: the answer is NDJSON (`application/x-ndjson`). An empty `cursor` means the empty cursor                                                                |
-| The same request with `Accept: text/event-stream`           | Real-time subscription (Server-Sent Events): first what `read` returns, then every new event, one event per `data:` line, as long as the connection stays open |
-
-Details of the transport (Question 34):
-
-- **Body of `append`.** The request carries `Content-Type: application/x-ndjson`. Every line is one event in its canonical form. The last line may lack its `\n`, an empty line is an event that breaks the reading rules. An empty body stores nothing and is answered with the cursor.
-- **Cursor in the query.** Every entry is a device ID, a colon, and a `seq` in decimal without leading zeros, and every device appears at most once. `0` is allowed and means the same as a missing device. The cursor as JSON follows the same rules.
-- **Checks of a call.** The token is checked first (`unauthenticated`), so that nobody learns anything about projects without one. Then come the request itself (`invalid-request`), the project (`not-found`), and the access (`forbidden`).
-- **Checks of an event,** in this order: the reading rules (`invalid-event`), the project of the path (`scope-mismatch`), the authenticated identity and the identity the device belongs to (`identity-mismatch`), the role of an approval (`role-mismatch`), then the event the server holds at the same device and `seq` (an identical one is accepted, otherwise `fork`; the same `id` elsewhere is `id-conflict`), and last the continuation of the log (`seq-gap`). The identity is checked before duplicates, so that a client cannot append another author's event even when the server already holds it. A device belongs to the author of the first of its events the server holds: since device IDs are not secret, another member could otherwise append under a foreign device and block it with a `fork`.
-- **Subscription.** Per device, the stream continues in ascending `seq` without a gap or a repetition, across the part `read` returns and the live part. It carries only `data:` lines, one event each, and comment lines (`:`) as a heartbeat, no `id:` or `event:` fields. A server may close a subscriber that falls behind, and the client subscribes again with its cursor. An error before the stream starts is answered with the status and body of the table.
+**Normative scope of the server contract** (Question 26): replication, the real-time subscription, the bearer token as a transport requirement (how a client obtains it is governed by OAuth 2.0 or OpenID Connect), and the rejection of events outside the scope and of approvals with a mismatching role, with defined error codes. The transport is specified in [`spec/replication.md`](../spec/replication.md) (Questions 33 and 34). The identity is checked before duplicates, so that a client cannot append another author's event even when the server already holds it; a device belongs to the author of its first event on the server, because device IDs are not secret and another member could otherwise block a device with a `fork`.
 
 A client writes the author of its context into its events. It appends only events it wrote itself, because the identity check would reject those of others. Sync with a server is `cursor`, `append`, and `read` composed by the client.
-
-**Error codes.** An error is answered with the HTTP status of the table and the body `{"code": …, "message": …, "seq"?: …, "event"?: …, "cursor"?: …}`. `seq` and `event` name the rejected event, `cursor` is the server's cursor after the events stored before it. Rejecting an event ends the call as described under `append`: the events of that device after it are not stored, and the client recovers (Section 12).
-
-| Code                | Status | Meaning                                                                                                                                                     |
-| ------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `invalid-request`   | 400    | The request is malformed: a cursor against the rules above, a body that is not UTF-8, a wrong media type or method, a project path that is not a project ID |
-| `unauthenticated`   | 401    | The bearer token is missing or invalid                                                                                                                      |
-| `forbidden`         | 403    | The identity has no access to the project. Who has access is the server's business                                                                          |
-| `not-found`         | 404    | The server does not serve the project, or the path names no request of the table                                                                            |
-| `too-large`         | 413    | The body exceeds the server's limit. The limit is the server's business                                                                                     |
-| `scope-mismatch`    | 422    | The event's `project` is not the project of the path                                                                                                        |
-| `identity-mismatch` | 422    | `author.name` is not the authenticated identity, or the device belongs to another identity on the server                                                    |
-| `role-mismatch`     | 422    | An `approval.given` names a role that `actors` does not give its author                                                                                     |
-| `invalid-event`     | 422    | The line breaks the reading rules (schema, canonical form, `sig`, …)                                                                                        |
-| `seq-gap`           | 409    | The event does not continue its device's log on the server                                                                                                  |
-| `fork`              | 409    | The server holds another event at the same device and `seq`                                                                                                 |
-| `id-conflict`       | 409    | The server holds an event with the same `id` and other content                                                                                              |
 
 **Not normative** are permission management (who sees which project), administration, and notifications. Every server solves these on its own.
 
@@ -1372,7 +1295,7 @@ All questions of this draft are decided. The numbers stay stable because the tex
 8. Done: the plugin contract (Question 32) with Extism as the runtime and `schemas/plugin.schema.json`, the gate `public-api-has-decision` in Rust under `plugins/`, capabilities and hash pinning checked on every run against a lockfile the caller may replace, `exec` gates with approved commands and `evaluate`, and `--base` and `--lock` on the command line and over MCP.
 9. Done: the replication contract in the decided scope (Question 26, Question 33, Question 34, Question 35: unreadable entries of a shared folder are skipped and reported) with the test cases `schemas/tests/read/`, `schemas/tests/sync/`, and `schemas/tests/append/`, the shared folder as the first reference backend (`hone sync --folder`), the reference server as the crate `hone-server` (`hone serve`: HTTP, NDJSON, Server-Sent Events, bearer authentication, every error code of Section 4), and the client (`hone sync --server [--watch]`, the MCP tool `sync` with `--sync-folder` or `--sync-server`).
 10. In progress: the desktop GUI `hone-gui` over the command line and `hone log` (Question 36), approvals and condensation as commands (Question 37), the Git branch as a shared folder (Question 38), contexts (Question 39), and the Rust plugin `module-anchors-resolve` (Question 40) are done. Open: plugins for other languages, credentials in an OS keyring, `export` and `forget`, and delivery.
-11. In progress: the normative specification in `spec/` (Question 41). Written: the conventions and levels (`spec/README.md`) and conformance with every test case format (`spec/conformance.md`). Open: artifacts, configuration, gates, plugins, process store, replication, and review, each moved out of this concept chapter by chapter.
+11. In progress: the normative specification in `spec/` (Question 41). Written: the conventions and levels (`spec/README.md`), conformance with every test case format (`spec/conformance.md`), the process store (`spec/process-store.md`), and replication (`spec/replication.md`). Open: artifacts, configuration, gates, plugins, and review, each moved out of this concept chapter by chapter.
 
 ## Sources
 
