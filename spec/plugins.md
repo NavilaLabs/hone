@@ -23,7 +23,7 @@ Only the contract of this chapter is normative. The reference runtime (Extism) i
 
 4. The input has `protocol` (`1`), `config`, `ticket`, `step`, `params`, and `artifacts`, OPTIONAL `changed_paths`, and, for a plugin named by `evaluate`, `tool_output`. It contains no `null`.
 5. `config` is the configuration the gate runs against (the ticket's snapshot). `ticket` is the data of the ticket record. `step` is the name of the step. `params` is the `params` of the gate entry, `{}` when it has none; for a plugin named by `evaluate`, the `params` of the `exec` gate.
-6. `artifacts` lists every artifact of the checked directory, not only the ticket's, including ticket records. Each entry has `path` (relative to the project root), `status` (the effective status, absent when the artifact has no declared status), `hash` (computed by the rule of the content hash for every entry, also for lifecycle `living` and the ticket record), `data` (the data model of the file), and `body` (the Markdown body, `""` for a YAML file). `id` and `type` live only in `data`. A file that violates the YAML profile is absent.
+6. `artifacts` lists every artifact of the checked directory, not only the ticket's, including ticket records. Each entry has `path` (relative to the project root), `status` (the effective status, absent when the artifact has no declared status), `hash` (the content hash, present exactly when the artifact's kind has lifecycle `decided`; a living artifact and a ticket record have none), `data` (the data model of the file), and `body` (the Markdown body, `""` for a YAML file). `id` and `type` live only in `data`. A file that violates the YAML profile is absent.
 7. `changed_paths` is absent when the caller supplied none.
 
 ## Output

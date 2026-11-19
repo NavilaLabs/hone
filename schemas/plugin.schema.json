@@ -56,7 +56,7 @@
     },
     "Artifact": {
       "type": "object",
-      "required": ["path", "hash", "data", "body"],
+      "required": ["path", "data", "body"],
       "properties": {
         "path": {
           "description": "The file, relative to the project root.",
@@ -67,7 +67,7 @@
           "type": "string"
         },
         "hash": {
-          "description": "The content hash (concept Section 5).",
+          "description": "The content hash (spec/artifacts.md). Present exactly when the artifact's kind has lifecycle `decided`; a living artifact and a ticket record have none.",
           "$ref": "common.schema.json#/$defs/Hash"
         },
         "data": {
