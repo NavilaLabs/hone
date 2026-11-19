@@ -52,6 +52,7 @@ pub(crate) struct Log {
     pub(crate) open_segments: BTreeMap<String, OpenSegment>,
     pub(crate) locations: BTreeMap<String, (String, usize)>,
     pub(crate) unsafe_paths: BTreeSet<String>,
+    pub(crate) denied_paths: BTreeSet<String>,
 }
 
 impl Log {
@@ -140,17 +141,21 @@ pub(crate) fn read(store: &Path, project: &str, root: &Path) -> std::io::Result<
     let mut log = Log::default();
     let mut candidates = Vec::new();
     let directory = store.join("log");
-    if !directory.exists() {
+    if !log.is_directory(&directory, "log")? {
         return Ok(log);
     }
     if !log.permitted(&directory, "log", root) {
         return Ok(log);
     }
-    for device in sorted_entries(&directory)? {
+    let Some(devices) = log.listed(&directory, "log")? else {
+        return Ok(log);
+    };
+    for device in devices {
         let path = directory.join(&device);
+        let relative = format!("log/{device}");
         if manifest::is_device_id(&device)
-            && path.is_dir()
-            && log.permitted(&path, &format!("log/{device}"), root)
+            && log.is_directory(&path, &relative)?
+            && log.permitted(&path, &relative, root)
         {
             read_device(
                 &directory,
@@ -172,8 +177,48 @@ impl Log {
         if below(path, root) {
             return true;
         }
-        self.report_unsafe(relative);
+        match path.canonicalize() {
+            Err(error) if error.kind() == ErrorKind::PermissionDenied => {
+                self.report_denied(relative)
+            }
+            _ => self.report_unsafe(relative),
+        }
         false
+    }
+
+    fn is_directory(&mut self, path: &Path, relative: &str) -> std::io::Result<bool> {
+        match std::fs::metadata(path) {
+            Ok(metadata) => Ok(metadata.is_dir()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+            Err(error) if error.kind() == ErrorKind::PermissionDenied => {
+                self.report_denied(relative);
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    // A writer of a shared folder can plant an entry hone may not read; it must not stop the
+    // whole read.
+    fn listed(&mut self, directory: &Path, relative: &str) -> std::io::Result<Option<Vec<String>>> {
+        match sorted_entries(directory) {
+            Ok(names) => Ok(Some(names)),
+            Err(error) if error.kind() == ErrorKind::PermissionDenied => {
+                self.report_denied(relative);
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn report_denied(&mut self, relative: &str) {
+        self.denied_paths.insert(relative.to_owned());
+        self.invalid.push(InvalidEvent {
+            path: relative.to_owned(),
+            line: None,
+            ticket: None,
+            message: "the path cannot be read: permission denied".into(),
+        });
     }
 
     fn report_unsafe(&mut self, relative: &str) {
@@ -383,7 +428,10 @@ fn read_device(
 ) -> std::io::Result<()> {
     let directory = log_directory.join(device);
     let mut numbers = Vec::new();
-    for name in sorted_entries(&directory)? {
+    let Some(names) = log.listed(&directory, &format!("log/{device}"))? else {
+        return Ok(());
+    };
+    for name in names {
         if let Some(captures) = SEGMENT.captures(&name) {
             if let Ok(number) = captures[1].parse::<u64>()
                 && log.permitted(
@@ -408,10 +456,17 @@ fn read_device(
     let mut previous: Option<(u64, u64)> = None;
     for number in numbers {
         let path = format!("log/{device}/{number}.ndjson");
-        let Some(mut file) = open_below(&directory.join(format!("{number}.ndjson")), root, false)?
-        else {
-            log.report_unsafe(&path);
-            continue;
+        let mut file = match open_below(&directory.join(format!("{number}.ndjson")), root, false) {
+            Ok(Some(file)) => file,
+            Ok(None) => {
+                log.report_unsafe(&path);
+                continue;
+            }
+            Err(error) if error.kind() == ErrorKind::PermissionDenied => {
+                log.report_denied(&path);
+                continue;
+            }
+            Err(error) => return Err(error),
         };
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;

@@ -20,6 +20,8 @@ pub enum SyncCode {
     InvalidEvent,
     /// A path that leads outside the shared folder.
     UnsafePath,
+    /// A file or directory in the shared folder that hone may not read or write.
+    PermissionDenied,
     /// The server rejected an own event of another project.
     ScopeMismatch,
     /// The server rejected an own event whose author is not the authenticated identity.
@@ -83,7 +85,19 @@ pub(crate) fn sync_folder(
 ) -> std::io::Result<SyncReport> {
     let mut report = SyncReport::default();
     let remote = folder.join(workspace).join(project);
-    let remote_exists = remote.symlink_metadata().is_ok();
+    let remote_exists = match remote.symlink_metadata() {
+        Ok(_) => true,
+        Err(error) if error.kind() == ErrorKind::PermissionDenied => {
+            report.problem(
+                SyncCode::PermissionDenied,
+                remote.display().to_string(),
+                None,
+                "the project directory cannot be examined: permission denied".into(),
+            );
+            return Ok(report);
+        }
+        Err(_) => false,
+    };
     if remote_exists && !log::below(&remote, folder) {
         report.problem(
             SyncCode::UnsafePath,
@@ -102,6 +116,8 @@ pub(crate) fn sync_folder(
     for invalid in &remote_log.invalid {
         let code = if remote_log.unsafe_paths.contains(&invalid.path) {
             SyncCode::UnsafePath
+        } else if remote_log.denied_paths.contains(&invalid.path) {
+            SyncCode::PermissionDenied
         } else {
             SyncCode::InvalidEvent
         };
@@ -317,7 +333,18 @@ fn push(
         }
         let target = target_directory.join(&name);
         let exists = target.symlink_metadata().is_ok();
-        let opened = log::open_below(&target, folder, true)?;
+        let opened = match log::open_below(&target, folder, true) {
+            Err(error) if error.kind() == ErrorKind::PermissionDenied => {
+                report.problem(
+                    SyncCode::PermissionDenied,
+                    target.display().to_string(),
+                    None,
+                    "the segment in the shared folder cannot be written: permission denied".into(),
+                );
+                break;
+            }
+            opened => opened?,
+        };
         let Some(mut file) = opened else {
             report.problem(
                 SyncCode::UnsafePath,
@@ -371,6 +398,16 @@ fn directory_below(
     for component in components {
         path.push(component);
         match std::fs::create_dir(&path) {
+            Err(error) if error.kind() == ErrorKind::PermissionDenied => {
+                report.problem(
+                    SyncCode::PermissionDenied,
+                    path.display().to_string(),
+                    None,
+                    "the directory cannot be created in the shared folder: permission denied"
+                        .into(),
+                );
+                return Ok(None);
+            }
             Err(error) if error.kind() != ErrorKind::AlreadyExists => return Err(error),
             _ => {}
         }

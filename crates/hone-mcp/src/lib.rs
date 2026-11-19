@@ -383,7 +383,7 @@ impl Server {
     }
 
     #[tool(
-        description = "Sync the process store with the shared folder or the replication server the MCP server was started with: the events `received` and `sent` per device, and the `problems` (fork, id-conflict, invalid-event, unsafe-path, scope-mismatch, identity-mismatch, role-mismatch, seq-gap)."
+        description = "Sync the process store with the shared folder or the replication server the MCP server was started with: the events `received` and `sent` per device, and the `problems` (fork, id-conflict, invalid-event, unsafe-path, permission-denied, scope-mismatch, identity-mismatch, role-mismatch, seq-gap)."
     )]
     fn sync(&self) -> CallToolResult {
         let peer = match &self.project.sync_peer {
