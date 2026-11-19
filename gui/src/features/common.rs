@@ -223,7 +223,14 @@ pub(crate) fn event_time(id: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::event_time;
+    use super::{event_time, failure_title};
+
+    #[test]
+    fn a_refusal_is_not_called_a_failure_to_run() {
+        assert_eq!(failure_title("invalid"), "hone refused it (invalid)");
+        assert_eq!(failure_title("refused"), "hone refused it (refused)");
+        assert_eq!(failure_title("error"), "hone could not run (error)");
+    }
 
     #[test]
     fn the_time_of_an_event_comes_from_its_uuid_v7() {
