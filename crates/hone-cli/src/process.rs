@@ -3,10 +3,11 @@ use std::process::ExitCode;
 
 use clap::{Args, Subcommand, ValueEnum};
 use hone_core::{
-    Appended, Author, Change, Peer, ProcessError, ProcessStore, Server, StepStatus, SyncReport,
-    ThreadAnchor, ThreadStatus, TicketEvents,
+    Appended, Author, Change, Cursor, Peer, ProcessError, ProcessStore, Server, StepStatus,
+    SyncReport, ThreadAnchor, ThreadStatus, TicketEvents,
 };
 use serde::Serialize;
+use serde_json::Value;
 
 #[derive(Args)]
 pub(crate) struct Target {
@@ -237,6 +238,23 @@ pub(crate) fn run_events(arguments: &EventsArguments) -> ExitCode {
     finish(target.json, outcome, print_events)
 }
 
+/// The valid events of a process store and its cursor.
+#[derive(Serialize)]
+struct StoreLog {
+    cursor: Cursor,
+    events: Vec<Value>,
+}
+
+pub(crate) fn run_log(target: &Target) -> ExitCode {
+    let outcome = ProcessStore::locate(&target.root, None).and_then(|store| {
+        Ok(StoreLog {
+            cursor: store.cursor()?,
+            events: store.read(&Cursor::new())?,
+        })
+    });
+    finish(target.json, outcome, print_log)
+}
+
 #[derive(Args)]
 pub(crate) struct SyncArguments {
     #[command(flatten)]
@@ -391,6 +409,18 @@ fn print_appended(appended: &Appended) {
             event["type"].as_str().unwrap_or_default(),
             event["id"].as_str().unwrap_or_default()
         ),
+    }
+}
+
+fn print_log(log: &StoreLog) {
+    for event in &log.events {
+        println!(
+            "{} {} {} {}",
+            printable(event["device"].as_str().unwrap_or_default()),
+            event["seq"],
+            printable(event["type"].as_str().unwrap_or_default()),
+            printable(event["id"].as_str().unwrap_or_default())
+        );
     }
 }
 

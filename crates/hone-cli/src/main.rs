@@ -43,6 +43,8 @@ enum Command {
     Step(process::Step),
     /// Show the process state of a ticket: events, threads, steps, and invalid events.
     Events(process::EventsArguments),
+    /// Show every valid event of the project's process store and its cursor.
+    Log(process::Target),
     /// Sync the process store with a shared folder or a server. Exits with 0 when the sync found
     /// no problem, 1 when it reported problems, and 2 when it could not run.
     Sync(process::SyncArguments),
@@ -108,6 +110,7 @@ fn main() -> ExitCode {
         Command::Thread(thread) => process::run_thread(thread),
         Command::Step(step) => process::run_step(step),
         Command::Events(arguments) => process::run_events(&arguments),
+        Command::Log(target) => process::run_log(&target),
         Command::Sync(arguments) => process::run_sync(&arguments),
         Command::Serve { config } => match hone_server::Config::load(&config) {
             Ok(config) => match hone_server::serve(config) {
