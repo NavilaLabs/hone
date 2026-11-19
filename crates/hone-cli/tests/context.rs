@@ -440,3 +440,48 @@ fn the_mcp_server_does_not_start_with_a_context_it_cannot_use() {
         "{message}"
     );
 }
+
+#[test]
+fn login_refuses_before_it_touches_the_keyring() {
+    let scratch = Scratch::new("login");
+    let login = |name: &str, input: &str| {
+        use std::io::Write;
+        let mut child = Command::new(env!("CARGO_BIN_EXE_hone"))
+            .args(["context", "login", name, "--json"])
+            .env("HONE_CONFIG_DIR", scratch.root.join("config"))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("hone runs");
+        child
+            .stdin
+            .take()
+            .expect("piped")
+            .write_all(input.as_bytes())
+            .expect("writable");
+        let output = child.wait_with_output().expect("hone ends");
+        assert_eq!(output.status.code(), Some(1));
+        json_of(&output)
+    };
+    assert_eq!(
+        login("ghost", "token\n"),
+        json!({ "status": "invalid", "message": "no context `ghost`: create it with hone context set" })
+    );
+    let folder = scratch.root.join("folder").display().to_string();
+    scratch.hone(&["context", "set", "shared", "--folder", &folder]);
+    assert_eq!(
+        login("shared", "token\n"),
+        json!({ "status": "invalid", "message": "the context `shared` has no server, so it needs no token" })
+    );
+    scratch.hone(&[
+        "context",
+        "set",
+        "hone-test-login",
+        "--server",
+        "http://127.0.0.1:9",
+    ]);
+    assert_eq!(
+        login("hone-test-login", "\n"),
+        json!({ "status": "invalid", "message": "no token: pass it as one line on standard input" })
+    );
+}
