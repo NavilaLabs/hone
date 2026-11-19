@@ -324,6 +324,103 @@ async fn a_pure_check_runs_no_exec_gate() {
 }
 
 #[tokio::test]
+async fn a_review_follows_approvals_condensing_and_confirming() {
+    let scratch = Scratch::new("review").with_store();
+    let hone = scratch.hone();
+    let before = hone.review(TICKET, "dec-7k3m2q8p").await.expect("shown");
+    assert!(before.decisions.is_empty());
+    assert_eq!(
+        before.path,
+        "design/decisions/dec-7k3m2q8p-payment-async.md"
+    );
+
+    let approve = |changes_requested: bool, proof: Option<&str>| Write::Approve {
+        ticket: TICKET.into(),
+        artifact: "dec-7k3m2q8p".into(),
+        changes_requested,
+        proof: proof.map(str::to_owned),
+    };
+    hone.write(&alice(), &approve(false, Some("read twice")))
+        .await
+        .expect("approved");
+    let bob = Writer {
+        author: "bob".into(),
+        role: "human".into(),
+    };
+    hone.write(&bob, &approve(true, None))
+        .await
+        .expect("changes requested");
+    let refused = hone
+        .write(
+            &Writer {
+                author: "bob".into(),
+                role: "architect".into(),
+            },
+            &approve(false, None),
+        )
+        .await
+        .expect_err("bob is no architect");
+    assert_eq!(refused.status, "invalid");
+
+    let review = hone.review(TICKET, "dec-7k3m2q8p").await.expect("shown");
+    let decisions: Vec<(&str, &str, bool, Option<&str>)> = review
+        .decisions
+        .iter()
+        .map(|decision| {
+            (
+                decision.name.as_str(),
+                decision.decision.as_str(),
+                decision.current,
+                decision.proof.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        decisions,
+        [
+            ("alice", "approved", true, Some("read twice")),
+            ("bob", "changes-requested", true, None),
+        ]
+    );
+
+    let path = hone
+        .condense(TICKET, "dec-7k3m2q8p")
+        .await
+        .expect("condensed");
+    assert_eq!(path, "design/decisions/dec-7k3m2q8p-payment-async.md");
+    let confirm = Write::ConfirmReview {
+        ticket: TICKET.into(),
+        artifact: "dec-7k3m2q8p".into(),
+    };
+    hone.write(&alice(), &confirm).await.expect("confirmed");
+    let after = hone.review(TICKET, "dec-7k3m2q8p").await.expect("shown");
+    assert_eq!(after.hash, review.hash, "condensing keeps the content hash");
+    assert!(
+        after
+            .confirmations
+            .iter()
+            .all(|confirmation| confirmation.current)
+    );
+    assert_eq!(after.confirmations.len(), 1);
+    assert_eq!(
+        after.review.expect("a review block")["approved_by"][0]["name"],
+        "alice"
+    );
+}
+
+#[tokio::test]
+async fn the_catalog_carries_the_links_of_an_artifact() {
+    let scratch = Scratch::new("links");
+    let catalog = scratch.hone().artifacts().await.expect("listed");
+    let decision = &catalog.artifacts[0];
+    assert_eq!(decision.id.as_deref(), Some("dec-7k3m2q8p"));
+    assert_eq!(
+        decision.links.get("affects").map(Vec::as_slice),
+        Some(["mod-4t8w2n6c".to_owned()].as_slice())
+    );
+}
+
+#[tokio::test]
 async fn a_missing_binary_is_not_started() {
     let scratch = Scratch::new("missing-binary");
     let hone = Hone::with_binary(
