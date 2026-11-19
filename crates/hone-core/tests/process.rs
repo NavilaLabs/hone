@@ -597,3 +597,160 @@ fn locate_needs_valid_scope_ids() {
         workspace.data().join("ws-3k9a5h2t").join(PROJECT)
     );
 }
+
+fn architect() -> Author {
+    Author {
+        name: "alice".into(),
+        role: "architect".into(),
+    }
+}
+
+const DECISION: &str = "design/decisions/dec-7k3m2q8p-payment-async.md";
+
+fn approval(seq: u64, number: u64, author: (&str, &str), hash: &str, decision: &str) -> Value {
+    json!({
+        "id": event_id(number),
+        "project": PROJECT,
+        "ticket": TICKET,
+        "device": DEVICE_A,
+        "seq": seq,
+        "type": "approval.given",
+        "author": { "name": author.0, "role": author.1 },
+        "payload": { "artifact": "dec-7k3m2q8p", "hash": hash, "decision": decision },
+    })
+}
+
+#[test]
+fn approve_binds_the_current_hash_and_checks_the_role() {
+    let workspace = Workspace::new("approve");
+    let bytes = std::fs::read(workspace.project().join(DECISION)).expect("decision");
+    let hash = content_hash(DECISION, &bytes).expect("hash");
+    let approve = |proof: Option<&str>| Change::Approve {
+        ticket: TICKET.into(),
+        artifact: "dec-7k3m2q8p".into(),
+        changes_requested: false,
+        proof: proof.map(str::to_owned),
+    };
+
+    let appended = workspace
+        .store()
+        .append(&architect(), approve(Some("signed")))
+        .expect("appended");
+    assert_eq!(appended.event["type"], "approval.given");
+    assert_eq!(
+        appended.event["payload"],
+        json!({ "artifact": "dec-7k3m2q8p", "hash": hash, "decision": "approved", "proof": "signed" })
+    );
+
+    let not_an_actor = Author {
+        name: "bob".into(),
+        role: "architect".into(),
+    };
+    let error = workspace
+        .store()
+        .append(&not_an_actor, approve(None))
+        .expect_err("bob is no architect");
+    assert_eq!(
+        invalid_message(error),
+        "`actors` does not give `bob` the role `architect`"
+    );
+
+    let error = workspace
+        .store()
+        .append(
+            &not_an_actor,
+            Change::ConfirmReview {
+                ticket: TICKET.into(),
+                artifact: "dec-7k3m2q8p".into(),
+            },
+        )
+        .expect_err("bob is no architect");
+    assert_eq!(
+        invalid_message(error),
+        "`actors` does not give `bob` the role `architect`"
+    );
+
+    let confirmed = workspace
+        .store()
+        .append(
+            &alice(),
+            Change::ConfirmReview {
+                ticket: TICKET.into(),
+                artifact: "dec-7k3m2q8p".into(),
+            },
+        )
+        .expect("no step names `decides`, and human may approve");
+    assert_eq!(
+        confirmed.event["payload"],
+        json!({ "artifact": "dec-7k3m2q8p", "hash": hash })
+    );
+}
+
+#[test]
+fn condense_takes_the_last_decision_of_every_person_for_the_current_hash() {
+    let workspace = Workspace::new("condense");
+    let file = workspace.project().join(DECISION);
+    let original = std::fs::read_to_string(&file).expect("decision");
+    let hash = content_hash(DECISION, original.as_bytes()).expect("hash");
+    let stale = format!("sha256:{}", "0".repeat(64));
+    workspace.write_segment(
+        DEVICE_A,
+        "1.ndjson",
+        &lines(&[
+            approval(1, 1, ("bob", "human"), &hash, "approved"),
+            approval(2, 2, ("alice", "architect"), &hash, "approved"),
+            approval(3, 3, ("bob", "human"), &hash, "changes-requested"),
+            approval(4, 4, ("alice", "human"), &stale, "approved"),
+        ]),
+    );
+    let summary = workspace.root.join("summary.yaml");
+    std::fs::write(
+        &summary,
+        "- q: \"Why \\\"async\\\"?\"\n  a: \"Because.\"\n- rejected: \"Outbox\"\n",
+    )
+    .expect("writable");
+
+    let condensed = workspace
+        .store()
+        .condense(TICKET, "dec-7k3m2q8p", Some(&summary))
+        .expect("condensed");
+    assert_eq!(condensed.path, DECISION);
+
+    // 0x0193a8f0 9b2c: `date -u -d @1733706160 +%F` is 2024-12-09.
+    let before_review = &original[..original.find("review:\n").expect("a review block")];
+    let expected = format!(
+        "{before_review}review:\n  approved_by:\n    - {{ name: \"alice\", role: \"architect\", hash: \"{hash}\", date: \"2024-12-09\" }}\n  summary:\n    - {{ q: \"Why \\\"async\\\"?\", a: \"Because.\" }}\n    - {{ rejected: \"Outbox\" }}\n---\nText.\n"
+    );
+    assert_eq!(std::fs::read_to_string(&file).expect("condensed"), expected);
+    assert_eq!(
+        content_hash(DECISION, expected.as_bytes()).expect("hash"),
+        hash,
+        "the review block is outside the content hash"
+    );
+}
+
+#[test]
+fn condense_refuses_a_malformed_summary_and_leaves_the_file() {
+    let workspace = Workspace::new("condense-summary");
+    let file = workspace.project().join(DECISION);
+    let original = std::fs::read(&file).expect("decision");
+    let summary = workspace.root.join("summary.yaml");
+    std::fs::write(&summary, "- q: \"Only a question\"\n").expect("writable");
+
+    let error = workspace
+        .store()
+        .condense(TICKET, "dec-7k3m2q8p", Some(&summary))
+        .expect_err("malformed");
+    assert_eq!(
+        invalid_message(error),
+        "summary entry 1 must be `{ q, a }` or `{ rejected }` with text values"
+    );
+    assert_eq!(std::fs::read(&file).expect("decision"), original);
+    assert_eq!(
+        std::fs::read_dir(file.parent().expect("a directory"))
+            .expect("readable")
+            .count(),
+        2,
+        "no temporary file is left"
+    );
+}
