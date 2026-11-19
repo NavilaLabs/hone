@@ -5,9 +5,11 @@
   "license": "MIT OR Apache-2.0",
   "scripts": {
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "gui:css": "tailwindcss --input gui/assets/input.css --output gui/assets/hone.css --minify"
   },
   "devDependencies": {
+    "@tailwindcss/cli": "4.3.4",
     "prettier": "3.9.10"
   }
 }

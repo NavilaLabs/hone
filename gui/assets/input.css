@@ -1,0 +1,121 @@
+/*
+ * The source of assets/hone.css, built with `npm run gui:css`.
+ *
+ * The components keep the Tailwind classes of rust-ui. Their theme values (primary, muted,
+ * accent, border, ...) are mapped onto hone's design tokens here, so that the classes stay
+ * unchanged and the look follows hone: square, hairlines instead of shadows, one signal colour.
+ */
+@import "tailwindcss";
+@source "../src";
+
+:root {
+  --hone-bg: #ffffff;
+  --hone-surface: #f4f4f2;
+  --hone-surface-2: #e9e9e6;
+  --hone-line: #d4d4d0;
+  --hone-ink: #0b0b0c;
+  --hone-ink-muted: #55555c;
+  --hone-accent: #c2410c;
+  --hone-on-accent: #ffffff;
+  --hone-ok: #15803d;
+  --hone-bad: #b91c1c;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --hone-bg: #0b0b0c;
+    --hone-surface: #141416;
+    --hone-surface-2: #1d1d20;
+    --hone-line: #2f2f35;
+    --hone-ink: #f4f4f2;
+    --hone-ink-muted: #a3a3aa;
+    --hone-accent: #ff7a33;
+    --hone-on-accent: #0b0b0c;
+    --hone-ok: #4ade80;
+    --hone-bad: #ff6b6b;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --hone-bg: #0b0b0c;
+  --hone-surface: #141416;
+  --hone-surface-2: #1d1d20;
+  --hone-line: #2f2f35;
+  --hone-ink: #f4f4f2;
+  --hone-ink-muted: #a3a3aa;
+  --hone-accent: #ff7a33;
+  --hone-on-accent: #0b0b0c;
+  --hone-ok: #4ade80;
+  --hone-bad: #ff6b6b;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:
+    "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  /* hone's own names */
+  --color-bg: var(--hone-bg);
+  --color-surface: var(--hone-surface);
+  --color-surface-2: var(--hone-surface-2);
+  --color-line: var(--hone-line);
+  --color-ink: var(--hone-ink);
+  --color-ink-muted: var(--hone-ink-muted);
+  --color-signal: var(--hone-accent);
+  --color-on-signal: var(--hone-on-accent);
+  --color-ok: var(--hone-ok);
+  --color-bad: var(--hone-bad);
+
+  /* rust-ui's names. Its `accent` is a hover fill, hone's accent is `primary` here. */
+  --color-background: var(--hone-bg);
+  --color-foreground: var(--hone-ink);
+  --color-card: var(--hone-bg);
+  --color-card-foreground: var(--hone-ink);
+  --color-popover-foreground: var(--hone-ink);
+  --color-primary: var(--hone-accent);
+  --color-primary-foreground: var(--hone-on-accent);
+  --color-secondary: var(--hone-surface);
+  --color-secondary-foreground: var(--hone-ink);
+  --color-muted: var(--hone-surface);
+  --color-muted-foreground: var(--hone-ink-muted);
+  --color-accent: var(--hone-surface-2);
+  --color-accent-foreground: var(--hone-ink);
+  --color-destructive: var(--hone-bad);
+  --color-destructive-foreground: var(--hone-bg);
+  --color-success: var(--hone-ok);
+  --color-success-foreground: var(--hone-bg);
+  --color-warning: var(--hone-accent);
+  --color-warning-foreground: var(--hone-on-accent);
+  --color-border: var(--hone-line);
+  --color-input: var(--hone-line);
+  --color-ring: var(--hone-accent);
+}
+
+@layer base {
+  * {
+    border-color: var(--hone-line);
+  }
+
+  body {
+    margin: 0;
+    background: var(--hone-bg);
+    color: var(--hone-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 20px;
+  }
+}
+
+/* hone has exactly one radius and no shadows. The focus ring is an outline, 2px, offset 2px. */
+* {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+:focus-visible {
+  outline: 2px solid var(--hone-accent);
+  outline-offset: 2px;
+}

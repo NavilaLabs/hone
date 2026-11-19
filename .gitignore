@@ -1,6 +1,7 @@
 # Rust build output
 /target/
 /plugins/target/
+/gui/target/
 **/*.rs.bk
 *.pdb
 
