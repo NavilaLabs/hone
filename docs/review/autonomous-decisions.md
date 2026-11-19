@@ -69,3 +69,12 @@ Decisions taken without the maintainer, during an autonomous run on the branch `
 51. **Errors.** A failing Git command ends the sync as `unavailable` with Git's message.
 52. **MCP.** `hone mcp --sync-git <branch>` (or `HONE_SYNC_GIT`) uses the remote `origin`; there is no `--sync-remote` yet.
 53. **Not covered by tests yet:** the push retry after a rejected push.
+
+## Contexts (concept Question 39)
+
+54. **A local `contexts.yaml`, no secret.** In the platform's configuration directory (`HONE_CONFIG_DIR` replaces it). A context holds a peer (`server`, `folder`, or `git` with `remote`), an optional author, and `token_env`, the name of the variable that holds the token. Alternative: store the token, rejected because a file with tokens leaks them; an OS keyring is left for later.
+55. **Precedence.** A flag or its environment variable wins; only without them does `hone sync` take the context's peer and a writing command the context's author. `--author` and `--role` now go together.
+56. **The file is written anew.** `hone context set` and `use` rewrite it in the strict profile; comments are lost. Unknown keys, a peer with more than one kind, and a binding to an unknown context are rejected when reading.
+57. **Names.** A context name is lowercase letters, digits, and `-`, not starting with `-`.
+58. **The GUI leaves the author to the context** when its author or role field is empty, instead of passing empty flags.
+59. **Not done:** the MCP server does not read contexts yet (it keeps `--author`, `--sync-*`); `export` and `forget`; tokens in an OS keyring.
