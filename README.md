@@ -51,6 +51,8 @@ git diff --name-only main | hone check --ticket tk-9f2x4a8m --changed-from -
 
 `--changed <path>` (repeatable) and `--changed-from <file|->` (one path per line, an empty file means no changes) supply the changed paths for `change-needs-binding`. `--class pure|exec` runs only one class of gates, and `--json` prints the result as JSON.
 
+`hone artifacts` lists the artifacts of the checked directory with their declared and effective status, and `hone ticket show --ticket <tk>` prints a ticket's profile with its steps in order and the roles of its snapshot. Both read only the directory and take `--json`.
+
 ### Plugins and `exec` gates
 
 A plugin gate runs a WebAssembly module (WASI preview 1) from `.hone/plugins/<name>.wasm` in a sandbox: it reads the project read-only under `/project` and, with `--base <dir>`, the base state under `/base`, and has no network. An `exec` gate runs a command of the toolchain, without a shell and with only the environment variables it names. Both run only when the lockfile approves them: the plugin with its hash and capabilities, the command under `x-hone-exec`.
