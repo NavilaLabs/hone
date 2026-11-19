@@ -14,7 +14,7 @@ Level: Core for findings, the directory gates, and the gates over artifacts; Flo
 5. A profile has `steps`, a map from a step to `required` or `optional`, plus `retention` and `review_summary` ([review](review.md#condensation)).
 6. A `required` step MUST be done or explicitly skipped; otherwise `steps-complete` fails. A step that the profile does not list is not part of the ticket's flow.
 7. A profile sets only steps and their strictness. There is no strictness per gate.
-8. The selection rules choose the profile for a ticket (concept Section 8). A human MAY change the result per ticket.
+8. The selection rules choose the profile for a ticket ([configuration](configuration.md#roles-actors-and-selection)). A human MAY change the result per ticket.
 
 ## Gates
 

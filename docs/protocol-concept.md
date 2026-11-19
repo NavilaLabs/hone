@@ -367,6 +367,8 @@ Rules:
 
 ## 8. Configuration: Level 1 and Level 2
 
+The rules of this section are normative text in [`spec/configuration.md`](../spec/configuration.md) (Question 41); this section keeps the examples and the reasons.
+
 The configuration must be dynamic: actors come and go, kinds of tickets need different flows, teams invent their own artifacts. The protocol separates three levels for this.
 
 | Level                         | What                                                                        | Who reads it                    | Flexibility      |
@@ -553,23 +555,11 @@ plugins: # Section 9
 
 **Origin of attributes** (Question 9). Trackers or analysis may suggest attributes, a human sets them. If someone changes them after the start, that is an event (`ticket.attributes_changed`) and appears in the record on completion. The protocol does not prevent someone from entering `risk: low` to avoid gates. It makes it visible, as with skipping (Principle 8). Whoever wants more writes a plugin gate, for example "the risk must match the analysis".
 
-**Properties of the resolved configuration**
-
-- **Canonical:** the canonical form is the RFC 8785 (JCS) serialization. The hash is `sha256:` plus the SHA-256 of these bytes in lowercase hex, a stable identity of the content. `resolved.json` and every snapshot contain exactly these bytes followed by one `\n`, in UTF-8 without BOM. No formatter may touch them.
-- **Self-contained:** no includes and no references to other files except plugins with a hash. `resolve` embeds the schemas of the kinds, so that a snapshot needs no package.
-- **Explicit:** no `null`, every default is written out, unknown keys are an error except `x-<name>`. Whoever reads the document needs to know no defaults. The one exception to "no `null`" is the content of an embedded kind schema, which is opaque JSON (see "Kind schemas" below).
-- **Origin lives next to it, not inside it:** a tool may write `resolved.origin.json`, which records for every definition which layer and file it comes from. This feeds `hone explain`. The file is not normative and has no conformance tests. The hash depends only on the content.
-- **Validated:** every reference must resolve (roles, kinds, steps, profiles, gates, plugins, statuses in gate parameters), prefixes are unique, and `requires` has no cycles, otherwise `resolve` fails. `schemas/config.schema.json` checks the shape, the references are listed in its description.
+**Properties of the resolved configuration** ([`spec/configuration.md`](../spec/configuration.md#the-resolved-configuration)). It is canonical (RFC 8785), so that its hash is a stable identity of the content and no formatter may touch it. It is self-contained, so that a snapshot needs no package: `resolve` embeds the schemas of the kinds. It is explicit, so that whoever reads it needs to know no defaults. The origin of every definition may live next to it (`resolved.origin.json`, for `hone explain`), never inside it, so that the hash depends only on the content. Every reference is validated; otherwise `resolve` fails.
 
 ### Frozen per ticket
 
-When a ticket starts, the resolved configuration (with its `overrides`) is stored as a snapshot and recorded in the ticket record by hash (`config: sha256:…`). The snapshot is stored content-addressed under `.hone/snapshots/<hex>.json`, where `<hex>` is the hash without the prefix `sha256:`, because a colon is not allowed in file names on every system. If the configuration does not change, no new snapshot is created, and several tickets share one file.
-
-- Gates check a ticket **always against its snapshot**. CI needs neither generators nor packages for this.
-- If a ticket deliberately switches to new rules, that is an event (`ticket.config_changed`) and visible in the record.
-- Plugins are not frozen. `.hone/plugins/<name>.wasm` exists once, and `lock.yaml` approves exactly one hash per plugin. After an update, the gates of a ticket whose snapshot names the old hash fail with `plugin-hash` (Section 9), until the ticket deliberately switches to the new configuration.
-- The ticket's `overrides` are part of the snapshot (see "Ticket overrides" below). Changing them after the ticket started creates a new snapshot and the event `ticket.config_changed`.
-- The tool may delete a snapshot only when **no ticket record** refers to it any more, not even a completed one. Snapshots are small and shared. This keeps every ticket auditable (Question 8).
+When a ticket starts, its resolved configuration is stored as a snapshot and recorded in the ticket record by hash ([`spec/configuration.md`](../spec/configuration.md#snapshots)). Gates check a ticket against its snapshot, so CI needs neither generators nor packages, and a ticket keeps the rules it started with. A deliberate switch to new rules is an event and visible in the record. Snapshots are stored by content, so tickets with the same configuration share one file; the file name uses the hex part only, because a colon is not allowed in file names on every system. Plugins are not frozen: `lock.yaml` approves one hash per plugin, so after an update a ticket on the old configuration fails `plugin-hash` until it switches. A snapshot is deleted only when no ticket record refers to it any more, not even a completed one, so that every ticket stays auditable (Question 8).
 
 ### Level 2: generation
 
@@ -583,17 +573,7 @@ packages (extends, dependencies first)  →  project (.hone/)  →  generators (
 
 There is deliberately **no global or personal layer.** It would mix context between projects and tenants and does not fit into a snapshot. Personal settings of the tool (agent, model, notifications) are not protocol configuration. A custom standard process is a package (see below).
 
-**Merging** (the specification must define this exactly, so that two tools resolve identically):
-
-1. Objects are merged key by key, recursively.
-2. Lists are replaced. Where merging is needed, the schema uses maps instead of lists (hence `steps` in the profile as a map).
-3. `null` removes a key or a whole definition from a lower layer. The profile (Section 5) requires an explicit `null` for this. An empty value is an error and removes nothing.
-4. A `null` at a path that no lower layer has is an error (`null-without-target`), so that a typo does not silently do nothing. This also covers every `null` that would otherwise stay in the result, for example inside a list or inside a definition that no lower layer has.
-5. The higher layer wins. On a type conflict (for example a map above a string, or a list above a map), the higher layer replaces the lower value. The result is validated afterwards.
-6. Keys `x-<name>` merge like every other key.
-7. `kinds.<type>.schema` is a leaf (see "Kind schemas" below).
-
-There are deliberately no explicit list operations (`add`, `remove`) (Question 7). Where a list would have to be merged, it becomes a map in the schema.
+**Merging** ([`spec/configuration.md`](../spec/configuration.md#merging)) must be defined exactly, so that two tools resolve identically. Objects merge key by key, lists are replaced, and `null` removes. Where merging is needed, the schema uses maps instead of lists (hence `steps` in the profile as a map), so there are deliberately no explicit list operations (Question 7). A `null` that removes nothing is an error, so that a typo does not silently do nothing, and the profile requires an explicit `null`, so that a forgotten value removes nothing either.
 
 ```yaml
 # project, .hone/profiles/medium.yaml: remove the step `domain` and make `decision` required
@@ -602,24 +582,7 @@ steps:
   decision: required
 ```
 
-**Layer layout.** Every package and the project's `.hone/` directory have the same layout:
-
-| Entry                  | Contributes to the tree                                                 |
-| ---------------------- | ----------------------------------------------------------------------- |
-| `kinds/<name>.yaml`    | `kinds.<name>`: the file stem is the key, the content is the definition |
-| `roles/<name>.yaml`    | `roles.<name>`                                                          |
-| `steps/<name>.yaml`    | `steps.<name>`                                                          |
-| `profiles/<name>.yaml` | `profiles.<name>`                                                       |
-| `plugins/<name>.yaml`  | `plugins.<name>`, only `capabilities` (see "Plugins" below)             |
-| `select.yaml`          | the whole subtree `select`                                              |
-| `actors.yaml`          | the whole subtree `actors`                                              |
-| `ticket.yaml`          | the whole subtree `ticket`                                              |
-| `schemas/`             | nothing: JSON files that kind schemas point to                          |
-| `config.yaml`          | nothing: `extends`, and in the project also the IDs and the generators  |
-
-- Definition files are `.yaml` files in the strict YAML profile (Section 5), directly in their directory. A file whose whole content is `null` removes the definition from a lower layer.
-- `protocol` has no file. `resolve` writes it.
-- Every other entry is an error (`layout`), because a typo such as `profile/` would otherwise do nothing silently. In `.hone/`, `resolve` knows and ignores `lock.yaml`, `resolved.json`, `resolved.origin.json`, `snapshots/`, and `plugins/*.wasm`. In a package, `plugins/*.wasm` is ignored as well, while `lock.yaml`, `resolved.json`, `resolved.origin.json`, and `snapshots/` are errors.
+**Layer layout** ([`spec/configuration.md`](../spec/configuration.md#layers)). Every package and the project's `.hone/` have the same layout, one definition per file with the file stem as the key, so that a layer adds or removes a single definition without repeating the others. Every unknown entry is an error, because a typo such as `profile/` would otherwise do nothing silently.
 
 ```
 .hone/
@@ -642,16 +605,9 @@ project: prj-8m2k4d7q
 extends: [hone/standard@1]
 ```
 
-`.hone/config.yaml` is required. Its keys are `workspace`, `project`, `extends`, `generate`, and keys `x-<name>`. Every other key, a missing file, or a malformed value is an error (`manifest`).
+**Packages** have the same layout as the `.hone/` directory. Where a package comes from (directory, archive, registry) is up to the tool. A workspace can publish a package (the organization level of a tenant, for example its standard profiles for all of its repositories), and a single person's own standard process is also just a package. Packages are ordered depth-first, dependencies first, and the first occurrence counts, which also ends cycles. Two majors of one package are an error.
 
-**Packages** have the same layout as the `.hone/` directory. Where a package comes from (directory, archive, registry) is up to the tool. A workspace can publish a package (the organization level of a tenant, for example its standard profiles for all of its repositories). It is pinned by hash like any other. A single person's own standard process is also just a package.
-
-- A reference has the form `<name>@<major>`, for example `hone/standard@1`. A name is one or more keys (lowercase with hyphens) separated by `/`.
-- A package may have its own `config.yaml`. It contains only `extends`.
-- **Order:** depth-first, dependencies first, in the order of `extends`. In `extends: [a, b]`, `b` lies above `a` and wins. The first occurrence of a package counts, later ones are skipped, which also ends cycles. If the project extends `[a, b]` and both `a` and `b` extend `c`, the order is `c`, `a`, `b`, project.
-- Two majors of the same package anywhere in the tree are an error (`package-conflict`).
-
-**`lock.yaml`** in `.hone/` pins every package, including the transitive ones, and approves every plugin:
+**`lock.yaml`** pins every package, including the transitive ones, by an exact version and a hash, and approves every plugin with its hash and capabilities:
 
 ```yaml
 # .hone/lock.yaml
@@ -664,32 +620,15 @@ plugins:
       { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }
 ```
 
-- A reference without a lock entry, a lock entry whose major differs from the reference, and a package the tool cannot provide are errors (`package-missing`).
-- The **package hash** is `sha256:` over the canonical form (RFC 8785) of a map that has one entry per file of the package: the key is the path relative to the package root with `/` as separator in Unicode NFC, the value is `sha256:` plus the SHA-256 of the file's bytes. A mismatch is an error (`package-hash`).
-- Further top-level keys are allowed only as `x-<name>`. How the tool pins `exec` commands (Section 9) is the tool's business.
-- A malformed `lock.yaml` or package `config.yaml` is an error (`manifest`).
+How the tool pins `exec` commands (Section 9) is the tool's business.
 
-**Kind schemas.** In a layer, `kinds.<type>.schema` is a string: the path of a JSON file, relative to the root of the layer that sets it (the package root or `.hone/`). The path must not leave that layer, and the file must exist and be JSON. An inline schema in YAML is not allowed. Each of these is an error (`schema-path`). During merging the path is a leaf: a higher layer replaces it or removes it with `null`, but never merges into the schema. After merging, `resolve` embeds the file's content. The embedded schema is opaque: `null`, floating-point numbers, and any keys are allowed inside it, and the canonical form writes numbers as RFC 8785 prescribes.
+**Kind schemas** are paths in a layer, relative to that layer's root, and are embedded by `resolve` after merging. An inline schema in YAML is not allowed, and the path is a leaf during merging: a higher layer replaces or removes it, never merges into the schema.
 
-**Plugins.** `plugins/<name>.yaml` holds only `capabilities` (and keys `x-<name>`). All capabilities are required except `net`, which defaults to `[]`. `resolve` adds `wasm: .hone/plugins/<name>.wasm` and `hash`, the SHA-256 of that file. The file must lie there. Copying it out of a package is the tool's job. `resolve` checks:
+**Plugins** in a layer declare only their capabilities; `resolve` adds the file and its hash and checks them against `lock.yaml` and fails when they exceed the approved ones. Copying a `.wasm` file out of a package is the tool's job.
 
-- The file exists, `lock.yaml` has an entry for the plugin, and the hashes match. Otherwise: `plugin-hash`.
-- The capabilities stay within the approved ones: `read` and `net` are subsets, `timeout_ms` and `memory_pages` are at most the approved values. `net` must be `[]`. Otherwise: `plugin-capabilities`.
-- Any other key in the definition is an error (`shape`).
+**Defaults** are written out by `resolve` ([`spec/configuration.md`](../spec/configuration.md#defaults)), so that the resolved document needs no knowledge of defaults.
 
-**Defaults.** `resolve` writes these, so that the resolved document needs no knowledge of defaults:
-
-| Where               | Default                                                    |
-| ------------------- | ---------------------------------------------------------- |
-| Role                | `kind: human`                                              |
-| Profile             | `retention: archive`, `review_summary: full`               |
-| Step                | `acts`, `inputs`, `outputs`, `requires`: `[]`, `gates: {}` |
-| Plugin capabilities | `net: []`                                                  |
-| Top level           | `kinds`, `roles`, `actors`, `steps`, `profiles`: `{}`      |
-
-`plugins` is omitted when it is empty. There is no default for `select` (missing is an error), `ticket.path`, the `path`, `id_prefix`, and `lifecycle` of a kind, or gate `params`. Gate `params` stay as written, including `min` and `require_proof` of `approvals-valid`.
-
-**Ticket overrides.** The field `overrides` of the ticket record is a patch on the Level 1 tree with the same merge rules. It is applied after the project files and the generators and before the defaults and the hash, so the snapshot contains it. `protocol`, `ticket`, `plugins`, and `kinds.<type>.schema` must not be overridden (`override-forbidden`): an override has no layer root that a path could be resolved against. Because the defaults come afterwards, a `null` on a value that only a default would set is `null-without-target`.
+**Ticket overrides** are a last patch with the same merge rules, part of the snapshot. They must not touch `protocol`, `ticket`, `plugins`, or a kind schema, because an override has no layer root that a schema path could be resolved against.
 
 **Generators** are plugins (Section 9) that output parts of the configuration as data:
 
@@ -704,35 +643,7 @@ generate:
 
 A generator receives a layer and parameters and returns a patch in the same shape as any other layer. Only the project declares generators. Their patches are applied after the project files, in the order of `generate`, and before the ticket overrides. A generator runs only on `hone resolve`, started by a human or the tool. **Not on every check and not in CI.** It may therefore do things that vary over time (for example an identity provider as a source with `net: [idp.example.com]`), because the result is frozen.
 
-**Resolution steps.** `resolve` works in this order. It may stop after the first step that found errors and may report several errors of that step.
-
-1. Read `.hone/config.yaml` and `lock.yaml` (`manifest`).
-2. Order the packages, check the lock entries and the package hashes (`package-missing`, `package-conflict`, `package-hash`, `manifest`).
-3. Read every layer: layout, YAML profile, kind schema paths (`layout`, `yaml-profile`, `schema-path`).
-4. Merge the layers, then the generators, then the ticket overrides (`null-without-target`, `override-forbidden`).
-5. Embed the kind schemas and complete the plugins (`plugin-hash`, `plugin-capabilities`, `shape`).
-6. Write the defaults and `protocol: 1`.
-7. Check the shape against `schemas/config.schema.json` (`shape`), then the references (`reference`).
-
-**Errors.** The categories are fixed and normative, so that test cases can name the expected error:
-
-| Category              | Meaning                                                                     | Location |
-| --------------------- | --------------------------------------------------------------------------- | -------- |
-| `yaml-profile`        | A file violates the strict YAML profile                                     | file     |
-| `layout`              | Unknown or forbidden entry in a layer                                       | file     |
-| `manifest`            | `config.yaml` or `lock.yaml` is missing where required or malformed         | file     |
-| `null-without-target` | A `null` removes nothing                                                    | pointer  |
-| `package-missing`     | No matching lock entry, or the package is not available                     | file     |
-| `package-hash`        | The package content does not match its pinned hash                          | file     |
-| `package-conflict`    | Two majors of the same package                                              | file     |
-| `schema-path`         | A kind schema path leaves its layer, does not exist, is not JSON, or inline | file     |
-| `plugin-hash`         | The `.wasm` file or its lock entry is missing, or the hashes differ         | file     |
-| `plugin-capabilities` | Capabilities beyond the approved ones, or `net` not empty                   | pointer  |
-| `override-forbidden`  | A ticket override touches `protocol`, `ticket`, `plugins`, or a kind schema | pointer  |
-| `shape`               | The result does not match `schemas/config.schema.json`                      | pointer  |
-| `reference`           | A reference of the resolved document does not resolve                       | pointer  |
-
-A pointer is a JSON Pointer (RFC 6901) into the resolved document. For a missing required key or an unknown key, it names that key. A file is named by its path in the layer.
+**Resolution steps and errors** ([`spec/configuration.md`](../spec/configuration.md#resolution)). `resolve` works in a fixed order and reports fixed error categories, so that test cases can name the expected error.
 
 **Growing and shrinking**
 
@@ -1229,7 +1140,7 @@ All questions of this draft are decided. The numbers stay stable because the tex
 8. Done: the plugin contract (Question 32) with Extism as the runtime and `schemas/plugin.schema.json`, the gate `public-api-has-decision` in Rust under `plugins/`, capabilities and hash pinning checked on every run against a lockfile the caller may replace, `exec` gates with approved commands and `evaluate`, and `--base` and `--lock` on the command line and over MCP.
 9. Done: the replication contract in the decided scope (Question 26, Question 33, Question 34, Question 35: unreadable entries of a shared folder are skipped and reported) with the test cases `schemas/tests/read/`, `schemas/tests/sync/`, and `schemas/tests/append/`, the shared folder as the first reference backend (`hone sync --folder`), the reference server as the crate `hone-server` (`hone serve`: HTTP, NDJSON, Server-Sent Events, bearer authentication, every error code of Section 4), and the client (`hone sync --server [--watch]`, the MCP tool `sync` with `--sync-folder` or `--sync-server`).
 10. In progress: the desktop GUI `hone-gui` over the command line and `hone log` (Question 36), approvals and condensation as commands (Question 37), the Git branch as a shared folder (Question 38), contexts (Question 39), and the Rust plugin `module-anchors-resolve` (Question 40) are done. Open: plugins for other languages, credentials in an OS keyring, `export` and `forget`, and delivery.
-11. In progress: the normative specification in `spec/` (Question 41). Written: the conventions and levels (`spec/README.md`), conformance with every test case format (`spec/conformance.md`), the process store (`spec/process-store.md`), replication (`spec/replication.md`), and review (`spec/review.md`), artifacts with lifecycle and status (`spec/artifacts.md`), and steps, gates, and profiles (`spec/gates.md`). Open: configuration and plugins, each moved out of this concept chapter by chapter.
+11. In progress: the normative specification in `spec/` (Question 41). Written: the conventions and levels (`spec/README.md`), conformance with every test case format (`spec/conformance.md`), the process store (`spec/process-store.md`), replication (`spec/replication.md`), and review (`spec/review.md`), artifacts with lifecycle and status (`spec/artifacts.md`), steps, gates, and profiles (`spec/gates.md`), and the configuration (`spec/configuration.md`). Open: plugins, each moved out of this concept chapter by chapter.
 
 ## Sources
 
