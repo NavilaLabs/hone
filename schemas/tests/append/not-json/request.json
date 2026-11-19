@@ -1,0 +1,6 @@
+{
+  "actors": {
+    "alice": ["human"]
+  },
+  "identity": "alice"
+}

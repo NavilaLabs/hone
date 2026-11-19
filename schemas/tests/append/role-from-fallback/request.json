@@ -1,0 +1,7 @@
+{
+  "actors": {
+    "*": ["human"],
+    "bob": ["architect"]
+  },
+  "identity": "alice"
+}
