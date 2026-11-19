@@ -330,6 +330,12 @@ impl ProcessStore {
         &self.project
     }
 
+    /// The project root, the directory that contains `.hone/`.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.project_root
+    }
+
     /// The store directory, which holds `log/`.
     #[must_use]
     pub fn directory(&self) -> &Path {

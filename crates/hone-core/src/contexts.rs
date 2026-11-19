@@ -13,7 +13,15 @@ use crate::{Author, ProcessError};
 pub struct Contexts {
     path: PathBuf,
     contexts: BTreeMap<String, Context>,
-    projects: BTreeMap<String, String>,
+    projects: BTreeMap<String, Binding>,
+}
+
+// A project ID alone is chosen by the repository, so a binding also holds the canonical root of
+// the checkout it was made in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Binding {
+    context: String,
+    root: PathBuf,
 }
 
 /// One context.
@@ -57,6 +65,8 @@ pub enum ContextPeer {
 pub struct BoundContext {
     /// The context's name.
     pub name: String,
+    /// The canonical project root the binding was made in.
+    pub root: PathBuf,
     /// The context.
     pub context: Context,
 }
@@ -112,11 +122,21 @@ impl Contexts {
                     }
                 }
                 "projects" => {
-                    for (project, name) in value.as_object().into_iter().flatten() {
-                        let name = name.as_str().ok_or_else(|| {
-                            malformed(format!("project `{project}` must name a context"))
-                        })?;
-                        contexts.projects.insert(project.clone(), name.to_owned());
+                    for (project, binding) in value.as_object().into_iter().flatten() {
+                        let (Some(name), Some(root)) =
+                            (binding["context"].as_str(), binding["root"].as_str())
+                        else {
+                            return Err(malformed(format!(
+                                "project `{project}` must be `{{ context, root }}`"
+                            )));
+                        };
+                        contexts.projects.insert(
+                            project.clone(),
+                            Binding {
+                                context: name.to_owned(),
+                                root: PathBuf::from(root),
+                            },
+                        );
                     }
                 }
                 other => return Err(malformed(format!("unknown key `{other}`"))),
@@ -125,10 +145,11 @@ impl Contexts {
         if let Some((project, name)) = contexts
             .projects
             .iter()
-            .find(|(_, name)| !contexts.contexts.contains_key(*name))
+            .find(|(_, binding)| !contexts.contexts.contains_key(&binding.context))
         {
             return Err(malformed(format!(
-                "project `{project}` names the unknown context `{name}`"
+                "project `{project}` names the unknown context `{}`",
+                name.context
             )));
         }
         Ok(contexts)
@@ -151,29 +172,62 @@ impl Contexts {
         Ok(())
     }
 
-    /// Binds `project` to the context `name`.
+    /// Binds `project`, checked out at `root`, to the context `name`. A project has one
+    /// binding; binding it again moves it to the new root.
     ///
     /// # Errors
     ///
-    /// Returns [`ProcessError::Invalid`] if there is no context `name`.
-    pub fn bind(&mut self, project: &str, name: &str) -> Result<(), ProcessError> {
+    /// Returns [`ProcessError::Invalid`] if there is no context `name`, and
+    /// [`ProcessError::IoError`] if `root` cannot be canonicalized.
+    pub fn bind(&mut self, project: &str, root: &Path, name: &str) -> Result<(), ProcessError> {
         if !self.contexts.contains_key(name) {
             return Err(ProcessError::Invalid {
                 message: format!("no context `{name}`: create it with hone context set"),
             });
         }
-        self.projects.insert(project.to_owned(), name.to_owned());
+        let binding = Binding {
+            context: name.to_owned(),
+            root: canonical(root)?,
+        };
+        self.projects.insert(project.to_owned(), binding);
         Ok(())
     }
 
-    /// The context bound to `project`, if any.
-    #[must_use]
-    pub fn of_project(&self, project: &str) -> Option<BoundContext> {
-        let name = self.projects.get(project)?;
-        Some(BoundContext {
-            name: name.clone(),
-            context: self.contexts.get(name)?.clone(),
-        })
+    /// The context bound to `project` checked out at `root`, or `None` if the project has no
+    /// binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProcessError::Invalid`] if the project is bound in another checkout, because
+    /// a repository chooses its project ID itself and could otherwise claim another project's
+    /// context, and [`ProcessError::IoError`] if `root` cannot be canonicalized.
+    pub fn of_project(
+        &self,
+        project: &str,
+        root: &Path,
+    ) -> Result<Option<BoundContext>, ProcessError> {
+        let Some(binding) = self.projects.get(project) else {
+            return Ok(None);
+        };
+        let here = canonical(root)?;
+        if here != binding.root {
+            return Err(ProcessError::Invalid {
+                message: format!(
+                    "the project `{project}` is bound to the context `{}` in {}, not in {}: bind this checkout with hone context use",
+                    binding.context,
+                    binding.root.display(),
+                    here.display()
+                ),
+            });
+        }
+        Ok(self
+            .contexts
+            .get(&binding.context)
+            .map(|context| BoundContext {
+                name: binding.context.clone(),
+                root: binding.root.clone(),
+                context: context.clone(),
+            }))
     }
 
     /// Writes the file anew, creating its directory.
@@ -222,8 +276,12 @@ impl Contexts {
             text.push_str("projects: {}\n");
         } else {
             text.push_str("projects:\n");
-            for (project, name) in &self.projects {
-                text.push_str(&format!("  {project}: {}\n", quote(name)));
+            for (project, binding) in &self.projects {
+                text.push_str(&format!(
+                    "  {project}: {{ context: {}, root: {} }}\n",
+                    quote(&binding.context),
+                    quote(&binding.root.display().to_string())
+                ));
             }
         }
         text
@@ -234,6 +292,12 @@ impl Contexts {
             message: format!("{}: {error}", self.path.display()),
         }
     }
+}
+
+fn canonical(root: &Path) -> Result<PathBuf, ProcessError> {
+    root.canonicalize().map_err(|error| ProcessError::IoError {
+        message: format!("{}: {error}", root.display()),
+    })
 }
 
 fn parse_context(entry: &Value) -> Result<Context, String> {
@@ -350,13 +414,31 @@ mod tests {
                 },
             )
             .expect("a valid name");
-        contexts.bind("prj-8m2k4d7q", "acme").expect("known");
+        let checkout = directory.join("checkout");
+        std::fs::create_dir_all(checkout.join("sub")).expect("creatable");
+        contexts
+            .bind("prj-8m2k4d7q", &checkout.join("sub/.."), "acme")
+            .expect("known");
         contexts.save().expect("written");
+        let root = checkout.canonicalize().expect("canonical");
         assert_eq!(
             std::fs::read_to_string(&path).expect("readable"),
-            "contexts:\n  acme:\n    peer: { git: \"hone/process\", remote: \"origin\" }\n    author: { name: \"alice \\\"a\\\"\", role: \"architect\" }\n    token_env: \"HONE_TOKEN_ACME\"\nprojects:\n  prj-8m2k4d7q: \"acme\"\n"
+            format!(
+                "contexts:\n  acme:\n    peer: {{ git: \"hone/process\", remote: \"origin\" }}\n    author: {{ name: \"alice \\\"a\\\"\", role: \"architect\" }}\n    token_env: \"HONE_TOKEN_ACME\"\nprojects:\n  prj-8m2k4d7q: {{ context: \"acme\", root: {} }}\n",
+                serde_json::to_string(&root.display().to_string()).expect("a string")
+            )
         );
-        assert_eq!(Contexts::load_from(&path).expect("readable"), contexts);
+        let read = Contexts::load_from(&path).expect("readable");
+        assert_eq!(read, contexts);
+        let bound = read
+            .of_project("prj-8m2k4d7q", &checkout)
+            .expect("same root");
+        assert_eq!(bound.map(|bound| bound.name).as_deref(), Some("acme"));
+        let elsewhere = read.of_project("prj-8m2k4d7q", &directory);
+        assert!(
+            matches!(elsewhere, Err(ProcessError::Invalid { .. })),
+            "another checkout with the same project ID gets no context: {elsewhere:?}"
+        );
         let _ = std::fs::remove_dir_all(&directory);
     }
 
@@ -379,7 +461,9 @@ mod tests {
             "context `a`: `peer` must hold exactly one of `server`, `folder`, `git`"
         );
         assert_eq!(
-            message("contexts: {}\nprojects:\n  prj-8m2k4d7q: \"ghost\"\n"),
+            message(
+                "contexts: {}\nprojects:\n  prj-8m2k4d7q: { context: \"ghost\", root: \"/x\" }\n"
+            ),
             "project `prj-8m2k4d7q` names the unknown context `ghost`"
         );
         assert_eq!(message("token: \"secret\"\n"), "unknown key `token`");

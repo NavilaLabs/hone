@@ -40,7 +40,7 @@ impl Writer {
             });
         }
         Contexts::load()?
-            .of_project(store.project())
+            .of_project(store.project(), store.root())?
             .and_then(|bound| bound.context.author)
             .ok_or_else(|| ProcessError::Invalid {
                 message:
@@ -398,7 +398,7 @@ fn token_from(variable: &str) -> Result<String, String> {
 
 fn sync_with_context(store: &ProcessStore) -> Result<SyncReport, ProcessError> {
     let bound = Contexts::load()?
-        .of_project(store.project())
+        .of_project(store.project(), store.root())?
         .ok_or_else(|| ProcessError::Invalid {
             message: "name a peer: --folder, --server, or --git, or bind the project to a context with hone context use".into(),
         })?;
@@ -483,7 +483,7 @@ pub(crate) fn run_context(command: ContextCommand) -> ExitCode {
                     let error = ProcessError::Invalid {
                         message: "name the context's peer: --server, --folder, or --git".into(),
                     };
-                    return finish(json, Err::<BoundContext, _>(error), print_context);
+                    return finish(json, Err::<NamedContext, _>(error), print_named);
                 }
             };
             let context = Context {
@@ -494,17 +494,17 @@ pub(crate) fn run_context(command: ContextCommand) -> ExitCode {
             let outcome = Contexts::load().and_then(|mut contexts| {
                 contexts.set(&name, context.clone())?;
                 contexts.save()?;
-                Ok(BoundContext { name, context })
+                Ok(NamedContext { name, context })
             });
-            finish(json, outcome, print_context)
+            finish(json, outcome, print_named)
         }
         ContextCommand::Use { target, name } => {
             let outcome = ProcessStore::locate(&target.root, None).and_then(|store| {
                 let mut contexts = Contexts::load()?;
-                contexts.bind(store.project(), &name)?;
+                contexts.bind(store.project(), store.root(), &name)?;
                 contexts.save()?;
                 contexts
-                    .of_project(store.project())
+                    .of_project(store.project(), store.root())?
                     .ok_or_else(|| ProcessError::Invalid {
                         message: format!("no context `{name}`"),
                     })
@@ -514,7 +514,7 @@ pub(crate) fn run_context(command: ContextCommand) -> ExitCode {
         ContextCommand::Show { target } => {
             let outcome = ProcessStore::locate(&target.root, None).and_then(|store| {
                 Contexts::load()?
-                    .of_project(store.project())
+                    .of_project(store.project(), store.root())?
                     .ok_or_else(|| ProcessError::Invalid {
                         message: format!(
                             "the project `{}` is bound to no context",
@@ -527,17 +527,33 @@ pub(crate) fn run_context(command: ContextCommand) -> ExitCode {
     }
 }
 
+/// A context with its name, as `hone context set` prints it.
+#[derive(Serialize)]
+struct NamedContext {
+    name: String,
+    context: Context,
+}
+
+fn print_named(named: &NamedContext) {
+    print_context_lines(&named.name, &named.context);
+}
+
 fn print_context(bound: &BoundContext) {
-    let peer = match &bound.context.peer {
+    print_context_lines(&bound.name, &bound.context);
+    println!("bound in {}", bound.root.display());
+}
+
+fn print_context_lines(name: &str, context: &Context) {
+    let peer = match &context.peer {
         ContextPeer::Server { server } => format!("server {server}"),
         ContextPeer::Folder { folder } => format!("folder {}", folder.display()),
         ContextPeer::Git { git, remote } => format!("git {git} via {remote}"),
     };
-    println!("{}: {peer}", bound.name);
-    if let Some(author) = &bound.context.author {
+    println!("{name}: {peer}");
+    if let Some(author) = &context.author {
         println!("author {} · {}", author.name, author.role);
     }
-    if let Some(variable) = &bound.context.token_env {
+    if let Some(variable) = &context.token_env {
         println!("token from {variable}");
     }
 }

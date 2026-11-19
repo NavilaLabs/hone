@@ -89,9 +89,16 @@ fn a_bound_project_syncs_with_and_writes_as_its_context() {
     ]);
     assert_eq!(set.status.code(), Some(0));
     let used = scratch.hone(&["context", "use", "acme", "--json"]);
+    let root = scratch
+        .root
+        .join("case/project")
+        .canonicalize()
+        .expect("canonical")
+        .display()
+        .to_string();
     assert_eq!(
         json_of(&used),
-        json!({ "name": "acme", "context": { "peer": { "folder": folder }, "author": { "name": "alice", "role": "architect" } } })
+        json!({ "name": "acme", "root": root, "context": { "peer": { "folder": folder }, "author": { "name": "alice", "role": "architect" } } })
     );
 
     let written = scratch.hone(&[
@@ -158,4 +165,53 @@ fn a_context_needs_a_known_name_and_a_peer() {
         "name the context's peer: --server, --folder, or --git"
     );
     assert!(!scratch.root.join("config").exists(), "nothing is written");
+}
+
+#[test]
+fn another_checkout_with_the_same_project_id_gets_no_context() {
+    let scratch = Scratch::new("claimed");
+    let folder = scratch.root.join("folder").display().to_string();
+    scratch.hone(&[
+        "context",
+        "set",
+        "acme",
+        "--folder",
+        &folder,
+        "--author",
+        "alice",
+        "--role",
+        "architect",
+    ]);
+    scratch.hone(&["context", "use", "acme"]);
+    copy(
+        &scratch.root.join("case/project"),
+        &scratch.root.join("claimed"),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_hone"))
+        .args(["sync", "--json"])
+        .current_dir(scratch.root.join("claimed"))
+        .env("HONE_DATA_DIR", scratch.root.join("case/data"))
+        .env("HONE_CONFIG_DIR", scratch.root.join("config"))
+        .env_remove("HONE_SYNC_FOLDER")
+        .env_remove("HONE_SYNC_SERVER")
+        .env_remove("HONE_SYNC_GIT")
+        .output()
+        .expect("hone runs");
+    assert_eq!(output.status.code(), Some(2));
+    let message = json_of(&output)["message"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        message.starts_with("the project `prj-8m2k4d7q` is bound to the context `acme` in "),
+        "{message}"
+    );
+    assert_eq!(
+        std::fs::read_dir(scratch.root.join("folder"))
+            .expect("readable")
+            .count(),
+        0,
+        "nothing is synced into the context's folder"
+    );
 }
