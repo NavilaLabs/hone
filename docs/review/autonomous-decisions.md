@@ -78,3 +78,11 @@ Decisions taken without the maintainer, during an autonomous run on the branch `
 57. **Names.** A context name is lowercase letters, digits, and `-`, not starting with `-`.
 58. **The GUI leaves the author to the context** when its author or role field is empty, instead of passing empty flags.
 59. **Not done:** the MCP server does not read contexts yet (it keeps `--author`, `--sync-*`); `export` and `forget`; tokens in an OS keyring.
+
+## `module-anchors-resolve` (concept Question 40)
+
+60. **What is checked.** Every anchor and `interface.code` of the artifacts of the kind in `params.kind` (default `module`), against `/project`. `path`: the file or directory exists; `glob`: at least one file matches (`*`, `?`, `**` as in `change-needs-binding`); `symbol`: the file exists and, in a `.rs` file, the symbol resolves.
+61. **Rust symbol resolution.** `a::b` resolves through items (fn, struct, enum, trait, type, const, static, union, inline `mod`, `macro_rules!`), enum variants, trait items, named struct fields, and items of `impl` blocks of a type named like the last path segment, also when the type is defined elsewhere. Re-exports (`pub use`) and out-of-line `mod x;` files are not followed. Alternative: rust-analyzer-level resolution, rejected as far beyond a WASM plugin.
+62. **Codes.** Errors `anchor-missing`, `symbol-missing`, `unparsable`; warnings `symbol-unchecked` (symbol in a non-Rust file whose file exists) and `other-repository` (`repository:path`, not visible to the check). Each finding carries the artifact's path and the anchor's pointer (`/anchors/<i>`, `/interface/code`).
+63. **Test cases.** One cause per case, as the gate test suite requires. The test projects' module kind has no extra schema, so `interface` shows the warning `unknown-field` of `schema-valid`; the expected lines include it.
+64. **Security review of contexts (open, being fixed).** An automated review noted that a context is bound by the project ID from the repository's own `.hone/config.yaml`, so a foreign checkout could claim a bound project's ID and inherit its peer and author. The fix binds the canonical project root as well.

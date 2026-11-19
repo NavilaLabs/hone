@@ -5,6 +5,7 @@ hone's own WebAssembly plugins (concept Section 9). They form a Cargo workspace 
 | Plugin                    | Purpose                                                                                                                                                        |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `public-api-has-decision` | A gate: a change to the public API of a Rust file under an anchored artifact (for example a module) needs a binding decision. It compares with the base state. |
+| `module-anchors-resolve`  | A gate: every anchor of a module (and its `interface.code`) resolves in the checked state: paths exist, globs match, Rust symbols exist.                       |
 | `probe`                   | A test plugin for the gate test cases. The parameter `mode` selects its behaviour (findings, echo, read, write, trap, timeout, memory, invalid output).        |
 
 ## Building
@@ -36,3 +37,19 @@ public-api:
 ```
 
 `hone check` then needs `--changed` and `--base <dir>`, for example a `git worktree` of the target branch. Without them, the gate fails with `changed-paths-missing` or `base-missing`.
+
+## Using `module-anchors-resolve`
+
+```yaml
+# .hone/plugins/module-anchors-resolve.yaml
+capabilities: { read: [project], timeout_ms: 5000, memory_pages: 256 }
+```
+
+```yaml
+# a gate entry in a step
+anchors:
+  gate: module-anchors-resolve
+  params: { kind: module } # optional, module is the default
+```
+
+It needs neither changed paths nor a base state. A symbol anchor `path#a::b` resolves in Rust files; in other files only the file is checked, with the warning `symbol-unchecked`.
