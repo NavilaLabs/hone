@@ -57,3 +57,15 @@ Decisions taken without the maintainer, during an autonomous run on the branch `
 42. **No MCP tools for approvals yet.** An approval is a person's decision; an agent with a fixed author should not give one without an explicit design.
 43. **Open: actors for every event.** An automated security review suggested checking `actors` for every written event, not only approvals and confirmations. That would change the decided behaviour of `hone thread` and `hone step` (any handle with an existing role may write today, because local authorship is trust-based), so it is listed here for review instead of being changed.
 44. **Not covered by tests yet:** a role without `approve`, `approvals-only`, and `decides`, because the gate test projects have none of them; covering them needs a test project with its own snapshot.
+45. **Open: condensing still has a small race.** After an automated security review, condensing checks the artifact's directory below the project root before creating the new file and again just before the rename. A writer of the project directory could still swap the directory for a link between the second check and the rename. Closing it needs directory handles (`openat`/`renameat`, for example through `rustix`), a new dependency; the threat is a concurrent writer inside the user's own checkout.
+
+## Git branch as a shared folder (concept Question 38)
+
+46. **Where the worktree lives.** `<store>/git/<branch with / as ->/`, below the store directory and outside the project's checkout, so the project's working tree never shows the branch. Alternative: a directory in `.git/`, rejected because Git owns it.
+47. **Reset, not merge.** Before each sync the worktree is reset to the fetched branch; the own log is written again from the local store, so nothing is lost. A missing remote branch is created as an orphan branch.
+48. **Named tracking ref.** Fetches go to `refs/remotes/<remote>/<branch>`, because `FETCH_HEAD` belongs to the worktree that fetched and a worktree cannot see the repository's.
+49. **Commit and push.** Only `log/<own device>/` is staged; no change means no commit. Message `hone: log of <device>`. A rejected push is retried three times after a fetch and a rebase, which cannot conflict. Commits use the repository's Git identity.
+50. **Names.** Remote and branch may hold only ASCII letters, digits, `/`, `.`, `_`, `-`, must not start with `-` and must not contain `..`, because both reach the Git command line as arguments.
+51. **Errors.** A failing Git command ends the sync as `unavailable` with Git's message.
+52. **MCP.** `hone mcp --sync-git <branch>` (or `HONE_SYNC_GIT`) uses the remote `origin`; there is no `--sync-remote` yet.
+53. **Not covered by tests yet:** the push retry after a rejected push.
