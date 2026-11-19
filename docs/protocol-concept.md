@@ -1163,6 +1163,20 @@ The implementation depends on the platform: one branch per unit, pull requests, 
 
 **Contexts.** Like Git remotes or the SSH configuration, the tool keeps a _context_ per tenant: server address, identity, and credentials. It lives locally and never in the project. The device binds locally which project belongs to which context. A project belongs to exactly one context, a device can have many. A freelancer typically has one per client, each with its own identity (the client's SSO or their own).
 
+hone keeps the contexts in `contexts.yaml` in the platform's configuration directory (`$XDG_CONFIG_HOME/hone/` on Linux, `%APPDATA%\hone\` on Windows, `~/Library/Application Support/hone/` on macOS; `HONE_CONFIG_DIR` replaces the directory), a file in the strict profile (Question 39):
+
+```yaml
+contexts:
+  acme:
+    peer: { server: "https://hone.acme.example" } # or { folder: "/mnt/share" } or { git: "hone/process", remote: "origin" }
+    author: { name: "alice", role: "architect" } # optional
+    token_env: "HONE_TOKEN_ACME" # optional, default HONE_TOKEN: the variable that holds the token
+projects:
+  prj-8m2k4d7q: acme # the device's binding of a project to a context
+```
+
+The file holds no secret: a context names the environment variable of its token, and the token stays in the environment (an OS keyring can come later). `hone context set <name> --server <url> | --folder <dir> | --git <branch> [--remote <name>] [--author <handle> --role <role>] [--token-env <variable>]` creates or replaces a context, `hone context use <name> [--root <dir>]` binds the project of the root, and `hone context show [--root <dir>] [--json]` prints the bound context. hone writes the file anew on every change, so comments in it do not survive. A flag or its environment variable wins over the context: `hone sync` without `--folder`, `--server`, or `--git` takes the peer of the bound context, and the writing commands without `--author` and `--role` take its author. Without a binding, they fail as before.
+
 **Tenant separation.** The local store is separated per project. A confidential ticket gets its own project. There is no scope below the project (Question 20). An agent run receives context from exactly one project, never from two, otherwise one client's data flows into another client's prompts. At the end of an engagement there are `export` and `forget`, so that nothing is left behind (NDA, GDPR). Optionally, the tool encrypts the local store per project.
 
 **Creation.** `hone init --from <package>` writes `extends` into the new configuration. This brings a custom standard process into every project without needing a global layer.
@@ -1387,6 +1401,8 @@ All questions of this draft are decided. The numbers stay stable because the tex
 
 38. **Git branch as a shared folder:** Decided without review (listed in `docs/review/autonomous-decisions.md`). `hone sync --git <branch> [--remote <name>]` keeps a worktree of the branch under the store directory, resets it to the remote branch or creates an orphan branch, syncs with the worktree as the folder, commits the own log, and pushes with up to three rebase retries. Git failures are `unavailable` (Section 12).
 
+39. **Contexts:** Decided without review (listed in `docs/review/autonomous-decisions.md`). `contexts.yaml` in the platform's configuration directory holds per context a peer, an optional author, and the name of the token's environment variable, and binds project IDs to contexts. It holds no secret. `hone context set|use|show` edit and show it. Flags and their environment variables win; without them, `hone sync` takes the context's peer and the writing commands its author (Section 12).
+
 ## 16. Next steps
 
 1. Done: format (Question 1) and the artifact schema with tests (`schemas/`), adapted to all decisions (ID format, `reach`, lifecycles instead of fixed types, presets under `schemas/standard/`, module with `interface`, `context.observed`, hash normalization).
@@ -1398,7 +1414,7 @@ All questions of this draft are decided. The numbers stay stable because the tex
 7. Done: scope IDs and the event schema (`schemas/event.schema.json`, Question 31) with valid and invalid fixtures, the local process store in `hone-core` (segments per device, deterministic order, no index yet), the commands `hone thread`, `hone step`, and `hone events` and the matching MCP tools, and the gates `no-open-blocking-threads`, `threads-answered`, and `steps-complete` against the store.
 8. Done: the plugin contract (Question 32) with Extism as the runtime and `schemas/plugin.schema.json`, the gate `public-api-has-decision` in Rust under `plugins/`, capabilities and hash pinning checked on every run against a lockfile the caller may replace, `exec` gates with approved commands and `evaluate`, and `--base` and `--lock` on the command line and over MCP.
 9. Done: the replication contract in the decided scope (Question 26, Question 33, Question 34, Question 35: unreadable entries of a shared folder are skipped and reported) with the test cases `schemas/tests/read/`, `schemas/tests/sync/`, and `schemas/tests/append/`, the shared folder as the first reference backend (`hone sync --folder`), the reference server as the crate `hone-server` (`hone serve`: HTTP, NDJSON, Server-Sent Events, bearer authentication, every error code of Section 4), and the client (`hone sync --server [--watch]`, the MCP tool `sync` with `--sync-folder` or `--sync-server`).
-10. In progress: the desktop GUI `hone-gui` over the command line and `hone log` (Question 36), approvals and condensation as commands (Question 37), and the Git branch as a shared folder (Question 38) are done. Open: condensation, language plugins (including `module-anchors-resolve`), and the tool layer (contexts, Git integration, delivery).
+10. In progress: the desktop GUI `hone-gui` over the command line and `hone log` (Question 36), approvals and condensation as commands (Question 37), and the Git branch as a shared folder (Question 38) are done. Open: language plugins (including `module-anchors-resolve`), and the tool layer (contexts, delivery).
 11. Turn this concept into the normative specification in `spec/`.
 
 ## Sources
