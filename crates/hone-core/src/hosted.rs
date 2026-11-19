@@ -142,6 +142,16 @@ impl HostedStore {
             .collect();
         let mut slots: BTreeMap<(String, u64), String> = BTreeMap::new();
         let mut ids: BTreeSet<String> = BTreeSet::new();
+        // A device belongs to the author of its first event, so that nobody can append under a
+        // foreign device ID and block it with a fork.
+        let mut owners: BTreeMap<String, String> = log
+            .chains()
+            .into_iter()
+            .filter_map(|(device, chain)| {
+                let author = chain.first()?["author"]["name"].as_str()?;
+                Some((device.to_owned(), author.to_owned()))
+            })
+            .collect();
         for event in &log.events {
             let line = canonical::to_canonical(event);
             slots.insert(
@@ -199,6 +209,14 @@ impl HostedStore {
                         appender.identity
                     ),
                 ))
+            } else if let Some(owner) = owners
+                .get(&device)
+                .filter(|owner| owner.as_str() != appender.identity)
+            {
+                Some((
+                    ServerCode::IdentityMismatch,
+                    format!("the device `{device}` belongs to `{owner}` on the server"),
+                ))
             } else if event["type"] == APPROVAL_GIVEN && !has_role(appender, event) {
                 Some((
                     ServerCode::RoleMismatch,
@@ -247,6 +265,9 @@ impl HostedStore {
             }
             slots.insert((device.clone(), seq), (*line).to_owned());
             ids.insert(id);
+            owners
+                .entry(device.clone())
+                .or_insert_with(|| appender.identity.to_owned());
             cursor.insert(device.clone(), seq);
             plan.accepted
                 .entry(device)
