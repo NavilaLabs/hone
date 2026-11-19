@@ -1,6 +1,6 @@
 # Approvals, threads, and condensation
 
-Level: Flow. Events: [process store](process-store.md). Gates: `approvals-valid`, `no-open-blocking-threads`, `threads-answered` (concept Section 7).
+Level: Flow. Events: [process store](process-store.md). Gates: `approvals-valid`, `no-open-blocking-threads`, `threads-answered` ([gates](gates.md)).
 
 ## Approvals
 

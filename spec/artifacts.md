@@ -1,6 +1,6 @@
 # Artifacts
 
-Level: Core. Schemas: `schemas/artifact.schema.json`, `schemas/common.schema.json`, the kinds of the resolved configuration. Test cases: `schemas/tests/{valid,invalid,profile,hash}/` and the gate test cases of `schema-valid`, `ids-unique`, and `links-resolve` ([conformance](conformance.md)). The gates and their codes are specified in concept Section 7.
+Level: Core. Schemas: `schemas/artifact.schema.json`, `schemas/common.schema.json`, the kinds of the resolved configuration. Test cases: `schemas/tests/{valid,invalid,profile,hash}/` and the gate test cases of `schema-valid`, `ids-unique`, and `links-resolve` ([conformance](conformance.md)). The gates and their codes: [gates](gates.md).
 
 ## Types, kinds, and lifecycles
 
