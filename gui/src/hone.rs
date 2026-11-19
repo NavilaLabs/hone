@@ -326,7 +326,8 @@ impl Hone {
         self.run(&arguments, &[0, 1]).await
     }
 
-    /// Writes an event as `writer`.
+    /// Writes an event as `writer`, or, if its author or role is empty, as the author of the
+    /// project's context.
     ///
     /// # Errors
     ///
@@ -338,12 +339,15 @@ impl Hone {
             thread: Option<String>,
         }
         let mut arguments = write_arguments(write);
-        arguments.extend([
-            "--author".into(),
-            writer.author.clone(),
-            "--role".into(),
-            writer.role.clone(),
-        ]);
+        // Without both, the command line takes the author of the project's context.
+        if !writer.author.is_empty() && !writer.role.is_empty() {
+            arguments.extend([
+                "--author".into(),
+                writer.author.clone(),
+                "--role".into(),
+                writer.role.clone(),
+            ]);
+        }
         let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
         let output: Output = self.run(&arguments, &[0]).await?;
         Ok(Appended {
