@@ -1,3 +1,4 @@
+mod catalog;
 mod check;
 mod credentials;
 mod process;
@@ -51,6 +52,12 @@ enum Command {
     Events(process::EventsArguments),
     /// Show every valid event of the project's process store and its cursor.
     Log(process::Target),
+    /// List the artifacts of the checked directory, ticket records included, with their
+    /// declared and effective status.
+    Artifacts(catalog::CatalogArguments),
+    /// Show the tickets of the project.
+    #[command(subcommand)]
+    Ticket(catalog::Ticket),
     /// Write the project's process store, the logs of every device, into a new or empty
     /// directory in the layout of a shared folder, from which `hone sync --folder` imports it.
     Export(process::ExportArguments),
@@ -110,6 +117,8 @@ fn main() -> ExitCode {
         Command::Review(review) => process::run_review(review),
         Command::Events(arguments) => process::run_events(&arguments),
         Command::Log(target) => process::run_log(&target),
+        Command::Artifacts(arguments) => catalog::run_artifacts(&arguments),
+        Command::Ticket(command) => catalog::run_ticket(command),
         Command::Export(arguments) => process::run_export(&arguments),
         Command::Forget(arguments) => process::run_forget(&arguments),
         Command::Sync(arguments) => process::run_sync(&arguments),

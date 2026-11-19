@@ -47,6 +47,10 @@ impl<'a> Scope<'a> {
         scope
     }
 
+    pub(crate) fn effective(&self, index: usize) -> Option<&str> {
+        self.effective[index].as_deref()
+    }
+
     pub(crate) fn directory_gate(&self, gate: &str) -> Vec<Finding> {
         match gate {
             "schema-valid" => schema_valid::check_directory(self.config, self.directory),

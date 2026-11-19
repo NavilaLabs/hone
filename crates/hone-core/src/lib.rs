@@ -10,6 +10,7 @@
 mod anchor;
 mod artifact;
 mod canonical;
+mod catalog;
 mod check;
 mod client;
 mod complete;
@@ -44,6 +45,10 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 
+pub use catalog::{
+    Catalog, CatalogEntry, ExternalTicket, ProfileStep, TicketOverview, UnreadableFile, catalog,
+    ticket_overview,
+};
 pub use check::{
     CheckError, CheckReport, CheckRequest, GateClass, GateReport, check, check_artifact,
     check_edit, content_hash,
