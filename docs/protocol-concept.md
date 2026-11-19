@@ -129,6 +129,8 @@ A client writes the author of its context into its events. It appends only event
 
 ## 5. Artifacts
 
+The rules of this section are normative text in [`spec/artifacts.md`](../spec/artifacts.md) (Question 41); this section keeps the examples and the reasons.
+
 Every artifact is a file. The core knows exactly one fixed type, the **ticket record**. All other types are **kinds** (`kinds`), defined by the configuration (Section 8).
 
 **`spec`, `decision`, `test-plan`, and `module` are presets, not protocol types.** They come with the package `hone/standard` because almost every team needs them. A project can delete, rename, or change them or replace them with its own kinds, exactly as it adds its own kinds such as `threat-model`. The protocol itself knows no design concept, only the mechanisms the presets are built on:
@@ -165,30 +167,13 @@ On completion, the tool adds a `review` block to artifacts with lifecycle `decid
 
 **Why not TOML:** Merging (Section 8) needs `null` as a removal marker. TOML has no null value, keys are simply omitted there. TOML has supported multi-line inline tables since 1.1, so those no longer speak against TOML, but `null` still does.
 
-**Why a profile:** Different YAML parsers read the same file differently. A YAML 1.1 parser turns `NO` into `false`, `010` into the number 8, `1:30` into the number 90, and `2026-11-16` into a date. YAML 1.2 cleaned this up with the core schema, but libraries differ, and two tools must see the same data and the same hash. The profile allows only the subset in which everyone reads the same:
+**Why a profile:** Different YAML parsers read the same file differently. A YAML 1.1 parser turns `NO` into `false`, `010` into the number 8, `1:30` into the number 90, and `2026-11-16` into a date. YAML 1.2 cleaned this up with the core schema, but libraries differ, and two tools must see the same data and the same hash. The profile allows only the subset in which everyone reads the same: no floating-point numbers, no anchors, aliases, tags, or duplicate keys, `null` written out so that a forgotten value does not silently remove something, ambiguous strings quoted, and dates as strings ([`spec/artifacts.md`](../spec/artifacts.md#data-model-and-yaml-profile)).
 
-1. YAML 1.2, UTF-8 without BOM, one document per file.
-2. Values are strings, integers (±(2^53−1)), `true`, `false`, and `null`, plus lists and maps with string keys. No floating-point numbers.
-3. Forbidden are anchors, aliases, tags, directives other than `%YAML 1.2`, merge keys (`<<`), duplicate keys, keys that are not strings, and empty values. `null` is written as `null`, so that a forgotten value does not silently remove something.
-4. Ambiguous strings are quoted: `yes`, `no`, `on`, `off`, `y`, `n`, `True`, `~`, `Null`, and anything a parser could read as a number (`1.5`, `010`, `0x1F`, `1:30`, `9e10`). Everything else may stand without quotes.
-5. A date is a string (`2026-11-16`), never a date type.
+A YAML parser alone is not enough to check the profile, because it does not always report anchors, tags, and duplicate keys. The reference implementation therefore checks the parser's event stream. Unknown fields are preserved (Principle 11) and reported as a warning, not as an error, so that a newer tool's fields do not break an older check; a kind schema that wants deeper levels strict sets `additionalProperties: false` itself.
 
-The gate `schema-valid` checks the profile first, then the schema. A YAML parser alone is not enough for this, because it does not always report anchors, tags, and duplicate keys. The reference implementation therefore checks the parser's event stream. Unknown fields are preserved (Principle 11). `schema-valid` reports unknown fields without `x-` as a warning, not as an error. Unknown means: at the top level, a key that neither the schema of the lifecycle (or of the ticket record) nor `properties` or `patternProperties` at the top of the kind schema names, and in `links`, a key that is not a link type of the core. Deeper levels are not checked. A kind schema that wants them strict sets `additionalProperties: false` itself.
+**File shapes, paths, and schema** ([`spec/artifacts.md`](../spec/artifacts.md#file-shapes)). A `.md` file has front matter between two `---` lines and a Markdown body; a `.yaml` file is the data model itself. A file is an artifact when its path matches the pattern of `ticket.path` or of a kind, and path and content must agree, because a file name and an ID that tell different stories would make links ambiguous. When `type` disagrees with the path, the content is not checked further, because it is unclear which kind applies. A file that looks like an artifact but matches no pattern, for example `dec-7k3m2q8-payment.md` with one character missing, is probably a typo and gets a warning; other files such as a `README.md` are ignored. `schemas/artifact.schema.json` distinguishes the ticket record and the two lifecycles; every kind can add a schema of its own, and the presets live with their definitions and schemas in the standard package (`schemas/standard/`). `superseded` must never appear in a file, because it is computed (Question 2).
 
-**File shapes.** A `.md` file starts with the line `---`, followed by the front matter and a line `---`. Everything after that is the body (Markdown). A `.yaml` file is the data model itself and has no body.
-
-**Files and paths.** A file is an artifact when its path, relative to the project root, matches `ticket.path` or the `path` of a kind. In a pattern, `{id}` matches the prefix of that kind, a hyphen, and the 8 characters of the random part, `{ticket}` matches a ticket ID, and `{slug}` matches groups of `a-z` and `0-9` separated by single hyphens (`[a-z0-9]+(-[a-z0-9]+)*`, not empty). Every other character matches itself. A file that matches no pattern is not an artifact. The path and the content must agree: `{id}` with `id`, `{ticket}` with `ticket` (with `id` in the ticket record), and the kind of the pattern with `type`. A disagreement is an error of `schema-valid` (`path-mismatch`). If `type` disagrees, the content is not checked further, because it is unclear which kind applies. A file below the leading directories of a pattern (the part before its first placeholder) that matches no pattern but whose name starts with the prefix of a kind and a hyphen is probably a typo, for example `dec-7k3m2q8-payment.md` with one character missing. `schema-valid` reports it as a warning (`unmatched-file`). Other files, such as a `README.md`, are ignored.
-
-**Schema.** `schemas/artifact.schema.json` (JSON Schema 2020-12) distinguishes the ticket record and the two lifecycles `decided` and `living`. Which lifecycle applies is stated in `kinds.<type>.lifecycle`. The declared status must be one of `kinds.<type>.statuses` (Question 27). `superseded` is computed, reserved, and must never appear in a file (Question 2). Every kind can attach an additional schema through `kinds.<type>.schema`. The presets live with their definitions (`kinds/`) and additional schemas (`schemas/`) in the standard package, in this repository under `schemas/standard/`. `schema-valid` checks an artifact against the schema of its lifecycle, its additional schema, the prefix of its kind (`id_prefix`), and the statuses of its kind. A kind that the configuration does not know is an error.
-
-**Content hash.** Applies only to artifacts with lifecycle `decided`. The ticket record and artifacts with lifecycle `living` are mutable and have none. `sha256:` plus SHA-256 over the canonical form (RFC 8785) of the object `{ "meta": <front matter without review>, "body": <body> }`. The body is normalized first:
-
-1. Unicode normalization form NFC.
-2. Line endings become LF.
-3. Spaces and tabs at the end of a line are removed.
-4. Leading and trailing line breaks are removed.
-
-Files without a body have `body: ""`. Reformatting the YAML (order, quoting, style), CRLF, trailing whitespace, and changes to the `review` block leave the hash unchanged. Every change to fields or text changes it, including a new line break in the body. Markdown formatters should therefore not rewrap paragraphs (with Prettier, for example, `proseWrap: preserve`). Hashing a Markdown AST is deliberately excluded, because two parsers would hash differently. The test cases for profile, schema, and hash are described in Section 14.
+**Content hash** ([`spec/artifacts.md`](../spec/artifacts.md#content-hash)). Only artifacts with lifecycle `decided` have one, because only they are approved; the ticket record and living artifacts are mutable. The hash is taken over the canonical JSON of front matter (without the `review` block) and body, after normalizing the body (NFC, LF, no trailing whitespace, no leading or trailing line breaks). Reformatting the YAML, CRLF, trailing whitespace, and changes to the `review` block therefore leave the hash unchanged, while every change to fields or text changes it, including a new line break in the body. Markdown formatters should therefore not rewrap paragraphs (with Prettier, for example, `proseWrap: preserve`). Hashing a Markdown AST is deliberately excluded, because two parsers would hash differently. The test cases for profile, schema, and hash are described in [`spec/conformance.md`](../spec/conformance.md#artifact-files).
 
 **Core and presets.**
 
@@ -285,6 +270,8 @@ The ticket record is the **key** that connects everything: artifacts, configurat
 
 ## 6. Lifecycle and status
 
+The rules of this section are normative text in [`spec/artifacts.md`](../spec/artifacts.md#status) (Question 41); this section keeps the examples and the reasons.
+
 There is a **declared** and an **effective** status.
 
 - _Declared:_ what the author writes into the file, one of the statuses of the kind (`kinds.<type>.statuses`).
@@ -365,7 +352,7 @@ The standard package sets the parameters `{ anchored: module, binding: decision 
 | ------------------------------------ | --------------------------- | ------- | ------------------------------------------------------------------------------------------- |
 | `schema-valid`                       | `yaml-profile`              | error   | The file violates the strict YAML profile or the file shape (Section 5)                     |
 | `schema-valid`                       | `kind-unknown`              | error   | `type` names neither `ticket` nor a kind of the configuration                               |
-| `schema-valid`                       | `path-mismatch`             | error   | `id`, `ticket`, or `type` disagrees with the path (Section 5, "Files and paths")            |
+| `schema-valid`                       | `path-mismatch`             | error   | `id`, `ticket`, or `type` disagrees with the path (Section 5)                               |
 | `schema-valid`                       | `id-prefix`                 | error   | `id` does not start with the `id_prefix` of the kind                                        |
 | `schema-valid`                       | `status`                    | error   | The declared status is not a status of the kind                                             |
 | `schema-valid`                       | `schema`                    | error   | The data does not match the schema of its lifecycle and kind                                |
@@ -1292,7 +1279,7 @@ All questions of this draft are decided. The numbers stay stable because the tex
 8. Done: the plugin contract (Question 32) with Extism as the runtime and `schemas/plugin.schema.json`, the gate `public-api-has-decision` in Rust under `plugins/`, capabilities and hash pinning checked on every run against a lockfile the caller may replace, `exec` gates with approved commands and `evaluate`, and `--base` and `--lock` on the command line and over MCP.
 9. Done: the replication contract in the decided scope (Question 26, Question 33, Question 34, Question 35: unreadable entries of a shared folder are skipped and reported) with the test cases `schemas/tests/read/`, `schemas/tests/sync/`, and `schemas/tests/append/`, the shared folder as the first reference backend (`hone sync --folder`), the reference server as the crate `hone-server` (`hone serve`: HTTP, NDJSON, Server-Sent Events, bearer authentication, every error code of Section 4), and the client (`hone sync --server [--watch]`, the MCP tool `sync` with `--sync-folder` or `--sync-server`).
 10. In progress: the desktop GUI `hone-gui` over the command line and `hone log` (Question 36), approvals and condensation as commands (Question 37), the Git branch as a shared folder (Question 38), contexts (Question 39), and the Rust plugin `module-anchors-resolve` (Question 40) are done. Open: plugins for other languages, credentials in an OS keyring, `export` and `forget`, and delivery.
-11. In progress: the normative specification in `spec/` (Question 41). Written: the conventions and levels (`spec/README.md`), conformance with every test case format (`spec/conformance.md`), the process store (`spec/process-store.md`), replication (`spec/replication.md`), and review (`spec/review.md`). Open: artifacts, configuration, gates, and plugins, each moved out of this concept chapter by chapter.
+11. In progress: the normative specification in `spec/` (Question 41). Written: the conventions and levels (`spec/README.md`), conformance with every test case format (`spec/conformance.md`), the process store (`spec/process-store.md`), replication (`spec/replication.md`), and review (`spec/review.md`), and artifacts with lifecycle and status (`spec/artifacts.md`). Open: configuration, gates, and plugins, each moved out of this concept chapter by chapter.
 
 ## Sources
 

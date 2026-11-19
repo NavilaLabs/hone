@@ -22,16 +22,16 @@ An implementation claims one level and proves it with the test cases of that lev
 
 ## Chapters
 
-| Chapter                           | Content                                                          | State                    |
-| --------------------------------- | ---------------------------------------------------------------- | ------------------------ |
-| [Conformance](conformance.md)     | Levels, the test suites, and the format of every test case       | Written                  |
-| Artifacts                         | Format, YAML profile, content hash, IDs, links, lifecycle        | Concept Sections 5 and 6 |
-| Configuration                     | The resolved configuration, layers, packages, snapshots          | Concept Section 8        |
-| Gates                             | Steps, profiles, the standard gates and their codes              | Concept Section 7        |
-| Plugins                           | The plugin contract, capabilities, and trust                     | Concept Section 9        |
-| [Process store](process-store.md) | Logs, segments, events, the reading rules, the order, the cursor | Written                  |
-| [Replication](replication.md)     | `read`, `append`, `sync`, the shared folder, the HTTP transport  | Written                  |
-| [Review](review.md)               | Approvals, threads, and condensation                             | Written                  |
+| Chapter                           | Content                                                          | State             |
+| --------------------------------- | ---------------------------------------------------------------- | ----------------- |
+| [Conformance](conformance.md)     | Levels, the test suites, and the format of every test case       | Written           |
+| [Artifacts](artifacts.md)         | Format, YAML profile, content hash, IDs, links, lifecycle        | Written           |
+| Configuration                     | The resolved configuration, layers, packages, snapshots          | Concept Section 8 |
+| Gates                             | Steps, profiles, the standard gates and their codes              | Concept Section 7 |
+| Plugins                           | The plugin contract, capabilities, and trust                     | Concept Section 9 |
+| [Process store](process-store.md) | Logs, segments, events, the reading rules, the order, the cursor | Written           |
+| [Replication](replication.md)     | `read`, `append`, `sync`, the shared folder, the HTTP transport  | Written           |
+| [Review](review.md)               | Approvals, threads, and condensation                             | Written           |
 
 ## License
 
