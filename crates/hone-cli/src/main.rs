@@ -1,4 +1,5 @@
 mod check;
+mod credentials;
 mod process;
 
 use std::path::PathBuf;
@@ -202,9 +203,9 @@ fn mcp_project(arguments: McpArguments) -> Result<hone_mcp::Project, String> {
     };
     if author.is_none() || sync_peer.is_none() {
         let context = process::context_of(&root).map_err(|error| error.to_string())?;
-        if let Some(context) = context {
+        if let Some(bound) = context {
             if sync_peer.is_none() {
-                sync_peer = Some(match &context.peer {
+                sync_peer = Some(match &bound.context.peer {
                     hone_core::ContextPeer::Folder { folder } => {
                         hone_mcp::SyncPeer::Folder(folder.clone())
                     }
@@ -213,11 +214,11 @@ fn mcp_project(arguments: McpArguments) -> Result<hone_mcp::Project, String> {
                         remote: remote.clone(),
                     },
                     hone_core::ContextPeer::Server { server } => hone_mcp::SyncPeer::Server(
-                        hone_core::Server::new(server, &process::context_token(&context)?),
+                        hone_core::Server::new(server, &process::context_token(&bound, server)?),
                     ),
                 });
             }
-            author = author.or(context.author);
+            author = author.or(bound.context.author);
         }
     }
     Ok(hone_mcp::Project {

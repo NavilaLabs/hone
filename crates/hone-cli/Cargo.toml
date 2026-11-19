@@ -16,6 +16,7 @@ clap.workspace = true
 hone-core.workspace = true
 hone-mcp.workspace = true
 hone-server.workspace = true
+keyring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["signal"] }

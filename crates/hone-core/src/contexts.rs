@@ -172,6 +172,12 @@ impl Contexts {
         Ok(())
     }
 
+    /// The context `name`, if it exists.
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<&Context> {
+        self.contexts.get(name)
+    }
+
     /// Binds `project`, checked out at `root`, to the context `name`. A project has one
     /// binding; binding it again moves it to the new root.
     ///

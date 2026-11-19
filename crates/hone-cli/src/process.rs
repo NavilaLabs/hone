@@ -464,19 +464,18 @@ pub(crate) fn token() -> Result<String, String> {
     token_from("HONE_TOKEN")
 }
 
-pub(crate) fn context_token(context: &Context) -> Result<String, String> {
-    token_from(context.token_env.as_deref().unwrap_or("HONE_TOKEN"))
+pub(crate) fn context_token(bound: &BoundContext, server: &str) -> Result<String, String> {
+    let variable = bound.context.token_env.as_deref().unwrap_or("HONE_TOKEN");
+    crate::credentials::token(variable, &bound.name, server)
 }
 
-pub(crate) fn context_of(root: &Path) -> Result<Option<Context>, ProcessError> {
+pub(crate) fn context_of(root: &Path) -> Result<Option<BoundContext>, ProcessError> {
     // Without a readable scope there is no project ID to bind, and every tool that writes or
     // syncs reports the broken project itself.
     let Ok(store) = ProcessStore::locate(root, None) else {
         return Ok(None);
     };
-    Ok(Contexts::load()?
-        .of_project(store.project(), store.root())?
-        .map(|bound| bound.context))
+    Contexts::load()?.of_project(store.project(), store.root())
 }
 
 fn token_from(variable: &str) -> Result<String, String> {
@@ -499,7 +498,7 @@ fn sync_with_context(store: &ProcessStore) -> Result<SyncReport, ProcessError> {
             branch: git,
         }),
         ContextPeer::Server { server } => {
-            let token = context_token(&bound.context)
+            let token = context_token(&bound, server)
                 .map_err(|message| ProcessError::Invalid { message })?;
             store.sync(Peer::Server(&Server::new(server, &token)))
         }
@@ -549,6 +548,71 @@ pub(crate) enum ContextCommand {
         #[command(flatten)]
         target: Target,
     },
+    /// Store the token of a context's server in the OS keyring, read as one line from
+    /// standard input. The variable of `--token-env` still wins when it is set.
+    Login {
+        /// The context's name.
+        name: String,
+        /// Print the result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove the token of a context's server from the OS keyring.
+    Logout {
+        /// The context's name.
+        name: String,
+        /// Print the result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+/// The result of `hone context login` and `hone context logout`: `removed` only for a logout.
+#[derive(Serialize)]
+struct Credential {
+    name: String,
+    server: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    removed: Option<bool>,
+}
+
+fn context_server(name: &str) -> Result<String, ProcessError> {
+    let contexts = Contexts::load()?;
+    match contexts.get(name).map(|context| &context.peer) {
+        Some(ContextPeer::Server { server }) => Ok(server.clone()),
+        Some(_) => Err(ProcessError::Invalid {
+            message: format!("the context `{name}` has no server, so it needs no token"),
+        }),
+        None => Err(ProcessError::Invalid {
+            message: format!("no context `{name}`: create it with hone context set"),
+        }),
+    }
+}
+
+fn read_token() -> Result<String, ProcessError> {
+    // A flag would show the token in the process list and the shell history.
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|error| ProcessError::IoError {
+            message: format!("standard input: {error}"),
+        })?;
+    let token = line.trim_end_matches(['\n', '\r']);
+    if token.is_empty() {
+        return Err(ProcessError::Invalid {
+            message: "no token: pass it as one line on standard input".into(),
+        });
+    }
+    Ok(token.to_owned())
+}
+
+fn print_credential(credential: &Credential) {
+    let state = match credential.removed {
+        None => "stored the token",
+        Some(true) => "removed the token",
+        Some(false) => "no token was stored",
+    };
+    println!("{}: {state} for {}", credential.name, credential.server);
 }
 
 pub(crate) fn run_context(command: ContextCommand) -> ExitCode {
@@ -599,6 +663,31 @@ pub(crate) fn run_context(command: ContextCommand) -> ExitCode {
                     })
             });
             finish(target.json, outcome, print_context)
+        }
+        ContextCommand::Login { name, json } => {
+            let outcome = context_server(&name).and_then(|server| {
+                let token = read_token()?;
+                crate::credentials::store(&name, &server, &token)
+                    .map_err(|message| ProcessError::IoError { message })?;
+                Ok(Credential {
+                    name,
+                    server,
+                    removed: None,
+                })
+            });
+            finish(json, outcome, print_credential)
+        }
+        ContextCommand::Logout { name, json } => {
+            let outcome = context_server(&name).and_then(|server| {
+                let removed = crate::credentials::remove(&name, &server)
+                    .map_err(|message| ProcessError::IoError { message })?;
+                Ok(Credential {
+                    name,
+                    server,
+                    removed: Some(removed),
+                })
+            });
+            finish(json, outcome, print_credential)
         }
         ContextCommand::Show { target } => {
             let outcome = ProcessStore::locate(&target.root, None).and_then(|store| {

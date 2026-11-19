@@ -430,8 +430,13 @@ fn the_mcp_server_does_not_start_with_a_context_it_cannot_use() {
         .output()
         .expect("hone runs");
     assert_eq!(without_token.status.code(), Some(1));
-    assert_eq!(
-        String::from_utf8_lossy(&without_token.stderr),
-        "hone mcp: no token for the server: set HONE_TOKEN_ACME_TEST\n"
+    // A machine with an OS keyring adds nothing here, because no token is stored for this
+    // context and server; one whose keyring fails to answer appends the reason.
+    let message = String::from_utf8_lossy(&without_token.stderr).into_owned();
+    assert!(
+        message.starts_with(
+            "hone mcp: no token for the server: set HONE_TOKEN_ACME_TEST or store one with hone context login acme"
+        ),
+        "{message}"
     );
 }
