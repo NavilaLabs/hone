@@ -224,6 +224,13 @@ enum StepStatusInput {
 
 #[derive(Deserialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+struct TicketOverviewInput {
+    #[schemars(description = "The ticket, for example `tk-9f2x4a8m`.")]
+    ticket: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
 struct EventsInput {
     #[schemars(description = "The ticket.")]
     ticket: String,
@@ -319,6 +326,29 @@ impl Server {
                 "message": error.to_string(),
                 "violations": error.violations,
             })),
+        }
+    }
+
+    #[tool(
+        description = "List every artifact of the project, ticket records included, like `hone artifacts --json`: per artifact `id`, `type`, `path`, `ticket`, `title`, declared `status`, and `effective` status, for a ticket record also `profile` and `external`; plus `project` and the `unreadable` files."
+    )]
+    fn catalog(&self) -> CallToolResult {
+        match hone_core::catalog(&self.project.root) {
+            Ok(catalog) => CallToolResult::structured(to_value(&catalog)),
+            Err(error) => could_not_run(&error.message),
+        }
+    }
+
+    #[tool(
+        description = "Show a ticket like `hone ticket show --json`: its `profile`, `config`, `attributes`, `external`, the `roles` of its configuration snapshot, and the profile's `steps` in order with `requirement`, `title`, and `after`."
+    )]
+    fn ticket_overview(
+        &self,
+        Parameters(input): Parameters<TicketOverviewInput>,
+    ) -> CallToolResult {
+        match hone_core::ticket_overview(&self.project.root, &input.ticket) {
+            Ok(overview) => CallToolResult::structured(to_value(&overview)),
+            Err(error) => could_not_run(&error.message),
         }
     }
 

@@ -153,6 +153,7 @@ async fn lists_exactly_the_tools() {
     assert_eq!(
         names,
         [
+            "catalog",
             "check",
             "check_artifact",
             "check_edit",
@@ -165,7 +166,53 @@ async fn lists_exactly_the_tools() {
             "thread_reopen",
             "thread_reply",
             "thread_resolve",
+            "ticket_overview",
         ]
+    );
+}
+
+#[tokio::test]
+async fn catalog_and_ticket_overview_return_the_json_of_the_command_line() {
+    let root = check_case("no-open-blocking-threads-open");
+    let catalog = call(project(root.clone()), "catalog", json!({})).await;
+    assert!(!catalog.is_error);
+    assert_eq!(catalog.content["project"], "prj-8m2k4d7q");
+    let ids: Vec<&str> = catalog.content["artifacts"]
+        .as_array()
+        .expect("artifacts")
+        .iter()
+        .filter_map(|artifact| artifact["id"].as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "dec-7k3m2q8p",
+            "mod-4t8w2n6c",
+            "spec-3b8n1c5w",
+            "tk-9f2x4a8m"
+        ]
+    );
+
+    let overview = call(
+        project(root.clone()),
+        "ticket_overview",
+        json!({ "ticket": TICKET }),
+    )
+    .await;
+    assert!(!overview.is_error);
+    assert_eq!(overview.content["profile"], "standard");
+    assert_eq!(overview.content["roles"], json!(["architect", "human"]));
+
+    let malformed = call(
+        project(root),
+        "ticket_overview",
+        json!({ "ticket": "PAY-123" }),
+    )
+    .await;
+    assert!(malformed.is_error);
+    assert_eq!(
+        malformed.content,
+        json!({ "status": "error", "message": "`PAY-123` is not a ticket ID" })
     );
 }
 
