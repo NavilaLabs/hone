@@ -102,12 +102,15 @@ impl<'a> Scope<'a> {
             .map(|(index, artifact)| {
                 let mut entry = json!({
                     "path": artifact.path,
-                    "hash": artifact.content.hash(),
                     "data": artifact.content.data,
                     "body": artifact.content.body,
                 });
                 if let Some(status) = &self.effective[index] {
                     entry["status"] = json!(status);
+                }
+                let kind = artifact.type_name().unwrap_or_default();
+                if self.config["kinds"][kind]["lifecycle"] == "decided" {
+                    entry["hash"] = json!(artifact.content.hash());
                 }
                 entry
             })

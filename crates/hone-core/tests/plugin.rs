@@ -118,6 +118,24 @@ fn the_input_of_check_matches_the_plugin_schema() {
         .expect("the decision is an artifact");
     assert_eq!(decision["body"], "Text.\n");
     assert!(decision["data"].get("body").is_none());
+    assert!(
+        decision["hash"]
+            .as_str()
+            .is_some_and(|hash| hash.starts_with("sha256:")),
+        "a decided artifact carries its content hash"
+    );
+    for id in ["mod-4t8w2n6c", "tk-9f2x4a8m"] {
+        let entry = input["artifacts"]
+            .as_array()
+            .expect("artifacts")
+            .iter()
+            .find(|artifact| artifact["data"]["id"] == id)
+            .expect("listed");
+        assert!(
+            entry.get("hash").is_none(),
+            "{id} has no content hash: {entry}"
+        );
+    }
 }
 
 #[test]
