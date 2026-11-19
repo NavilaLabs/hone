@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand, ValueEnum};
@@ -389,6 +389,21 @@ pub(crate) fn token() -> Result<String, String> {
     token_from("HONE_TOKEN")
 }
 
+pub(crate) fn context_token(context: &Context) -> Result<String, String> {
+    token_from(context.token_env.as_deref().unwrap_or("HONE_TOKEN"))
+}
+
+pub(crate) fn context_of(root: &Path) -> Result<Option<Context>, ProcessError> {
+    // Without a readable scope there is no project ID to bind, and every tool that writes or
+    // syncs reports the broken project itself.
+    let Ok(store) = ProcessStore::locate(root, None) else {
+        return Ok(None);
+    };
+    Ok(Contexts::load()?
+        .of_project(store.project(), store.root())?
+        .map(|bound| bound.context))
+}
+
 fn token_from(variable: &str) -> Result<String, String> {
     std::env::var(variable)
         .ok()
@@ -409,9 +424,8 @@ fn sync_with_context(store: &ProcessStore) -> Result<SyncReport, ProcessError> {
             branch: git,
         }),
         ContextPeer::Server { server } => {
-            let variable = bound.context.token_env.as_deref().unwrap_or("HONE_TOKEN");
-            let token =
-                token_from(variable).map_err(|message| ProcessError::Invalid { message })?;
+            let token = context_token(&bound.context)
+                .map_err(|message| ProcessError::Invalid { message })?;
             store.sync(Peer::Server(&Server::new(server, &token)))
         }
     }

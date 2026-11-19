@@ -63,31 +63,9 @@ enum Command {
         #[arg(long)]
         config: PathBuf,
     },
-    /// Serve the MCP tools of the project over stdio.
-    Mcp {
-        /// Project root, the directory that contains `.hone/`.
-        #[arg(long, default_value = ".")]
-        root: PathBuf,
-        /// Directory with one subdirectory per package name, for example `acme/base/`.
-        #[arg(long)]
-        packages: Option<PathBuf>,
-        /// The handle of the author of every event the server writes.
-        #[arg(long, env = "HONE_AUTHOR", requires = "role")]
-        author: Option<String>,
-        /// The role of that author.
-        #[arg(long, env = "HONE_ROLE", requires = "author")]
-        role: Option<String>,
-        /// The shared folder of the tool `sync`.
-        #[arg(long, env = "HONE_SYNC_FOLDER", conflicts_with = "sync_server")]
-        sync_folder: Option<PathBuf>,
-        /// The replication server of the tool `sync`, reached with the token in `HONE_TOKEN`.
-        #[arg(long, env = "HONE_SYNC_SERVER", conflicts_with = "sync_git")]
-        sync_server: Option<String>,
-        /// The branch of the project's Git repository that the tool `sync` uses as a shared
-        /// folder, moved through `origin`.
-        #[arg(long, env = "HONE_SYNC_GIT", conflicts_with = "sync_folder")]
-        sync_git: Option<String>,
-    },
+    /// Serve the MCP tools of the project over stdio. Without the flags of the author or the
+    /// peer, the server takes them from the project's context when it starts.
+    Mcp(McpArguments),
     /// Run hone as a hook of an agent.
     #[command(subcommand)]
     Hook(check::Hook),
@@ -140,49 +118,107 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
-        Command::Mcp {
-            root,
-            packages,
-            author,
-            role,
-            sync_folder,
-            sync_server,
-            sync_git,
-        } => {
-            let author = author
-                .zip(role)
-                .map(|(name, role)| hone_core::Author { name, role });
-            let sync_peer = match (sync_folder, sync_server, sync_git) {
-                (Some(folder), _, _) => Some(hone_mcp::SyncPeer::Folder(folder)),
-                (None, None, Some(branch)) => Some(hone_mcp::SyncPeer::Git(branch)),
-                (None, Some(url), _) => match process::token() {
-                    Ok(token) => Some(hone_mcp::SyncPeer::Server(hone_core::Server::new(
-                        &url, &token,
-                    ))),
-                    Err(message) => {
-                        eprintln!("hone mcp: {message}");
-                        return ExitCode::FAILURE;
-                    }
-                },
-                (None, None, None) => None,
-            };
-            let project = hone_mcp::Project {
-                root,
-                packages,
-                data_directory: None,
-                author,
-                sync_peer,
-            };
-            match hone_mcp::serve_stdio(project) {
+        Command::Mcp(arguments) => match mcp_project(arguments) {
+            Ok(project) => match hone_mcp::serve_stdio(project) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("hone mcp: {error}");
                     ExitCode::FAILURE
                 }
+            },
+            Err(message) => {
+                eprintln!("hone mcp: {message}");
+                ExitCode::FAILURE
             }
-        }
+        },
         Command::Hook(hook) => check::run_hook(&hook),
     }
+}
+
+#[derive(clap::Args)]
+struct McpArguments {
+    /// Project root, the directory that contains `.hone/`.
+    #[arg(long, default_value = ".")]
+    root: PathBuf,
+    /// Directory with one subdirectory per package name, for example `acme/base/`.
+    #[arg(long)]
+    packages: Option<PathBuf>,
+    /// The handle of the author of every event the server writes.
+    #[arg(long, env = "HONE_AUTHOR", requires = "role")]
+    author: Option<String>,
+    /// The role of that author.
+    #[arg(long, env = "HONE_ROLE", requires = "author")]
+    role: Option<String>,
+    /// The shared folder of the tool `sync`.
+    #[arg(long, env = "HONE_SYNC_FOLDER", conflicts_with = "sync_server")]
+    sync_folder: Option<PathBuf>,
+    /// The replication server of the tool `sync`, reached with the token in `HONE_TOKEN`.
+    #[arg(long, env = "HONE_SYNC_SERVER", conflicts_with = "sync_git")]
+    sync_server: Option<String>,
+    /// The branch of the project's Git repository that the tool `sync` uses as a shared
+    /// folder.
+    #[arg(long, env = "HONE_SYNC_GIT", conflicts_with = "sync_folder")]
+    sync_git: Option<String>,
+    /// The remote of `--sync-git`.
+    #[arg(long, default_value = "origin", requires = "sync_git")]
+    sync_remote: String,
+}
+
+// A flag or its environment variable wins; the context fills only what they leave out, once at
+// the start, so that the author and the peer stay fixed for the session.
+fn mcp_project(arguments: McpArguments) -> Result<hone_mcp::Project, String> {
+    let McpArguments {
+        root,
+        packages,
+        author,
+        role,
+        sync_folder,
+        sync_server,
+        sync_git,
+        sync_remote,
+    } = arguments;
+    let mut author = author
+        .zip(role)
+        .map(|(name, role)| hone_core::Author { name, role });
+    let mut sync_peer = match (sync_folder, sync_server, sync_git) {
+        (Some(folder), _, _) => Some(hone_mcp::SyncPeer::Folder(folder)),
+        (None, None, Some(branch)) => Some(hone_mcp::SyncPeer::Git {
+            branch,
+            remote: sync_remote,
+        }),
+        (None, Some(url), _) => Some(hone_mcp::SyncPeer::Server(hone_core::Server::new(
+            &url,
+            &process::token()?,
+        ))),
+        (None, None, None) => None,
+    };
+    if author.is_none() || sync_peer.is_none() {
+        let context = process::context_of(&root).map_err(|error| error.to_string())?;
+        if let Some(context) = context {
+            if sync_peer.is_none() {
+                sync_peer = Some(match &context.peer {
+                    hone_core::ContextPeer::Folder { folder } => {
+                        hone_mcp::SyncPeer::Folder(folder.clone())
+                    }
+                    hone_core::ContextPeer::Git { git, remote } => hone_mcp::SyncPeer::Git {
+                        branch: git.clone(),
+                        remote: remote.clone(),
+                    },
+                    hone_core::ContextPeer::Server { server } => hone_mcp::SyncPeer::Server(
+                        hone_core::Server::new(server, &process::context_token(&context)?),
+                    ),
+                });
+            }
+            author = author.or(context.author);
+        }
+    }
+    Ok(hone_mcp::Project {
+        root,
+        packages,
+        data_directory: None,
+        author,
+        sync_peer,
+    })
 }
 
 fn print_resolve(outcome: &Result<ResolvedFile, ResolvedFileError>, as_json: bool) {

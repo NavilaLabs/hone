@@ -40,8 +40,13 @@ pub enum SyncPeer {
     Folder(PathBuf),
     /// A replication server.
     Server(hone_core::Server),
-    /// A branch of the project's Git repository, moved through `origin`.
-    Git(String),
+    /// A branch of the project's Git repository, moved through a remote.
+    Git {
+        /// The branch.
+        branch: String,
+        /// The remote, for example `origin`.
+        remote: String,
+    },
 }
 
 /// Serves the MCP tools for `project` over stdin and stdout until the client disconnects.
@@ -391,13 +396,10 @@ impl Server {
         let peer = match &self.project.sync_peer {
             Some(SyncPeer::Folder(folder)) => Peer::Folder(folder),
             Some(SyncPeer::Server(server)) => Peer::Server(server),
-            Some(SyncPeer::Git(branch)) => Peer::Git {
-                remote: "origin",
-                branch,
-            },
+            Some(SyncPeer::Git { branch, remote }) => Peer::Git { remote, branch },
             None => {
                 return CallToolResult::structured_error(to_value(&ProcessError::Invalid {
-                    message: "the server has no peer: start it with --sync-folder, --sync-server, or --sync-git"
+                    message: "the server has no peer: start it with --sync-folder, --sync-server, or --sync-git, or bind the project to a context with hone context use"
                         .into(),
                 }));
             }
@@ -417,7 +419,7 @@ impl Server {
     fn append(&self, change: Change) -> CallToolResult {
         let Some(author) = &self.project.author else {
             return CallToolResult::structured_error(to_value(&ProcessError::Invalid {
-                message: "the server has no author: start it with --author and --role".into(),
+                message: "the server has no author: start it with --author and --role, or set an author in the project's context".into(),
             }));
         };
         match self.store().and_then(|store| store.append(author, change)) {
