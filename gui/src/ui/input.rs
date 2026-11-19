@@ -9,6 +9,7 @@ pub fn Input(
     #[props(into, optional)] id: Option<String>,
     #[props(into)] value: String,
     #[props(optional)] disabled: bool,
+    #[props(optional)] invalid: bool,
     #[props(optional)] oninput: Option<EventHandler<String>>,
 ) -> Element {
     let merged_class = tw_merge!(
@@ -28,6 +29,7 @@ pub fn Input(
             value,
             id,
             disabled,
+            "aria-invalid": if invalid { "true" } else { "false" },
             oninput: move |event| {
                 if let Some(handler) = &oninput {
                     handler.call(event.value());

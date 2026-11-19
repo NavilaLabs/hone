@@ -71,13 +71,38 @@ pub(crate) fn StatusMark(mark: Mark, #[props(into)] word: String) -> Element {
     }
 }
 
+/// Something that did not work: a title and the reason, framed in `bad`, never in the accent.
+#[component]
+pub(crate) fn ProblemAlert(
+    #[props(into)] title: String,
+    #[props(into)] message: String,
+) -> Element {
+    rsx! {
+        Alert { class: "border-2 border-bad",
+            AlertTitle { class: "text-bad",
+                span { "aria-hidden": "true", "✕ " }
+                "{title}"
+            }
+            AlertDescription { class: "font-mono text-[13px] break-words", "{message}" }
+        }
+    }
+}
+
+/// The title of a failed call: a refusal of the request, or a command that could not run.
+fn failure_title(status: &str) -> String {
+    match status {
+        "invalid" | "refused" => format!("hone refused it ({status})"),
+        status => format!("hone could not run ({status})"),
+    }
+}
+
 /// A failed call of the command line: what did not run and why.
 #[component]
 pub(crate) fn FailureAlert(failure: Failure) -> Element {
     rsx! {
-        Alert { class: "border-2 border-signal",
-            AlertTitle { "hone could not run ({failure.status})" }
-            AlertDescription { class: "font-mono text-[13px] break-words", "{failure.message}" }
+        ProblemAlert {
+            title: failure_title(&failure.status),
+            message: failure.message,
         }
     }
 }

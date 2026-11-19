@@ -70,6 +70,9 @@ pub fn Combobox(
     #[props(into, optional)] class: Option<String>,
     #[props(into, optional)] label: Option<String>,
     #[props(optional)] custom: bool,
+    /// Marks the field as invalid: `bad` border and focus ring.
+    #[props(optional)]
+    invalid: bool,
     /// What the list says when nothing matches.
     #[props(into, optional)]
     empty: Option<String>,
@@ -132,6 +135,7 @@ pub fn Combobox(
                 "aria-expanded": if open() { "true" } else { "false" },
                 "aria-controls": "{list}",
                 "aria-autocomplete": "list",
+                "aria-invalid": if invalid { "true" } else { "false" },
                 "aria-activedescendant": if open() && rows > 0 { format!("{id}-{highlighted}") } else { String::new() },
                 placeholder,
                 value: "{text}",

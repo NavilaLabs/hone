@@ -124,6 +124,9 @@ fn WriterPicker() -> Element {
     let role = writer.read().role.clone();
     let unknown_role =
         !role.is_empty() && !roles.is_empty() && !roles.iter().any(|choice| choice.value == role);
+    // A write needs both or neither: with one alone, the context's author would write.
+    let half_author = writer.read().author.is_empty() && !role.is_empty();
+    let half_role = !writer.read().author.is_empty() && role.is_empty();
     rsx! {
         div { class: "flex items-center gap-2",
             span { class: "text-[13px] text-ink-muted", "Writing as" }
@@ -134,6 +137,7 @@ fn WriterPicker() -> Element {
                     placeholder: placeholder_author,
                     label: "Author",
                     custom: true,
+                    invalid: half_author,
                     empty: "Type a new handle and press Enter.",
                     onselect: move |name: String| {
                         // A known author brings the role they last wrote with, when it fits the ticket.
@@ -158,7 +162,7 @@ fn WriterPicker() -> Element {
                     placeholder: placeholder_role,
                     label: "Role",
                     custom: true,
-                    class: if unknown_role { "border-bad" } else { "" },
+                    invalid: unknown_role || half_role,
                     empty: "Open a ticket to see the roles of its configuration.",
                     onselect: move |role: String| writer.with_mut(|writer: &mut Writer| writer.role = role),
                 }

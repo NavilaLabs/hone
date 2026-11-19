@@ -1,12 +1,12 @@
 use dioxus::prelude::*;
 
-use super::common::{Empty, Field, PageHeader, SectionLabel, open_in_browser};
+use super::common::{Empty, Field, PageHeader, ProblemAlert, SectionLabel, open_in_browser};
 use super::{Project, Session};
 use crate::hone::CatalogEntry;
 use crate::tracker::{Issue, Settings, TokenSource, Tracker, suggest_github};
 use crate::ui::{
-    Alert, AlertDescription, AlertTitle, Button, ButtonSize, ButtonVariant, Input, Skeleton, Table,
-    TableBody, TableCell, TableHead, TableHeader, TableRow, TableWrapper,
+    Button, ButtonSize, ButtonVariant, Input, Skeleton, Table, TableBody, TableCell, TableHead,
+    TableHeader, TableRow, TableWrapper,
 };
 
 /// The hone tickets whose record names `issue` of `tracker` under `external`.
@@ -36,10 +36,7 @@ pub(crate) fn TrackerScreen() -> Element {
         match tracker {
             None => rsx! { Skeleton { class: "h-24 w-full" } },
             Some(Err(message)) => rsx! {
-                Alert { class: "border-2 border-signal",
-                    AlertTitle { "The tracker setting cannot be read" }
-                    AlertDescription { class: "font-mono text-[13px] break-words", "{message}" }
-                }
+                ProblemAlert { title: "The tracker setting cannot be read", message }
             },
             Some(Ok(None)) => rsx! { TrackerForm { current: None } },
             Some(Ok(Some(tracker))) => rsx! {
@@ -174,6 +171,7 @@ fn TrackerForm(current: Option<Tracker>) -> Element {
         _ => None,
     };
     let default_variable = built().token_variable();
+    let invalid_field = move |name: &str| message().is_some_and(|message| message.contains(name));
     rsx! {
         section { class: "flex flex-col gap-4 max-w-[760px]",
             SectionLabel { label: if has_current { "Change the tracker" } else { "Where do this project's tickets live?" } }
@@ -199,11 +197,11 @@ fn TrackerForm(current: Option<Tracker>) -> Element {
             if kind() == "github" {
                 div { class: "flex flex-wrap items-end gap-3",
                     Field { label: "Owner",
-                        Input { class: "font-mono w-48", value: owner(), placeholder: "acme", oninput: move |value| owner.set(value) }
+                        Input { class: "font-mono w-48", value: owner(), placeholder: "acme", invalid: invalid_field("owner"), oninput: move |value| owner.set(value) }
                     }
                     span { class: "h-9 flex items-center font-mono text-ink-muted", "/" }
                     Field { label: "Repository",
-                        Input { class: "font-mono w-56", value: repo(), placeholder: "payments", oninput: move |value| repo.set(value) }
+                        Input { class: "font-mono w-56", value: repo(), placeholder: "payments", invalid: invalid_field("repository"), oninput: move |value| repo.set(value) }
                     }
                 }
                 p { class: "m-0 text-[13px] text-ink-muted",
@@ -216,10 +214,10 @@ fn TrackerForm(current: Option<Tracker>) -> Element {
             } else {
                 div { class: "flex flex-wrap items-end gap-3",
                     Field { label: "Base URL",
-                        Input { class: "font-mono w-80", value: base_url(), placeholder: "https://acme.atlassian.net", oninput: move |value| base_url.set(value) }
+                        Input { class: "font-mono w-80", value: base_url(), placeholder: "https://acme.atlassian.net", invalid: invalid_field("base URL"), oninput: move |value| base_url.set(value) }
                     }
                     Field { label: "Project key",
-                        Input { class: "font-mono w-28", value: project_key(), placeholder: "PAY", oninput: move |value| project_key.set(value) }
+                        Input { class: "font-mono w-28", value: project_key(), placeholder: "PAY", invalid: invalid_field("project key"), oninput: move |value| project_key.set(value) }
                     }
                     Field { label: "Account email (Jira Cloud only)",
                         Input { class: "font-mono w-64", value: email(), placeholder: "alice@acme.example", oninput: move |value| email.set(value) }
@@ -347,10 +345,7 @@ fn TrackerBrowser(tracker: Tracker) -> Element {
             match &*results.read() {
                 None => rsx! { Skeleton { class: "h-11 w-full" } Skeleton { class: "h-11 w-full" } },
                 Some(Err(message)) => rsx! {
-                    Alert { class: "border-2 border-signal",
-                        AlertTitle { "{tracker.describe()} could not be searched" }
-                        AlertDescription { class: "font-mono text-[13px] break-words", "{message}" }
-                    }
+                    ProblemAlert { title: format!("{} could not be searched", tracker.describe()), message: message.clone() }
                 },
                 Some(Ok(issues)) if issues.is_empty() => rsx! {
                     Empty { text: if submitted().is_empty() { "No open ticket in the tracker." } else { "No ticket matches. Try other words or the ticket's key." } }
