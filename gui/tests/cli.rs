@@ -229,6 +229,101 @@ async fn sync_reports_what_it_moved_and_a_missing_folder_fails() {
 }
 
 #[tokio::test]
+async fn the_lists_to_choose_from_come_from_the_command_line() {
+    let scratch = Scratch::new("lists");
+    let hone = scratch.hone();
+
+    let catalog = hone.artifacts().await.expect("listed");
+    assert_eq!(catalog.project, "prj-8m2k4d7q");
+    let ids: Vec<(Option<&str>, &str)> = catalog
+        .artifacts
+        .iter()
+        .map(|entry| (entry.id.as_deref(), entry.kind.as_str()))
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            (Some("dec-7k3m2q8p"), "decision"),
+            (Some("mod-4t8w2n6c"), "module"),
+            (Some("spec-3b8n1c5w"), "spec"),
+            (Some(TICKET), "ticket"),
+        ]
+    );
+    let record = catalog.tickets().next().expect("a ticket record");
+    assert_eq!(record.profile.as_deref(), Some("standard"));
+    assert_eq!(catalog.artifacts[0].effective.as_deref(), Some("accepted"));
+
+    let overview = hone.ticket(TICKET).await.expect("shown");
+    assert_eq!(overview.roles, ["architect", "human"]);
+    let steps: Vec<(&str, &str)> = overview
+        .steps
+        .iter()
+        .map(|step| (step.step.as_str(), step.requirement.as_str()))
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            ("completion", "optional"),
+            ("decision", "required"),
+            ("implementation", "required"),
+            ("interfaces", "optional"),
+            ("settled", "optional"),
+            ("specify", "required"),
+        ]
+    );
+    let failure = hone.ticket("tk-2b7n5k1q").await.expect_err("no record");
+    assert_eq!(failure.status, "error");
+}
+
+#[tokio::test]
+async fn the_context_author_comes_from_the_bound_context() {
+    let scratch = Scratch::new("context");
+    let config = scratch.root.join("config");
+    let hone = scratch.hone().with_variable("HONE_CONFIG_DIR", &config);
+    let unbound = hone.context().await.expect_err("no binding");
+    assert_eq!(unbound.status, "invalid");
+
+    let project = scratch.root.join("project");
+    for arguments in [
+        vec![
+            "context", "set", "acme", "--folder", "/tmp", "--author", "carol", "--role", "human",
+        ],
+        vec!["context", "use", "acme", "--root"],
+    ] {
+        let mut command = std::process::Command::new(binary());
+        command.args(&arguments).env("HONE_CONFIG_DIR", &config);
+        if arguments[1] == "use" {
+            command.arg(&project);
+        }
+        let status = command.status().expect("hone runs");
+        assert!(status.success(), "{arguments:?}");
+    }
+    let bound = hone.context().await.expect("bound");
+    assert_eq!(bound.context, "acme");
+    let author = bound.author.expect("an author");
+    assert_eq!(
+        (author.name.as_str(), author.role.as_str()),
+        ("carol", "human")
+    );
+}
+
+#[tokio::test]
+async fn a_pure_check_runs_no_exec_gate() {
+    let scratch = Scratch::new("pure").with_store();
+    let run = scratch
+        .hone()
+        .check(Some(TICKET), GateScope::Pure)
+        .await
+        .expect("ran");
+    assert!(run.gates.iter().all(|gate| gate.gate != "exec"));
+    assert!(
+        run.gates
+            .iter()
+            .any(|gate| gate.name == "implementation/binding")
+    );
+}
+
+#[tokio::test]
 async fn a_missing_binary_is_not_started() {
     let scratch = Scratch::new("missing-binary");
     let hone = Hone::with_binary(
