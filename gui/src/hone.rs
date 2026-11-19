@@ -96,6 +96,15 @@ pub enum Write {
         status: StepStatus,
         reason: Option<String>,
     },
+    /// `hone approve`, or with `changes_requested` `hone approve --changes-requested`.
+    Approve {
+        ticket: String,
+        artifact: String,
+        changes_requested: bool,
+        proof: Option<String>,
+    },
+    /// `hone review confirm`.
+    ConfirmReview { ticket: String, artifact: String },
 }
 
 /// An event of the process store. `raw` is the event as the command line printed it.
@@ -257,6 +266,47 @@ pub struct CatalogEntry {
     /// A ticket record's external tickets.
     #[serde(default)]
     pub external: Vec<ExternalTicket>,
+    /// The ID links by type, for example `supersedes`.
+    #[serde(default)]
+    pub links: BTreeMap<String, Vec<String>>,
+}
+
+/// The result of `hone review show`: the review of an artifact in a ticket.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ReviewState {
+    pub artifact: String,
+    pub path: String,
+    /// The artifact's current content hash.
+    pub hash: String,
+    /// Every person's and role's last decision.
+    pub decisions: Vec<ReviewDecision>,
+    pub confirmations: Vec<ReviewConfirmation>,
+    /// The `review` block of the file.
+    pub review: Option<Value>,
+}
+
+/// A person's last decision on an artifact.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ReviewDecision {
+    pub name: String,
+    pub role: String,
+    /// `approved` or `changes-requested`.
+    pub decision: String,
+    pub hash: String,
+    /// Whether the decision is for the current content.
+    pub current: bool,
+    pub date: String,
+    pub proof: Option<String>,
+}
+
+/// A confirmation of an artifact's condensed `review` block.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ReviewConfirmation {
+    pub name: String,
+    pub role: String,
+    pub hash: String,
+    pub current: bool,
+    pub date: String,
 }
 
 /// A file that matches an artifact pattern but cannot be read.
@@ -425,6 +475,34 @@ impl Hone {
     pub async fn ticket(&self, ticket: &str) -> Result<TicketOverview, Failure> {
         self.run(&["ticket", "show", "--ticket", ticket], &[0])
             .await
+    }
+
+    /// `hone review show --ticket <ticket> <artifact>`: the review of an artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`], `invalid` for an unknown ticket or artifact.
+    pub async fn review(&self, ticket: &str, artifact: &str) -> Result<ReviewState, Failure> {
+        self.run(&["review", "show", "--ticket", ticket, artifact], &[0])
+            .await
+    }
+
+    /// `hone review condense --ticket <ticket> <artifact>`: writes the approvals of the current
+    /// content into the artifact's `review` block and returns the artifact's path. Writes no
+    /// event.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`], `invalid` for an unknown ticket or artifact.
+    pub async fn condense(&self, ticket: &str, artifact: &str) -> Result<String, Failure> {
+        #[derive(Deserialize)]
+        struct Output {
+            path: String,
+        }
+        let output: Output = self
+            .run(&["review", "condense", "--ticket", ticket, artifact], &[0])
+            .await?;
+        Ok(output.path)
     }
 
     /// `hone context show`: the context the project is bound to and its author.
@@ -668,6 +746,24 @@ fn write_arguments(write: &Write) -> Vec<String> {
                 arguments.extend(owned(&["--reason", reason]));
             }
             arguments
+        }
+        Write::Approve {
+            ticket,
+            artifact,
+            changes_requested,
+            proof,
+        } => {
+            let mut arguments = owned(&["approve", "--ticket", ticket, artifact]);
+            if *changes_requested {
+                arguments.push("--changes-requested".into());
+            }
+            if let Some(proof) = proof {
+                arguments.extend(owned(&["--proof", proof]));
+            }
+            arguments
+        }
+        Write::ConfirmReview { ticket, artifact } => {
+            owned(&["review", "confirm", "--ticket", ticket, artifact])
         }
     }
 }

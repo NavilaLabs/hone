@@ -360,6 +360,7 @@ fn ExternalLink(label: String, url: String) -> Element {
 
 #[component]
 fn TicketArtifacts(ticket: String) -> Element {
+    let session = use_context::<Session>();
     let project = use_context::<Project>();
     let artifacts: Vec<CatalogEntry> = match &*project.catalog.read() {
         Some(Ok(catalog)) => catalog
@@ -389,7 +390,15 @@ fn TicketArtifacts(ticket: String) -> Element {
                             for artifact in artifacts {
                                 TableRow {
                                     TableCell { class: "font-mono",
-                                        span { title: "{artifact.path}", {artifact.id.clone().unwrap_or_default()} }
+                                        button {
+                                            class: "font-mono underline text-left",
+                                            title: "{artifact.path}",
+                                            onclick: {
+                                                let id = artifact.id.clone().unwrap_or_default();
+                                                move |_| session.open_artifact(id.clone())
+                                            },
+                                            {artifact.id.clone().unwrap_or_default()}
+                                        }
                                         if let Some(title) = artifact.title.clone() {
                                             span { class: "block font-sans text-[13px] text-ink-muted", "{title}" }
                                         }
@@ -505,6 +514,7 @@ mod tests {
             effective: None,
             profile: Some("standard".into()),
             external: Vec::new(),
+            links: std::collections::BTreeMap::new(),
         }
     }
 

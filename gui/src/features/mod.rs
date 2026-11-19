@@ -1,11 +1,14 @@
 //! One module per feature. Each holds the view of its screen and the logic that turns the
 //! command line's results into what the screen shows.
 
+pub(crate) mod artifact;
 pub(crate) mod artifacts;
 pub(crate) mod check;
 mod common;
 pub(crate) mod events;
+pub(crate) mod graph;
 mod progress;
+pub(crate) mod search;
 pub(crate) mod server;
 pub(crate) mod settings;
 pub(crate) mod sync;
@@ -28,6 +31,7 @@ use crate::ui::Choice;
 pub(crate) enum Screen {
     Tickets,
     Artifacts,
+    Graph,
     Threads,
     Events,
     Check,
@@ -48,6 +52,13 @@ pub(crate) struct Session {
     pub(crate) revision: Signal<u64>,
     /// The last full `hone check` of the Checks screen, kept across screens.
     pub(crate) last_check: Signal<Option<LastCheck>>,
+    /// The artifact open on the Artifacts screen.
+    pub(crate) artifact: Signal<Option<String>>,
+    /// The node the link graph highlights.
+    pub(crate) graph_focus: Signal<Option<String>>,
+    pub(crate) search_open: Signal<bool>,
+    /// A key the Tracker screen searches for when it opens.
+    pub(crate) tracker_query: Signal<Option<String>>,
 }
 
 /// A full `hone check` and the ticket it ran for.
@@ -71,6 +82,10 @@ impl Session {
             thread: Signal::new(None),
             revision: Signal::new(0),
             last_check: Signal::new(None),
+            artifact: Signal::new(None),
+            graph_focus: Signal::new(None),
+            search_open: Signal::new(false),
+            tracker_query: Signal::new(None),
         }
     }
 
@@ -84,6 +99,11 @@ impl Session {
         }
         self.ticket.set(Some(ticket));
         self.screen.set(Screen::Tickets);
+    }
+
+    pub(crate) fn open_artifact(mut self, id: String) {
+        self.artifact.set(Some(id));
+        self.screen.set(Screen::Artifacts);
     }
 
     pub(crate) fn open_thread(mut self, ticket: String, thread: String) {

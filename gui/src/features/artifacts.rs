@@ -181,7 +181,19 @@ fn ArtifactRow(entry: CatalogEntry) -> Element {
     let ticket = entry.ticket.clone();
     rsx! {
         TableRow {
-            TableCell { class: "font-mono", span { title: "{entry.path}", {entry.id.clone().unwrap_or_else(|| "—".into())} } }
+            TableCell { class: "font-mono",
+                match entry.id.clone() {
+                    Some(id) => rsx! {
+                        button {
+                            class: "font-mono underline text-left",
+                            title: "{entry.path}",
+                            onclick: move |_| session.open_artifact(id.clone()),
+                            "{id}"
+                        }
+                    },
+                    None => rsx! { span { title: "{entry.path}", "—" } },
+                }
+            }
             TableCell { class: "font-mono text-[12.5px] text-ink-muted", "{entry.kind}" }
             TableCell { {entry.title.clone().unwrap_or_default()} }
             TableCell {
@@ -234,6 +246,7 @@ mod tests {
             effective: effective.map(str::to_owned),
             profile: None,
             external: Vec::new(),
+            links: std::collections::BTreeMap::new(),
         }
     }
 

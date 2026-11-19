@@ -78,6 +78,16 @@ pub(crate) fn Header() -> Element {
                     }
                 }
             }
+            button {
+                class: "h-9 px-3 flex items-center gap-3 border border-line text-[13px] text-ink-muted hover:bg-surface-2 min-w-[200px]",
+                title: "Search tickets, artifacts, threads, and the tracker",
+                onclick: move |_| {
+                    let mut open = session.search_open;
+                    open.set(true);
+                },
+                "Search"
+                span { class: "ml-auto font-mono text-[11px] border border-line px-1", "Ctrl K" }
+            }
             WriterPicker {}
             Button {
                 variant: ButtonVariant::Ghost,

@@ -48,12 +48,20 @@ fn App() -> Element {
         document::Style { {STYLE} }
         div { class: "min-h-screen flex flex-col bg-bg text-ink",
             features::settings::Header {}
+            features::search::SearchShortcut {}
+            if (session.search_open)() {
+                features::search::SearchDialog {}
+            }
             div { class: "flex flex-wrap flex-1",
                 Navigation {}
                 main { class: "flex-1 min-w-0 px-10 pt-8 pb-12 flex flex-col gap-8",
                     match screen() {
                         Screen::Tickets => rsx! { features::tickets::Tickets {} },
-                        Screen::Artifacts => rsx! { features::artifacts::Artifacts {} },
+                        Screen::Artifacts => match (session.artifact)() {
+                            Some(id) => rsx! { features::artifact::ArtifactDetail { key: "{id}", id } },
+                            None => rsx! { features::artifacts::Artifacts {} },
+                        },
+                        Screen::Graph => rsx! { features::graph::LinkGraph {} },
                         Screen::Threads => rsx! { features::threads::Threads {} },
                         Screen::Events => rsx! { features::events::EventLog {} },
                         Screen::Check => rsx! { features::check::CheckRun {} },
@@ -105,6 +113,7 @@ fn Navigation() -> Element {
             NavGroup { label: "Workspace",
                 NavItem { screen: Screen::Tickets, label: "Tickets", count: tickets.map(|count| count.to_string()) }
                 NavItem { screen: Screen::Artifacts, label: "Artifacts", count: artifacts.map(|count| count.to_string()) }
+                NavItem { screen: Screen::Graph, label: "Link graph" }
                 NavItem { screen: Screen::Threads, label: "Threads", count: open_threads.filter(|count| *count > 0).map(|count| format!("{count} open")) }
                 NavItem {
                     screen: Screen::Check,
@@ -142,7 +151,9 @@ fn NavItem(
     #[props(optional)] count: Option<String>,
     #[props(optional)] bad: bool,
 ) -> Element {
-    let mut current = use_context::<Session>().screen;
+    let session = use_context::<Session>();
+    let mut current = session.screen;
+    let mut artifact = session.artifact;
     let active = current() == screen;
     let class = if active {
         "h-11 px-4 flex items-center justify-between gap-2 text-left bg-ink text-bg font-semibold"
@@ -158,7 +169,12 @@ fn NavItem(
         button {
             class,
             "aria-current": if active { "page" } else { "false" },
-            onclick: move |_| current.set(screen),
+            onclick: move |_| {
+                if screen == Screen::Artifacts {
+                    artifact.set(None);
+                }
+                current.set(screen);
+            },
             span { "{label}" }
             if let Some(count) = count {
                 span { class: count_class, "{count}" }

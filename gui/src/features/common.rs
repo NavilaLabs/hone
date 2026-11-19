@@ -174,6 +174,33 @@ pub(crate) fn open_in_browser(url: &str) {
         .spawn();
 }
 
+/// Opens the file `path` (relative to `root`) with the system's default program. A path that
+/// leaves the root, for example through a symbolic link, is ignored.
+pub(crate) fn open_file(root: &std::path::Path, path: &str) {
+    let (Ok(root), Ok(file)) = (root.canonicalize(), root.join(path).canonicalize()) else {
+        return;
+    };
+    if !file.starts_with(&root) || !file.is_file() {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = std::process::Command::new("explorer");
+        command.arg("/select,");
+        command
+    };
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let mut command = std::process::Command::new("xdg-open");
+    let _ = command
+        .arg(file)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
 /// A labelled field.
 #[component]
 pub(crate) fn Field(#[props(into)] label: String, children: Element) -> Element {

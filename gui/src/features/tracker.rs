@@ -310,8 +310,10 @@ fn TokenPanel(tracker: Tracker) -> Element {
 #[component]
 fn TrackerBrowser(tracker: Tracker) -> Element {
     let project = use_context::<Project>();
-    let mut query = use_signal(String::new);
-    let mut submitted = use_signal(String::new);
+    let mut session = use_context::<Session>();
+    let initial = session.tracker_query.take().unwrap_or_default();
+    let mut query = use_signal(|| initial.clone());
+    let mut submitted = use_signal(|| initial.clone());
     let searched = tracker.clone();
     let results = use_resource(move || {
         let tracker = searched.clone();
@@ -466,6 +468,7 @@ mod tests {
                 key: key.into(),
                 url: None,
             }],
+            links: std::collections::BTreeMap::new(),
         };
         let records = [
             record("tk-a", "github", "12"),
