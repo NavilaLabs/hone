@@ -13,6 +13,7 @@ mod canonical;
 mod check;
 mod client;
 mod complete;
+mod condense;
 mod directory;
 mod error;
 mod event;
@@ -51,7 +52,7 @@ pub use finding::{Code, Finding, Level};
 pub use hosted::{AppendError, Appender, HostedStore, Rejection};
 pub use log::{Cursor, InvalidEvent};
 pub use process::{
-    Appended, Author, Change, Peer, ProcessError, ProcessStore, StepState, StepStatus,
+    Appended, Author, Change, Condensed, Peer, ProcessError, ProcessStore, StepState, StepStatus,
     ThreadAnchor, ThreadState, ThreadStatus, TicketEvents,
 };
 pub use replication::{SyncCode, SyncProblem, SyncReport};

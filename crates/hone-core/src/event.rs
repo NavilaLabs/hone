@@ -13,6 +13,8 @@ pub(crate) const THREAD_MESSAGE: &str = "thread.message";
 pub(crate) const THREAD_RESOLVED: &str = "thread.resolved";
 pub(crate) const THREAD_REOPENED: &str = "thread.reopened";
 pub(crate) const STEP_CHANGED: &str = "step.changed";
+pub(crate) const APPROVAL_GIVEN: &str = "approval.given";
+pub(crate) const REVIEW_CONFIRMED: &str = "review.confirmed";
 
 static VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
     let common: Value = serde_json::from_str(COMMON_SCHEMA).expect("common.schema.json is JSON");

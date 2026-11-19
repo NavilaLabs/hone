@@ -41,6 +41,11 @@ enum Command {
     /// Write the state of a step of a ticket to the process store.
     #[command(subcommand)]
     Step(process::Step),
+    /// Approve an artifact of a ticket, or request changes, for its current content hash.
+    Approve(process::ApproveArguments),
+    /// Condense the approvals into an artifact's `review` block, or confirm the block.
+    #[command(subcommand)]
+    Review(process::Review),
     /// Show the process state of a ticket: events, threads, steps, and invalid events.
     Events(process::EventsArguments),
     /// Show every valid event of the project's process store and its cursor.
@@ -109,6 +114,8 @@ fn main() -> ExitCode {
         Command::Check(arguments) => check::run_check(&arguments),
         Command::Thread(thread) => process::run_thread(thread),
         Command::Step(step) => process::run_step(step),
+        Command::Approve(arguments) => process::run_approve(arguments),
+        Command::Review(review) => process::run_review(review),
         Command::Events(arguments) => process::run_events(&arguments),
         Command::Log(target) => process::run_log(&target),
         Command::Sync(arguments) => process::run_sync(&arguments),

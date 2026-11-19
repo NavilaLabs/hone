@@ -3,8 +3,8 @@ use std::process::ExitCode;
 
 use clap::{Args, Subcommand, ValueEnum};
 use hone_core::{
-    Appended, Author, Change, Cursor, Peer, ProcessError, ProcessStore, Server, StepStatus,
-    SyncReport, ThreadAnchor, ThreadStatus, TicketEvents,
+    Appended, Author, Change, Condensed, Cursor, Peer, ProcessError, ProcessStore, Server,
+    StepStatus, SyncReport, ThreadAnchor, ThreadStatus, TicketEvents,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -143,6 +143,101 @@ pub(crate) enum Status {
     Open,
     Done,
     Skipped,
+}
+
+#[derive(Args)]
+pub(crate) struct ApproveArguments {
+    #[command(flatten)]
+    target: Target,
+    #[command(flatten)]
+    writer: Writer,
+    /// The ticket.
+    #[arg(long)]
+    ticket: String,
+    /// The artifact ID.
+    artifact: String,
+    /// Request changes instead of approving.
+    #[arg(long)]
+    changes_requested: bool,
+    /// A free proof that you approved, stored as `proof`.
+    #[arg(long)]
+    proof: Option<String>,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum Review {
+    /// Write the `review` block into an artifact: the approvals of its current content hash,
+    /// and a summary.
+    Condense {
+        #[command(flatten)]
+        target: Target,
+        /// The ticket.
+        #[arg(long)]
+        ticket: String,
+        /// The artifact ID.
+        artifact: String,
+        /// A YAML file with a list of `{ q, a }` or `{ rejected }` entries.
+        #[arg(long, value_name = "FILE")]
+        summary: Option<PathBuf>,
+    },
+    /// Confirm the condensed `review` block of an artifact.
+    Confirm {
+        #[command(flatten)]
+        target: Target,
+        #[command(flatten)]
+        writer: Writer,
+        /// The ticket.
+        #[arg(long)]
+        ticket: String,
+        /// The artifact ID.
+        artifact: String,
+    },
+}
+
+pub(crate) fn run_approve(arguments: ApproveArguments) -> ExitCode {
+    let change = Change::Approve {
+        ticket: arguments.ticket,
+        artifact: arguments.artifact,
+        changes_requested: arguments.changes_requested,
+        proof: arguments.proof,
+    };
+    append(&arguments.target, &arguments.writer, change)
+}
+
+pub(crate) fn run_review(review: Review) -> ExitCode {
+    match review {
+        Review::Condense {
+            target,
+            ticket,
+            artifact,
+            summary,
+        } => {
+            let outcome = ProcessStore::locate(&target.root, None)
+                .and_then(|store| store.condense(&ticket, &artifact, summary.as_deref()));
+            finish(target.json, outcome, print_condensed)
+        }
+        Review::Confirm {
+            target,
+            writer,
+            ticket,
+            artifact,
+        } => append(&target, &writer, Change::ConfirmReview { ticket, artifact }),
+    }
+}
+
+fn print_condensed(condensed: &Condensed) {
+    let approvals = condensed.review["approved_by"]
+        .as_array()
+        .map_or(0, Vec::len);
+    let summary = if condensed.review.get("summary").is_some() {
+        " and a summary"
+    } else {
+        ""
+    };
+    println!(
+        "condensed {approvals} approval(s){summary} into {}",
+        condensed.path
+    );
 }
 
 #[derive(Args)]

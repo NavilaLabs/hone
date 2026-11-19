@@ -10,9 +10,11 @@ use serde_json::{Map, Value, json};
 use crate::canonical;
 use crate::check::load_ticket;
 use crate::client::{self, Server, Session};
+use crate::condense;
 use crate::directory::Directory;
 use crate::event::{
-    self, STEP_CHANGED, THREAD_MESSAGE, THREAD_OPENED, THREAD_REOPENED, THREAD_RESOLVED,
+    self, APPROVAL_GIVEN, REVIEW_CONFIRMED, STEP_CHANGED, THREAD_MESSAGE, THREAD_OPENED,
+    THREAD_REOPENED, THREAD_RESOLVED,
 };
 use crate::log::{self, Cursor, InvalidEvent, Log};
 use crate::manifest;
@@ -134,6 +136,33 @@ pub enum Change {
         /// Why, for example why the step was skipped.
         reason: Option<String>,
     },
+    /// `approval.given` for the artifact's current content hash.
+    Approve {
+        /// The ticket ID.
+        ticket: String,
+        /// The artifact ID.
+        artifact: String,
+        /// `true` for `changes-requested`, `false` for `approved`.
+        changes_requested: bool,
+        /// A free proof that the person approved, stored as `proof`.
+        proof: Option<String>,
+    },
+    /// `review.confirmed` for the artifact's current content hash.
+    ConfirmReview {
+        /// The ticket ID.
+        ticket: String,
+        /// The artifact ID.
+        artifact: String,
+    },
+}
+
+/// The result of [`ProcessStore::condense`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Condensed {
+    /// The artifact's path, relative to the project root.
+    pub path: String,
+    /// The `review` block written into it.
+    pub review: Value,
 }
 
 /// The result of [`ProcessStore::append`].
@@ -397,9 +426,83 @@ impl ProcessStore {
         })
     }
 
+    /// Writes the `review` block into the artifact `artifact` of `ticket` (concept Section 12,
+    /// "Approvals and condensation"): `approved_by` from the ticket's approvals of the current
+    /// content hash, and `summary` from the YAML file `summary` if given. Every other byte of
+    /// the file stays unchanged. Writes no event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProcessError::Invalid`] if the ticket or the artifact does not exist, the
+    /// summary is malformed or refused by `review_summary: approvals-only`, or the file cannot
+    /// be condensed, and [`ProcessError::IoError`] if a file cannot be read or written.
+    pub fn condense(
+        &self,
+        ticket: &str,
+        artifact: &str,
+        summary: Option<&Path>,
+    ) -> Result<Condensed, ProcessError> {
+        let (record, snapshot) = load_ticket(&self.project_root, ticket)?;
+        let profile = record["profile"].as_str().unwrap_or_default();
+        let approvals_only =
+            snapshot.document()["profiles"][profile]["review_summary"] == "approvals-only";
+        let summary = match summary {
+            None => None,
+            Some(_) if approvals_only => {
+                return Err(invalid(format!(
+                    "the profile `{profile}` keeps the summary out of the file (`review_summary: approvals-only`)"
+                )));
+            }
+            Some(path) => {
+                let bytes = std::fs::read(path).map_err(|error| ProcessError::IoError {
+                    message: format!("{}: {error}", path.display()),
+                })?;
+                let value = crate::yaml::parse(&bytes).map_err(|violations| {
+                    invalid(format!(
+                        "{}: {}",
+                        path.display(),
+                        violations
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    ))
+                })?;
+                Some(condense::summary(&value).map_err(invalid)?)
+            }
+        };
+        let (path, _, hash) = self.artifact(artifact)?;
+        let events: Vec<Value> = self
+            .load()?
+            .events
+            .into_iter()
+            .filter(|event| event["ticket"] == ticket)
+            .collect();
+        let mut review = json!({ "approved_by": condense::approved_by(&events, artifact, &hash) });
+        if let Some(summary) = summary {
+            review["summary"] = summary;
+        }
+        let file = self.project_root.join(&path);
+        let io = |error: std::io::Error| ProcessError::IoError {
+            message: format!("{path}: {error}"),
+        };
+        // The project directory is untrusted like every checked directory: read the opened file
+        // only if it is the regular file below the root.
+        let mut opened = log::open_below(&file, &self.project_root, false)
+            .map_err(io)?
+            .ok_or_else(|| invalid(format!("{path}: not a regular file below the project root")))?;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut opened, &mut bytes).map_err(io)?;
+        let condensed = condense::rewrite(&path, &bytes, &review)
+            .map_err(|message| invalid(format!("{path}: {message}")))?;
+        replace(&file, &condensed).map_err(io)?;
+        Ok(Condensed { path, review })
+    }
+
     /// Writes `change` as one event of this device by `author`, after checking it against the
     /// project: the ticket and its snapshot exist, the role exists in the snapshot, a step
-    /// belongs to the ticket's profile, a thread was opened, an anchored artifact exists. The
+    /// belongs to the ticket's profile, a thread was opened, an anchored or approved artifact
+    /// exists, an approving role may approve, a confirming role decides. The
     /// store is created on the first write. `after` is filled with the newest event of every
     /// other device.
     ///
@@ -413,7 +516,7 @@ impl ProcessStore {
             kind,
             payload,
             thread,
-        } = self.prepare(&self.load()?, change)?;
+        } = self.prepare(&self.load()?, author, change)?;
         let snapshot = load_ticket(&self.project_root, &ticket)?.1;
         if snapshot.document()["roles"].get(&author.role).is_none() {
             return Err(invalid(format!(
@@ -523,7 +626,12 @@ impl ProcessStore {
         }
     }
 
-    fn prepare(&self, log: &Log, change: Change) -> Result<Prepared, ProcessError> {
+    fn prepare(
+        &self,
+        log: &Log,
+        author: &Author,
+        change: Change,
+    ) -> Result<Prepared, ProcessError> {
         let thread_event = |thread: String, kind: &'static str, body: Option<String>| {
             let opening = format!("ev-{}", thread.strip_prefix("th-").unwrap_or_default());
             let ticket = log
@@ -594,20 +702,117 @@ impl ProcessStore {
                     thread: None,
                 })
             }
+            Change::Approve {
+                ticket,
+                artifact,
+                changes_requested,
+                proof,
+            } => {
+                let snapshot = load_ticket(&self.project_root, &ticket)?.1;
+                let config = snapshot.document();
+                if !may_approve(config, &author.role) {
+                    return Err(invalid(format!(
+                        "the role `{}` may not approve: its `can` lacks `approve`",
+                        author.role
+                    )));
+                }
+                if !actor_has_role(config, &author.name, &author.role) {
+                    return Err(invalid(format!(
+                        "`actors` does not give `{}` the role `{}`",
+                        author.name, author.role
+                    )));
+                }
+                let (_, _, hash) = self.artifact(&artifact)?;
+                let decision = if changes_requested {
+                    "changes-requested"
+                } else {
+                    "approved"
+                };
+                let mut payload =
+                    object(json!({ "artifact": artifact, "hash": hash, "decision": decision }));
+                if let Some(proof) = proof {
+                    payload.insert("proof".into(), json!(proof));
+                }
+                Ok(Prepared {
+                    ticket,
+                    kind: APPROVAL_GIVEN,
+                    payload,
+                    thread: None,
+                })
+            }
+            Change::ConfirmReview { ticket, artifact } => {
+                let (record, snapshot) = load_ticket(&self.project_root, &ticket)?;
+                let (_, kind, hash) = self.artifact(&artifact)?;
+                let config = snapshot.document();
+                if !actor_has_role(config, &author.name, &author.role) {
+                    return Err(invalid(format!(
+                        "`actors` does not give `{}` the role `{}`",
+                        author.name, author.role
+                    )));
+                }
+                let profile = record["profile"].as_str().unwrap_or_default();
+                let deciders: Vec<&str> = config["profiles"][profile]["steps"]
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .map(|(step, _)| &config["steps"][step])
+                    .filter(|step| {
+                        step["outputs"]
+                            .as_array()
+                            .is_some_and(|outputs| outputs.iter().any(|output| output == &kind))
+                    })
+                    .filter_map(|step| step["decides"].as_str())
+                    .collect();
+                let allowed = if deciders.is_empty() {
+                    may_approve(config, &author.role)
+                } else {
+                    deciders.contains(&author.role.as_str())
+                };
+                if !allowed {
+                    return Err(invalid(if deciders.is_empty() {
+                        format!(
+                            "the role `{}` may not confirm: no step names `decides` for `{kind}`, and the role may not approve",
+                            author.role
+                        )
+                    } else {
+                        format!(
+                            "the role `{}` may not confirm: the step decides with {}",
+                            author.role,
+                            deciders.join(", ")
+                        )
+                    }));
+                }
+                Ok(Prepared {
+                    ticket,
+                    kind: REVIEW_CONFIRMED,
+                    payload: object(json!({ "artifact": artifact, "hash": hash })),
+                    thread: None,
+                })
+            }
         }
+    }
+
+    // The artifact `id` in the project's current directory: its path, kind, and content hash.
+    fn artifact(&self, id: &str) -> Result<(String, String, String), ProcessError> {
+        let current = Resolved::load(&self.project_root)?;
+        let directory = Directory::scan(&self.project_root, current.document());
+        let found = directory
+            .artifacts
+            .iter()
+            .find(|candidate| candidate.id() == Some(id))
+            .ok_or_else(|| invalid(format!("no artifact `{id}` in the project")))?;
+        Ok((
+            found.path.clone(),
+            found.type_name().unwrap_or_default().to_owned(),
+            found.content.hash(),
+        ))
     }
 
     fn anchor(&self, anchor: ThreadAnchor) -> Result<Value, ProcessError> {
         Ok(match anchor {
             ThreadAnchor::Artifact { artifact, quote } => {
-                let current = Resolved::load(&self.project_root)?;
-                let directory = Directory::scan(&self.project_root, current.document());
-                let found = directory
-                    .artifacts
-                    .iter()
-                    .find(|candidate| candidate.id() == Some(artifact.as_str()))
-                    .ok_or_else(|| invalid(format!("no artifact `{artifact}` in the project")))?;
-                let mut value = json!({ "kind": "artifact", "artifact": artifact, "hash": found.content.hash() });
+                let (_, _, hash) = self.artifact(&artifact)?;
+                let mut value = json!({ "kind": "artifact", "artifact": artifact, "hash": hash });
                 if let Some(quote) = quote {
                     value["quote"] = json!(quote);
                 }
@@ -729,6 +934,44 @@ fn object(value: Value) -> Map<String, Value> {
         Value::Object(map) => map,
         _ => Map::new(),
     }
+}
+
+// A new file next to `path`, renamed over it: a rename replaces a link planted at `path` instead
+// of writing through it.
+fn replace(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let temporary = path.with_file_name(format!(".{name}.hone-condense"));
+    let written = (|| {
+        let mut file = File::options()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        std::io::Write::write_all(&mut file, bytes)?;
+        file.sync_all()?;
+        std::fs::rename(&temporary, path)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    written
+}
+
+fn may_approve(config: &Value, role: &str) -> bool {
+    config["roles"][role]["can"]
+        .as_array()
+        .is_some_and(|can| can.iter().any(|capability| capability == "approve"))
+}
+
+fn actor_has_role(config: &Value, name: &str, role: &str) -> bool {
+    let actors = &config["actors"];
+    actors
+        .get(name)
+        .or_else(|| actors.get("*"))
+        .and_then(Value::as_array)
+        .is_some_and(|roles| roles.iter().any(|item| item == role))
 }
 
 fn invalid(message: impl Into<String>) -> ProcessError {
