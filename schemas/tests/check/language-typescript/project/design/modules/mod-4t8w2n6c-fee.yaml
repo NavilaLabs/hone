@@ -1,0 +1,7 @@
+id: "mod-4t8w2n6c"
+type: "module"
+anchors:
+  - { kind: "path", ref: "src/payments" }
+  - { kind: "symbol", ref: "src/payments/fee.ts#Fee.add" }
+  - { kind: "symbol", ref: "src/payments/fee.ts#Payments.Inner" }
+  - { kind: "symbol", ref: "src/payments/api.ts#createUser" }

@@ -234,20 +234,36 @@ fn content_hash_covers_fields_and_text_but_not_notation() {
 }
 
 #[test]
-fn the_package_lang_rust_ships_the_module_of_the_test_cases() {
-    let shipped = read(&schemas().join("lang-rust/plugins/lang-rust.wasm"));
-    let tested =
-        read(&schemas().join(
-            "tests/check/module-anchors-resolve-resolved/project/.hone/plugins/lang-rust.wasm",
-        ));
-    assert!(
-        shipped == tested,
-        "the package and the test cases use the same module"
-    );
-    let definition = parse_yaml(&read(&schemas().join("lang-rust/plugins/lang-rust.yaml")))
+fn every_language_package_ships_the_module_of_its_test_case() {
+    let cases = [
+        ("rust", "module-anchors-resolve-resolved", vec!["rs"]),
+        (
+            "typescript",
+            "language-typescript",
+            vec!["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"],
+        ),
+        ("python", "language-python", vec!["py", "pyi"]),
+        ("php", "language-php", vec!["php"]),
+        ("dart", "language-dart", vec!["dart"]),
+    ];
+    for (language, case, extensions) in cases {
+        let name = format!("lang-{language}");
+        let shipped = read(&schemas().join(format!("{name}/plugins/{name}.wasm")));
+        let tested = read(&schemas().join(format!(
+            "tests/check/{case}/project/.hone/plugins/{name}.wasm"
+        )));
+        assert!(
+            shipped == tested,
+            "{name}: the package and its test case use the same module"
+        );
+        let definition = parse_yaml(&read(
+            &schemas().join(format!("{name}/plugins/{name}.yaml")),
+        ))
         .expect("strict YAML profile");
-    assert_eq!(
-        definition["language"]["extensions"],
-        serde_json::json!(["rs"])
-    );
+        assert_eq!(
+            definition["language"]["extensions"],
+            serde_json::json!(extensions),
+            "{name}"
+        );
+    }
 }
