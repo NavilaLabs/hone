@@ -335,6 +335,8 @@ pub struct TicketOverview {
     pub config: String,
     pub attributes: serde_json::Map<String, Value>,
     pub external: Vec<ExternalTicket>,
+    /// The profile `select` of the snapshot gives for the attributes.
+    pub selected: Option<String>,
     /// The roles of the ticket's snapshot.
     pub roles: Vec<String>,
     /// The profile's steps, each after the steps in its `after`.
@@ -368,6 +370,82 @@ pub enum GateScope {
     All,
     /// Only pure gates: no `exec` gate runs a command.
     Pure,
+}
+
+/// The value of an attribute, in one of the three types the protocol allows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AttributeValue {
+    Text(String),
+    Integer(i64),
+    Boolean(bool),
+}
+
+impl AttributeValue {
+    /// The value as `--attribute` reads it: a text always double-quoted, so that `3` or `true`
+    /// typed as text stays text.
+    #[must_use]
+    pub fn argument(&self) -> String {
+        match self {
+            Self::Text(text) => serde_json::to_string(text).expect("a string serializes"),
+            Self::Integer(number) => number.to_string(),
+            Self::Boolean(flag) => flag.to_string(),
+        }
+    }
+
+    /// The value as the JSON of the command line holds it.
+    #[must_use]
+    pub fn to_json(&self) -> Value {
+        match self {
+            Self::Text(text) => Value::String(text.clone()),
+            Self::Integer(number) => Value::from(*number),
+            Self::Boolean(flag) => Value::Bool(*flag),
+        }
+    }
+
+    /// The value of a JSON attribute, or `None` for a type the protocol does not allow.
+    #[must_use]
+    pub fn from_json(value: &Value) -> Option<Self> {
+        match value {
+            Value::String(text) => Some(Self::Text(text.clone())),
+            Value::Bool(flag) => Some(Self::Boolean(*flag)),
+            Value::Number(number) => number.as_i64().map(Self::Integer),
+            _ => None,
+        }
+    }
+}
+
+/// What a new ticket starts with.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TicketStart {
+    pub attributes: Vec<(String, AttributeValue)>,
+    /// External tickets as `<system>:<key>[=<url>]`.
+    pub external: Vec<String>,
+    /// A profile instead of the one `select` gives.
+    pub profile: Option<String>,
+}
+
+/// The result of `hone ticket start`, `set-attributes`, and `switch-config`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TicketWritten {
+    pub ticket: String,
+    pub path: String,
+    pub profile: String,
+    /// The profile `select` gives for the attributes under the ticket's configuration.
+    pub selected: Option<String>,
+    pub config: String,
+    pub attributes: serde_json::Map<String, Value>,
+}
+
+/// The result of `hone ticket select`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ProfileSelection {
+    pub selected: Option<String>,
+    /// The position of the matching rule, `None` for the default.
+    pub rule: Option<usize>,
+    /// The rules, `{ when, profile }`.
+    pub rules: Vec<Value>,
+    pub default: Option<String>,
+    pub profiles: Vec<String>,
 }
 
 /// A running `hone serve`. Dropping it stops the server.
@@ -571,6 +649,132 @@ impl Hone {
         })
     }
 
+    /// `hone ticket start` as `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`], `invalid` for example for a stale `.hone/resolved.json`.
+    pub async fn start_ticket(
+        &self,
+        writer: &Writer,
+        start: &TicketStart,
+    ) -> Result<TicketWritten, Failure> {
+        let mut arguments = vec!["ticket".to_owned(), "start".to_owned()];
+        arguments.extend(attribute_arguments(&start.attributes));
+        for external in &start.external {
+            arguments.extend(["--external".to_owned(), external.clone()]);
+        }
+        if let Some(profile) = &start.profile {
+            arguments.extend(["--profile".to_owned(), profile.clone()]);
+        }
+        self.run_as(writer, arguments).await
+    }
+
+    /// `hone ticket set-attributes` as `writer`: sets `set` and removes `unset`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`], `invalid` for example for an unknown ticket.
+    pub async fn set_attributes(
+        &self,
+        writer: &Writer,
+        ticket: &str,
+        set: &[(String, AttributeValue)],
+        unset: &[String],
+    ) -> Result<TicketWritten, Failure> {
+        let mut arguments = vec![
+            "ticket".to_owned(),
+            "set-attributes".to_owned(),
+            "--ticket".to_owned(),
+            ticket.to_owned(),
+        ];
+        arguments.extend(attribute_arguments(set));
+        for key in unset {
+            arguments.extend(["--unset".to_owned(), key.clone()]);
+        }
+        self.run_as(writer, arguments).await
+    }
+
+    /// `hone ticket switch-config` as `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`], `invalid` when the ticket already uses the current configuration.
+    pub async fn switch_config(
+        &self,
+        writer: &Writer,
+        ticket: &str,
+    ) -> Result<TicketWritten, Failure> {
+        let arguments = ["ticket", "switch-config", "--ticket", ticket]
+            .map(str::to_owned)
+            .to_vec();
+        self.run_as(writer, arguments).await
+    }
+
+    /// `hone ticket select`: the profile `select` gives for `attributes`, and its rules.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`] `error` when the configuration cannot be read.
+    pub async fn select(
+        &self,
+        attributes: &[(String, AttributeValue)],
+    ) -> Result<ProfileSelection, Failure> {
+        let mut arguments = vec!["ticket".to_owned(), "select".to_owned()];
+        arguments.extend(attribute_arguments(attributes));
+        let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        self.run(&arguments, &[0]).await
+    }
+
+    /// `hone resolve`: writes `.hone/resolved.json` from its sources and returns its hash.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`] with the problems of the resolution.
+    pub async fn resolve(&self) -> Result<String, Failure> {
+        #[derive(Deserialize)]
+        struct Output {
+            hash: Option<String>,
+            problems: Option<Vec<Value>>,
+            status: Option<String>,
+        }
+        let output: Output = self.run(&["resolve"], &[0, 1]).await?;
+        match (output.hash, output.problems) {
+            (Some(hash), _) => Ok(hash),
+            (None, problems) => Err(Failure {
+                status: output.status.unwrap_or_else(|| "failed".into()),
+                message: problems
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|problem| {
+                        problem["message"]
+                            .as_str()
+                            .map_or_else(|| problem.to_string(), str::to_owned)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            }),
+        }
+    }
+
+    async fn run_as<T: DeserializeOwned>(
+        &self,
+        writer: &Writer,
+        mut arguments: Vec<String>,
+    ) -> Result<T, Failure> {
+        // Without both, the command line takes the author of the project's context.
+        if !writer.author.is_empty() && !writer.role.is_empty() {
+            arguments.extend([
+                "--author".into(),
+                writer.author.clone(),
+                "--role".into(),
+                writer.role.clone(),
+            ]);
+        }
+        let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        self.run(&arguments, &[0]).await
+    }
+
     /// Starts `hone serve --config <config>`.
     ///
     /// # Errors
@@ -680,6 +884,18 @@ fn binary() -> PathBuf {
         .and_then(|executable| Some(executable.parent()?.join(&name)))
         .filter(|sibling| sibling.is_file())
         .unwrap_or_else(|| name.into())
+}
+
+fn attribute_arguments(attributes: &[(String, AttributeValue)]) -> Vec<String> {
+    attributes
+        .iter()
+        .flat_map(|(key, value)| {
+            [
+                "--attribute".to_owned(),
+                format!("{key}={}", value.argument()),
+            ]
+        })
+        .collect()
 }
 
 fn check_arguments(ticket: Option<&str>, scope: GateScope) -> Vec<&str> {
@@ -804,6 +1020,34 @@ fn event(raw: Value) -> Result<Event, Failure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attribute_values_keep_their_type_on_the_command_line() {
+        let arguments = attribute_arguments(&[
+            ("size".into(), AttributeValue::Text("3".into())),
+            ("count".into(), AttributeValue::Integer(-2)),
+            ("urgent".into(), AttributeValue::Boolean(true)),
+            ("note".into(), AttributeValue::Text("say \"hi\"".into())),
+        ]);
+        assert_eq!(
+            arguments,
+            [
+                "--attribute",
+                "size=\"3\"",
+                "--attribute",
+                "count=-2",
+                "--attribute",
+                "urgent=true",
+                "--attribute",
+                "note=\"say \\\"hi\\\"\"",
+            ]
+        );
+        assert_eq!(
+            AttributeValue::from_json(&serde_json::json!(3)),
+            Some(AttributeValue::Integer(3))
+        );
+        assert_eq!(AttributeValue::from_json(&serde_json::json!(1.5)), None);
+    }
 
     #[test]
     fn a_pure_check_asks_for_the_pure_class_only() {

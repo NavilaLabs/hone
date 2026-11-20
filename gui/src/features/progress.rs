@@ -434,6 +434,7 @@ mod tests {
             ticket: "tk-9f2x4a8m".into(),
             path: String::new(),
             profile: "standard".into(),
+            selected: Some("standard".into()),
             config: String::new(),
             attributes: serde_json::Map::new(),
             external: Vec::new(),

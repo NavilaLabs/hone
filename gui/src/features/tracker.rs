@@ -310,10 +310,8 @@ fn TokenPanel(tracker: Tracker) -> Element {
 #[component]
 fn TrackerBrowser(tracker: Tracker) -> Element {
     let project = use_context::<Project>();
-    let mut session = use_context::<Session>();
-    let initial = session.tracker_query.take().unwrap_or_default();
-    let mut query = use_signal(|| initial.clone());
-    let mut submitted = use_signal(|| initial.clone());
+    let mut query = use_signal(String::new);
+    let mut submitted = use_signal(String::new);
     let searched = tracker.clone();
     let results = use_resource(move || {
         let tracker = searched.clone();
@@ -387,7 +385,7 @@ fn TrackerBrowser(tracker: Tracker) -> Element {
 
 #[component]
 fn IssueRow(tracker: Tracker, issue: Issue, linked: Vec<String>) -> Element {
-    let session = use_context::<Session>();
+    let mut session = use_context::<Session>();
     let mut copied = use_signal(|| false);
     let url = issue.url.clone();
     let entry = tracker.external_entry(&issue);
@@ -406,7 +404,17 @@ fn IssueRow(tracker: Tracker, issue: Issue, linked: Vec<String>) -> Element {
             TableCell {
                 if linked.is_empty() {
                     div { class: "flex items-center gap-2 whitespace-nowrap",
-                        span { class: "text-[13px] text-ink-muted", "not linked" }
+                        span { class: "text-[13px] text-ink-muted", "not in hone" }
+                        Button {
+                            variant: ButtonVariant::Outline,
+                            size: ButtonSize::Sm,
+                            title: "Start a hone ticket that names this tracker ticket",
+                            onclick: {
+                                let seed = super::new_ticket::Seed::from_issue(&tracker, &issue);
+                                move |_| session.new_ticket.set(Some(seed.clone()))
+                            },
+                            "Start ticket"
+                        }
                         Button {
                             variant: ButtonVariant::Outline,
                             size: ButtonSize::Sm,

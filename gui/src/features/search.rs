@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use dioxus::prelude::*;
 
-use super::{Project, Screen, Session};
+use super::{Project, Session};
 use crate::hone::{Catalog, Event};
 use crate::tracker::{Issue, Tracker};
 
@@ -14,8 +14,12 @@ use crate::tracker::{Issue, Tracker};
 pub(crate) enum Target {
     Ticket(String),
     Artifact(String),
-    Thread { ticket: String, thread: String },
-    Tracker(String),
+    Thread {
+        ticket: String,
+        thread: String,
+    },
+    /// A tracker ticket that no record names: start a ticket for it.
+    Start(super::new_ticket::Seed),
 }
 
 /// A result of the search.
@@ -26,6 +30,8 @@ pub(crate) struct Hit {
     pub(crate) key: String,
     pub(crate) text: String,
     pub(crate) target: Target,
+    /// What Enter does when it is not obvious, shown on the right.
+    pub(crate) note: Option<String>,
 }
 
 const LIMIT: usize = 8;
@@ -63,6 +69,7 @@ pub(crate) fn search(catalog: Option<&Catalog>, events: &[Event], query: &str) -
                     key: id.clone(),
                     text,
                     target: Target::Ticket(id),
+                    note: None,
                 });
             }
         } else {
@@ -77,6 +84,7 @@ pub(crate) fn search(catalog: Option<&Catalog>, events: &[Event], query: &str) -
                     key: id.clone(),
                     text: text.trim_end_matches(" · ").to_owned(),
                     target: Target::Artifact(id),
+                    note: None,
                 });
             }
         }
@@ -99,6 +107,7 @@ pub(crate) fn search(catalog: Option<&Catalog>, events: &[Event], query: &str) -
                 key: ticket.clone(),
                 text: line,
                 target: Target::Thread { ticket, thread },
+                note: None,
             })
         });
     tickets
@@ -136,13 +145,15 @@ pub(crate) fn tracker_hits(
             };
             Hit {
                 group: "Tracker",
-                text: match &linked {
-                    Some(ticket) => {
-                        format!("{} · {} · in hone as {ticket}", issue.title, issue.state)
-                    }
-                    None => format!("{} · {}", issue.title, issue.state),
-                },
-                target: linked.map_or_else(|| Target::Tracker(key.clone()), Target::Ticket),
+                text: format!("{} · {}", issue.title, issue.state),
+                note: Some(match &linked {
+                    Some(ticket) => format!("opens {ticket}"),
+                    None => "starts a ticket".to_owned(),
+                }),
+                target: linked.map_or_else(
+                    || Target::Start(super::new_ticket::Seed::from_issue(tracker, issue)),
+                    Target::Ticket,
+                ),
                 key,
             }
         })
@@ -222,10 +233,7 @@ pub(crate) fn SearchDialog() -> Element {
             Target::Ticket(ticket) => session.open_ticket(ticket),
             Target::Artifact(id) => session.open_artifact(id),
             Target::Thread { ticket, thread } => session.open_thread(ticket, thread),
-            Target::Tracker(key) => {
-                session.tracker_query.set(Some(key));
-                session.screen.set(Screen::Tracker);
-            }
+            Target::Start(seed) => session.new_ticket.set(Some(seed)),
         }
     };
     let keyed = hits.clone();
@@ -300,6 +308,9 @@ pub(crate) fn SearchDialog() -> Element {
                             },
                             span { class: "font-mono text-[13px] shrink-0", "{hit.key}" }
                             span { class: "text-[13px] text-ink-muted truncate min-w-0", "{hit.text}" }
+                            if let Some(note) = hit.note.clone() {
+                                span { class: "ml-auto pl-3 font-mono text-[12px] text-ink-muted shrink-0 whitespace-nowrap", "↵ {note}" }
+                            }
                         }
                     }
                     if let Some(note) = tracker_note {
@@ -414,8 +425,15 @@ mod tests {
             Some(&catalog()),
         );
         assert_eq!(hits[0].target, Target::Ticket("tk-9f2x4a8m".into()));
-        assert_eq!(hits[0].text, "Async · open · in hone as tk-9f2x4a8m");
-        assert_eq!(hits[1].target, Target::Tracker("PAY-124".into()));
+        assert_eq!(hits[0].note.as_deref(), Some("opens tk-9f2x4a8m"));
+        assert_eq!(hits[1].note.as_deref(), Some("starts a ticket"));
+        assert_eq!(
+            hits[1].target,
+            Target::Start(super::super::new_ticket::Seed {
+                external: vec!["jira:PAY-124".into()],
+                title: Some("Async".into()),
+            })
+        );
     }
 
     #[test]

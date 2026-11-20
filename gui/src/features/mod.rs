@@ -3,10 +3,12 @@
 
 pub(crate) mod artifact;
 pub(crate) mod artifacts;
+mod attributes;
 pub(crate) mod check;
 mod common;
 pub(crate) mod events;
 pub(crate) mod graph;
+pub(crate) mod new_ticket;
 mod progress;
 pub(crate) mod search;
 pub(crate) mod server;
@@ -57,8 +59,8 @@ pub(crate) struct Session {
     /// The node the link graph highlights.
     pub(crate) graph_focus: Signal<Option<String>>,
     pub(crate) search_open: Signal<bool>,
-    /// A key the Tracker screen searches for when it opens.
-    pub(crate) tracker_query: Signal<Option<String>>,
+    /// The ticket the New ticket dialog starts, `None` while it is closed.
+    pub(crate) new_ticket: Signal<Option<new_ticket::Seed>>,
 }
 
 /// A full `hone check` and the ticket it ran for.
@@ -85,7 +87,7 @@ impl Session {
             artifact: Signal::new(None),
             graph_focus: Signal::new(None),
             search_open: Signal::new(false),
-            tracker_query: Signal::new(None),
+            new_ticket: Signal::new(None),
         }
     }
 

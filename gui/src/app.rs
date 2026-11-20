@@ -52,6 +52,9 @@ fn App() -> Element {
             if (session.search_open)() {
                 features::search::SearchDialog {}
             }
+            if let Some(seed) = (session.new_ticket)() {
+                features::new_ticket::NewTicketDialog { seed }
+            }
             div { class: "flex flex-wrap flex-1",
                 Navigation {}
                 main { class: "flex-1 min-w-0 px-10 pt-8 pb-12 flex flex-col gap-8",
