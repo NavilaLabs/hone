@@ -1,76 +1,95 @@
 // Resolving `a::b::c` among the items of a Rust file.
 
-use syn::{Fields, ImplItem, Item, TraitItem, Type};
+use syn::{Fields, Ident, ImplItem, Item, TraitItem, Type};
 
-pub(crate) fn exists(file: &syn::File, symbol: &str) -> bool {
+/// The line (from 1) of the name of `symbol` in `file`, `None` when the file has no such
+/// symbol.
+pub(crate) fn line(file: &syn::File, symbol: &str) -> Option<usize> {
     let segments: Vec<&str> = symbol.split("::").collect();
-    resolve(&file.items, &segments)
+    find(&file.items, &segments).map(|ident| ident.span().start().line)
 }
 
-fn resolve(items: &[Item], segments: &[&str]) -> bool {
-    let Some((first, rest)) = segments.split_first() else {
-        return true;
-    };
+fn find<'a>(items: &'a [Item], segments: &[&str]) -> Option<&'a Ident> {
+    let (first, rest) = segments.split_first()?;
     let named = items
         .iter()
-        .filter(|item| name_of(item).as_deref() == Some(*first));
-    for item in named {
+        .filter_map(|item| Some((item, ident_of(item)?)))
+        .filter(|(_, ident)| *ident == first);
+    for (item, ident) in named {
         if rest.is_empty() {
-            return true;
+            return Some(ident);
         }
         let found = match item {
             Item::Mod(module) => module
                 .content
                 .as_ref()
-                .is_some_and(|(_, items)| resolve(items, rest)),
-            Item::Enum(item) if rest.len() == 1 => {
-                item.variants.iter().any(|variant| variant.ident == rest[0])
-            }
-            Item::Trait(item) if rest.len() == 1 => item.items.iter().any(|member| match member {
-                TraitItem::Fn(member) => member.sig.ident == rest[0],
-                TraitItem::Const(member) => member.ident == rest[0],
-                TraitItem::Type(member) => member.ident == rest[0],
-                _ => false,
-            }),
+                .and_then(|(_, items)| find(items, rest)),
+            Item::Enum(item) if rest.len() == 1 => item
+                .variants
+                .iter()
+                .map(|variant| &variant.ident)
+                .find(|ident| *ident == rest[0]),
+            Item::Trait(item) if rest.len() == 1 => item
+                .items
+                .iter()
+                .filter_map(|member| match member {
+                    TraitItem::Fn(member) => Some(&member.sig.ident),
+                    TraitItem::Const(member) => Some(&member.ident),
+                    TraitItem::Type(member) => Some(&member.ident),
+                    _ => None,
+                })
+                .find(|ident| *ident == rest[0]),
             Item::Struct(item) if rest.len() == 1 => match &item.fields {
                 Fields::Named(fields) => fields
                     .named
                     .iter()
-                    .any(|field| field.ident.as_ref().is_some_and(|ident| ident == rest[0])),
-                _ => false,
+                    .filter_map(|field| field.ident.as_ref())
+                    .find(|ident| *ident == rest[0]),
+                _ => None,
             },
-            _ => false,
+            _ => None,
         };
-        if found {
-            return true;
+        if found.is_some() {
+            return found;
         }
     }
-    rest.len() == 1 && in_impl(items, first, rest[0])
+    match rest {
+        [member] => in_impl(items, first, member),
+        _ => None,
+    }
 }
 
 // An item of an `impl` block of the type `owner`, whether or not the type is defined here.
-fn in_impl(items: &[Item], owner: &str, member: &str) -> bool {
-    items.iter().any(|item| {
+fn in_impl<'a>(items: &'a [Item], owner: &str, member: &str) -> Option<&'a Ident> {
+    items.iter().find_map(|item| {
         let Item::Impl(block) = item else {
-            return false;
+            return None;
         };
         let Type::Path(path) = &*block.self_ty else {
-            return false;
+            return None;
         };
-        path.path
+        if !path
+            .path
             .segments
             .last()
             .is_some_and(|segment| segment.ident == owner)
-            && block.items.iter().any(|candidate| match candidate {
-                ImplItem::Fn(candidate) => candidate.sig.ident == member,
-                ImplItem::Const(candidate) => candidate.ident == member,
-                ImplItem::Type(candidate) => candidate.ident == member,
-                _ => false,
+        {
+            return None;
+        }
+        block
+            .items
+            .iter()
+            .filter_map(|candidate| match candidate {
+                ImplItem::Fn(candidate) => Some(&candidate.sig.ident),
+                ImplItem::Const(candidate) => Some(&candidate.ident),
+                ImplItem::Type(candidate) => Some(&candidate.ident),
+                _ => None,
             })
+            .find(|ident| *ident == member)
     })
 }
 
-fn name_of(item: &Item) -> Option<String> {
+fn ident_of(item: &Item) -> Option<&Ident> {
     let ident = match item {
         Item::Const(item) => &item.ident,
         Item::Enum(item) => &item.ident,
@@ -85,5 +104,5 @@ fn name_of(item: &Item) -> Option<String> {
         Item::Union(item) => &item.ident,
         _ => return None,
     };
-    Some(ident.to_string())
+    Some(ident)
 }

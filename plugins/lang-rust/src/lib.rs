@@ -49,8 +49,10 @@ pub fn resolve(input: String) -> FnResult<String> {
                 .entry(path.to_owned())
                 .or_insert_with(|| parse(&format!("{root}/{path}")));
             match file {
-                Ok(file) if symbol::exists(file, symbol) => json!({ "status": "found" }),
-                Ok(_) => json!({ "status": "missing" }),
+                Ok(file) => match symbol::line(file, symbol) {
+                    Some(line) => json!({ "status": "found", "line": line }),
+                    None => json!({ "status": "missing" }),
+                },
                 Err(message) => json!({ "status": "unparsable", "message": message }),
             }
         })

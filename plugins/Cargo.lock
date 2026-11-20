@@ -204,6 +204,7 @@ name = "lang-rust"
 version = "0.1.0"
 dependencies = [
  "extism-pdk",
+ "proc-macro2",
  "quote",
  "serde_json",
  "syn 2.0.119",
