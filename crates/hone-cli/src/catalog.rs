@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
-use hone_core::{Catalog, CheckError, TicketOverview};
+use hone_core::{Catalog, CheckError, ProfileSelection, TicketOverview};
 use serde::Serialize;
 use serde_json::json;
 
@@ -39,6 +39,19 @@ pub(crate) enum Ticket {
     /// Switch a ticket to the current configuration: a new snapshot, the record's `config`, and
     /// `ticket.config_changed`.
     SwitchConfig(crate::process::SwitchConfigArguments),
+    /// Show the profile `select` of the current configuration gives for attributes, and its
+    /// rules. Writes nothing.
+    Select {
+        /// Project root, the directory that contains `.hone/`.
+        #[arg(long, default_value = ".")]
+        root: PathBuf,
+        /// An attribute as `<key>=<value>`, read as for `hone ticket start`.
+        #[arg(long = "attribute", value_name = "KEY=VALUE")]
+        attributes: Vec<String>,
+        /// Print the result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub(crate) fn run_artifacts(arguments: &CatalogArguments) -> ExitCode {
@@ -59,6 +72,18 @@ pub(crate) fn run_ticket(command: Ticket) -> ExitCode {
         Ticket::Start(arguments) => crate::process::run_ticket_start(&arguments),
         Ticket::SetAttributes(arguments) => crate::process::run_set_attributes(&arguments),
         Ticket::SwitchConfig(arguments) => crate::process::run_switch_config(&arguments),
+        Ticket::Select {
+            root,
+            attributes,
+            json,
+        } => {
+            let outcome = crate::process::parse_attributes(&attributes)
+                .map_err(|error| CheckError {
+                    message: error.to_string(),
+                })
+                .and_then(|attributes| hone_core::select_profile(&root, &attributes));
+            finish(json, outcome, print_selection)
+        }
     }
 }
 
@@ -83,6 +108,14 @@ fn finish<T: Serialize>(as_json: bool, outcome: Result<T, CheckError>, print: fn
             eprintln!("{message}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn print_selection(selection: &ProfileSelection) {
+    match (&selection.selected, selection.rule) {
+        (Some(profile), Some(rule)) => println!("{profile} (rule {})", rule + 1),
+        (Some(profile), None) => println!("{profile} (default)"),
+        (None, _) => println!("no profile"),
     }
 }
 

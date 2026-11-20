@@ -180,6 +180,7 @@ fn a_profile_orders_its_steps_by_inputs_outputs_and_requires() {
             "ticket": TICKET,
             "path": "design/tickets/tk-9f2x4a8m/ticket.yaml",
             "profile": "standard",
+            "selected": "standard",
             "config": overview.config,
             "attributes": { "risk": "high" },
             "external": [

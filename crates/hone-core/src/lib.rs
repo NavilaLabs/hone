@@ -69,7 +69,7 @@ pub use process::{
 pub use replication::{SyncCode, SyncProblem, SyncReport};
 pub use resolved_file::{ResolvedFile, ResolvedFileError, compare_resolved, write_resolved};
 pub use source::{NoPackages, PackageDirectory, PackageSource};
-pub use ticket::{External, TicketStart, TicketWritten};
+pub use ticket::{External, ProfileSelection, TicketStart, TicketWritten, select_profile};
 pub use transport::{ServerCode, is_project_id, parse_cursor_query};
 pub use yaml::YamlProfileError;
 

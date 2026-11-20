@@ -79,6 +79,7 @@ fn ticket_show_prints_the_profile_steps_and_roles() {
             "ticket": "tk-9f2x4a8m",
             "path": "design/tickets/tk-9f2x4a8m/ticket.yaml",
             "profile": "standard",
+            "selected": "standard",
             "config": "sha256:4c076d82c93f26478168d828d016650bde32bdc36819505c13e6f9d103671b15",
             "attributes": {},
             "external": [],

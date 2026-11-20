@@ -86,6 +86,9 @@ pub struct TicketOverview {
     pub path: String,
     /// The ticket record's profile.
     pub profile: String,
+    /// The profile `select` of the snapshot gives for the record's attributes; it differs from
+    /// `profile` when the profile was chosen by hand.
+    pub selected: Option<String>,
     /// The hash of the snapshot, `sha256:<hex>`.
     pub config: String,
     /// The ticket record's attributes.
@@ -174,6 +177,11 @@ pub fn ticket_overview(project_root: &Path, ticket: &str) -> Result<TicketOvervi
         .as_object()
         .map(|roles| roles.keys().cloned().collect())
         .unwrap_or_default();
+    let record_attributes = record
+        .get("attributes")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
     Ok(TicketOverview {
         ticket: ticket.to_owned(),
         path,
@@ -183,12 +191,9 @@ pub fn ticket_overview(project_root: &Path, ticket: &str) -> Result<TicketOvervi
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned(),
-        attributes: record
-            .get("attributes")
-            .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default(),
+        attributes: record_attributes.clone(),
         external: external(&record),
+        selected: crate::ticket::selected_profile(config, &record_attributes),
         profile,
         roles,
     })

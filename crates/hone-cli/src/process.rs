@@ -515,7 +515,9 @@ fn print_ticket(written: &hone_core::TicketWritten) {
     }
 }
 
-fn parse_attributes(texts: &[String]) -> Result<serde_json::Map<String, Value>, ProcessError> {
+pub(crate) fn parse_attributes(
+    texts: &[String],
+) -> Result<serde_json::Map<String, Value>, ProcessError> {
     let mut attributes = serde_json::Map::new();
     for text in texts {
         let (key, raw) = text.split_once('=').ok_or_else(|| ProcessError::Invalid {

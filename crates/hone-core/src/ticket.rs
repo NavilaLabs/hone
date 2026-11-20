@@ -13,7 +13,7 @@ use crate::event::{self, TICKET_ATTRIBUTES_CHANGED, TICKET_CONFIG_CHANGED, TICKE
 use crate::finding::Level;
 use crate::process::Prepared;
 use crate::resolved_file::{ResolvedFile, compare_resolved};
-use crate::{Author, PackageSource, ProcessError, ProcessStore, Resolved};
+use crate::{Author, CheckError, PackageSource, ProcessError, ProcessStore, Resolved};
 
 /// What a new ticket starts with.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -292,11 +292,52 @@ impl ProcessStore {
     }
 }
 
-/// The profile `select` of `config` gives for `attributes`: the first rule whose `when` matches
-/// every attribute it names, a scalar by equality and a list by set membership, otherwise
-/// `default`.
-pub(crate) fn selected_profile(config: &Value, attributes: &Map<String, Value>) -> Option<String> {
-    let select = &config["select"];
+/// What `select` of the current configuration gives for some attributes, with the rules it
+/// chose from.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ProfileSelection {
+    /// The selected profile.
+    pub selected: Option<String>,
+    /// The position of the rule that matched, counted from 0, or `None` when `default` applies.
+    pub rule: Option<usize>,
+    /// The rules of `select`, `{ when, profile }`, in their order.
+    pub rules: Vec<Value>,
+    /// The profile of `select` when no rule matches.
+    pub default: Option<String>,
+    /// The profiles of the configuration, sorted.
+    pub profiles: Vec<String>,
+}
+
+/// The profile `select` of the current resolved configuration of `project_root` gives for
+/// `attributes`, without starting a ticket.
+///
+/// # Errors
+///
+/// Returns a [`CheckError`] if `.hone/resolved.json` cannot be read.
+pub fn select_profile(
+    project_root: &Path,
+    attributes: &Map<String, Value>,
+) -> Result<ProfileSelection, CheckError> {
+    let current = Resolved::load(project_root)?;
+    let config = current.document();
+    Ok(ProfileSelection {
+        selected: selected_profile(config, attributes),
+        rule: matching_rule(config, attributes),
+        rules: config["select"]["rules"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default(),
+        default: config["select"]["default"].as_str().map(str::to_owned),
+        profiles: config["profiles"]
+            .as_object()
+            .map(|profiles| profiles.keys().cloned().collect())
+            .unwrap_or_default(),
+    })
+}
+
+/// The position of the first rule of `select` whose `when` matches every attribute it names, a
+/// scalar by equality and a list by set membership.
+fn matching_rule(config: &Value, attributes: &Map<String, Value>) -> Option<usize> {
     let matches = |when: &Map<String, Value>| {
         when.iter().all(|(key, wanted)| {
             let Some(actual) = attributes.get(key) else {
@@ -308,15 +349,21 @@ pub(crate) fn selected_profile(config: &Value, attributes: &Map<String, Value>) 
             }
         })
     };
-    select["rules"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|rule| rule["when"].as_object().is_some_and(matches))
-        .map(|rule| &rule["profile"])
-        .or(Some(&select["default"]))
-        .and_then(Value::as_str)
-        .map(str::to_owned)
+    config["select"]["rules"]
+        .as_array()?
+        .iter()
+        .position(|rule| rule["when"].as_object().is_some_and(matches))
+}
+
+/// The profile `select` of `config` gives for `attributes`: the profile of the first matching
+/// rule, otherwise `default`.
+pub(crate) fn selected_profile(config: &Value, attributes: &Map<String, Value>) -> Option<String> {
+    let select = &config["select"];
+    match matching_rule(config, attributes) {
+        Some(index) => select["rules"][index]["profile"].as_str(),
+        None => select["default"].as_str(),
+    }
+    .map(str::to_owned)
 }
 
 fn check_attributes(attributes: &Map<String, Value>) -> Result<(), ProcessError> {
