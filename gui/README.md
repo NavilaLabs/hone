@@ -15,18 +15,19 @@ cd gui && HONE_BIN=../target/debug/hone cargo run -- <project root>
 
 ## Screens
 
-| Screen     | Command line                                                                                                                            |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Tickets    | `hone artifacts`, `hone log`, `hone ticket show`, `hone events`, `hone check --class pure`, `hone step set`                             |
-| Artifacts  | `hone artifacts`; one artifact: `hone review show`, `hone approve [--changes-requested]`, `hone review condense`, `hone review confirm` |
-| Link graph | `hone artifacts`                                                                                                                        |
-| Threads    | `hone events --ticket`, `hone artifacts`, `hone thread open/reply/resolve/reopen`                                                       |
-| Checks     | `hone check [--ticket]`                                                                                                                 |
-| Event log  | `hone log`                                                                                                                              |
-| Tracker    | none: GitHub or Jira over HTTPS, the setting in `gui.json`                                                                              |
-| Sync       | `hone sync --folder` or `--server`, `hone log`                                                                                          |
-| Server     | `hone serve --config`                                                                                                                   |
-| Top bar    | `hone artifacts` (project ID), `hone context show` and `hone log` (authors), `hone ticket show` (roles), the search                     |
+| Screen                  | Command line                                                                                                                            |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Tickets (start, change) | `hone ticket start`, `hone ticket select`, `hone ticket set-attributes`, `hone ticket switch-config`, `hone resolve`                    |
+| Tickets                 | `hone artifacts`, `hone log`, `hone ticket show`, `hone events`, `hone check --class pure`, `hone step set`                             |
+| Artifacts               | `hone artifacts`; one artifact: `hone review show`, `hone approve [--changes-requested]`, `hone review condense`, `hone review confirm` |
+| Link graph              | `hone artifacts`                                                                                                                        |
+| Threads                 | `hone events --ticket`, `hone artifacts`, `hone thread open/reply/resolve/reopen`                                                       |
+| Checks                  | `hone check [--ticket]`                                                                                                                 |
+| Event log               | `hone log`                                                                                                                              |
+| Tracker                 | none: GitHub or Jira over HTTPS, the setting in `gui.json`                                                                              |
+| Sync                    | `hone sync --folder` or `--server`, `hone log`                                                                                          |
+| Server                  | `hone serve --config`                                                                                                                   |
+| Top bar                 | `hone artifacts` (project ID), `hone context show` and `hone log` (authors), `hone ticket show` (roles), the search                     |
 
 A ticket shows the steps of its profile in the order of `hone ticket show`: done, skipped with its reason, open, or waiting for an earlier step that is still open, the current step (the first open step that waits for nothing), and per step the pure gates of the last check. The GUI runs `hone check --ticket <tk> --class pure` when a ticket opens and after every write, so no `exec` gate runs a command behind the user's back; the full check stays on the Checks screen. A gate whose only error is `changed-paths-missing` is shown as needing changed paths, not as failed, because the GUI knows no change.
 
@@ -35,6 +36,8 @@ The link graph places artifacts in one column per kind, ordered so that the kind
 An artifact shows its stored links and the links other artifacts store towards it (marked computed), the threads anchored to it, and its review in its ticket: every person's last decision, whether it is for the current content, the condensed `review` block, and the actions Approve, Request changes (with an optional proof), Condense into the file, and Confirm the review block. They write as the chosen author, and the artifact's ticket becomes the open ticket, so the role list is that ticket's.
 
 The search (Ctrl+K or Cmd+K, or the field in the top bar) finds tickets by ID and external key, artifacts by ID, kind, and title, threads by their first line, and, with a tracker, the tracker's tickets (after a pause in typing). Every word must match. A tracker ticket that a ticket record names opens the hone ticket; any other one opens the Tracker screen on it.
+
+**New ticket** (Tickets screen, or Start ticket on an unlinked tracker ticket in the Tracker screen or the search) runs `hone ticket start`. Attributes are rows of name, type (text, number, yes/no), and value; a text is passed double-quoted, so `3` typed as text stays text. Names that the selection rules test are offered with their values. While typing, `hone ticket select` shows the profile and the rule that matched; another profile can be chosen, with a warning that `steps-complete` will report `profile-not-selected`. On success the new ticket opens. On the ticket page, **Edit attributes** runs `hone ticket set-attributes` with only what changed and the names removed, and **Switch to current rules** runs `hone ticket switch-config`; both say whether `select` still gives the ticket's profile. The head shows `profile-not-selected` while `selected` of `hone ticket show` differs from the profile. A refusal for a stale `.hone/resolved.json` offers **Run hone resolve**.
 
 Errors, failed gates, refused writes, and invalid fields use `bad`, never the accent; an invalid field keeps a `bad` border and focus ring.
 
