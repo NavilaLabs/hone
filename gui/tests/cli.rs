@@ -529,3 +529,106 @@ async fn a_server_that_cannot_start_reports_and_ends() {
     assert!(!lines.is_empty(), "the server says why it did not start");
     assert!(lines.join("\n").contains("server.yaml"), "{lines:?}");
 }
+
+#[tokio::test]
+async fn an_artifact_is_shown_saved_checked_and_created_through_the_command_line() {
+    let scratch = Scratch::new("editing");
+    let hone = scratch.hone();
+    let decision = "design/decisions/dec-7k3m2q8p-payment-async.md";
+    let file = scratch.root.join("project").join(decision);
+    let original = std::fs::read_to_string(&file).expect("readable");
+
+    let kinds = hone.kinds().await.expect("kinds");
+    let names: Vec<(&str, &str)> = kinds
+        .iter()
+        .map(|kind| (kind.kind.as_str(), kind.lifecycle.as_str()))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            ("decision", "decided"),
+            ("module", "living"),
+            ("spec", "decided")
+        ]
+    );
+
+    let source = hone.artifact("dec-7k3m2q8p").await.expect("shown");
+    assert_eq!(source.text, original);
+    assert_eq!(source.path, decision);
+    assert_eq!(source.data["status"], "accepted");
+    assert!(source.body.is_some());
+    let statuses: Vec<&str> = source
+        .statuses
+        .iter()
+        .map(|status| status.name.as_str())
+        .collect();
+    assert_eq!(statuses, ["accepted", "proposed", "rejected"]);
+
+    let refused = original.replace("status: \"accepted\"", "status: \"bogus\"");
+    let written = hone.save_artifact(decision, &refused).await.expect("ran");
+    assert!(!written.saved);
+    let codes: Vec<(&str, Option<&str>)> = written
+        .findings
+        .iter()
+        .map(|finding| (finding.code.as_str(), finding.pointer.as_deref()))
+        .collect();
+    assert_eq!(codes, [("status", Some("/status"))]);
+    assert_eq!(std::fs::read_to_string(&file).expect("readable"), original);
+
+    let changed = original.replace("status: \"accepted\"", "status: \"proposed\"");
+    let written = hone.save_artifact(decision, &changed).await.expect("ran");
+    assert!(written.saved, "{:?}", written.findings);
+    assert_eq!(std::fs::read_to_string(&file).expect("readable"), changed);
+
+    let outside = hone.save_artifact("../escape.md", &changed).await;
+    assert_eq!(
+        outside.map_err(|failure| failure.status),
+        Err("error".to_owned())
+    );
+
+    let new = hone_gui::hone::ArtifactNew {
+        kind: "module".into(),
+        title: "Fee rules".into(),
+        anchors: vec!["path:src/payments".into()],
+        ..Default::default()
+    };
+    let created = hone.new_artifact(&new).await.expect("ran");
+    assert!(created.saved, "{:?}", created.findings);
+    let id = created.id.expect("an ID");
+    assert_eq!(created.path, format!("design/modules/{id}-fee-rules.yaml"));
+    let shown = hone.artifact(&id).await.expect("shown");
+    assert_eq!(
+        shown.data["anchors"],
+        serde_json::json!([{ "kind": "path", "ref": "src/payments" }])
+    );
+}
+
+#[tokio::test]
+async fn a_file_is_shown_at_the_line_of_a_symbol() {
+    let root = repository().join("schemas/tests/check/module-anchors-resolve-resolved/project");
+    let hone = Hone::with_binary(binary(), root);
+    let found = hone
+        .file("src/payments/fee.rs", Some("Fee::total"))
+        .await
+        .expect("shown");
+    assert_eq!(
+        (found.resolved.as_deref(), found.line),
+        (Some("found"), Some(7))
+    );
+    assert!(found.text.starts_with("pub struct Fee {\n"));
+    let missing = hone
+        .file("src/payments/fee.rs", Some("Nope"))
+        .await
+        .expect("shown");
+    assert_eq!(
+        (missing.resolved.as_deref(), missing.line),
+        (Some("missing"), None)
+    );
+    let plain = hone.file("src/payments/fee.rs", None).await.expect("shown");
+    assert_eq!((plain.resolved, plain.line), (None, None));
+    let outside = hone.file("../../escape.rs", None).await;
+    assert_eq!(
+        outside.map_err(|failure| failure.status),
+        Err("error".to_owned())
+    );
+}
