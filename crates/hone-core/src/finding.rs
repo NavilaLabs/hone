@@ -71,6 +71,22 @@ pub enum Code {
     StepIncomplete,
     /// The ticket's profile is not the result of `select` for its attributes.
     ProfileNotSelected,
+    /// The anchor names another repository, which the checked state cannot see.
+    OtherRepository,
+    /// No file, directory, or match for an anchor.
+    AnchorMissing,
+    /// The file exists, the language plugin does not find the symbol.
+    SymbolMissing,
+    /// No language plugin handles the file of a symbol anchor.
+    SymbolUnchecked,
+    /// The language plugin cannot parse a file of the checked state.
+    Unparsable,
+    /// The public API of a hit file changed and no binding artifact names the anchored one.
+    PublicApiUnbound,
+    /// No language plugin handles a hit file.
+    ApiUnchecked,
+    /// The caller supplied no base state.
+    BaseMissing,
     /// The gate needs the process store, which the call does not have.
     ProcessStoreUnavailable,
     /// An event of the ticket, or one whose ticket cannot be read, is invalid.
@@ -115,6 +131,14 @@ impl Code {
             Code::ThreadUnanswered => "thread-unanswered",
             Code::StepIncomplete => "step-incomplete",
             Code::ProfileNotSelected => "profile-not-selected",
+            Code::OtherRepository => "other-repository",
+            Code::AnchorMissing => "anchor-missing",
+            Code::SymbolMissing => "symbol-missing",
+            Code::SymbolUnchecked => "symbol-unchecked",
+            Code::Unparsable => "unparsable",
+            Code::PublicApiUnbound => "public-api-unbound",
+            Code::ApiUnchecked => "api-unchecked",
+            Code::BaseMissing => "base-missing",
             Code::ProcessStoreUnavailable => "process-store-unavailable",
             Code::EventInvalid => "event-invalid",
             Code::PluginHash => "plugin-hash",

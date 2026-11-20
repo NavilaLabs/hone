@@ -182,7 +182,8 @@
           }
         },
         "public-api": {
-          "gate": "public-api-has-decision"
+          "gate": "public-api-has-decision",
+          "params": { "anchored": "module", "binding": "decision" }
         }
       }
     },
@@ -279,15 +280,16 @@
     "default": "standard"
   },
   "plugins": {
-    "public-api-has-decision": {
-      "wasm": ".hone/plugins/public-api-has-decision.wasm",
+    "lang-rust": {
+      "wasm": ".hone/plugins/lang-rust.wasm",
       "hash": "sha256:d83e964ad830a888709a27907868418c04d8847563a35859e04a1681db24b733",
       "capabilities": {
         "read": ["project"],
         "net": [],
         "timeout_ms": 5000,
         "memory_pages": 256
-      }
+      },
+      "language": { "extensions": ["rs"] }
     }
   }
 }

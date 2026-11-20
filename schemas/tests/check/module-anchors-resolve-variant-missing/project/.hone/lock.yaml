@@ -1,4 +1,4 @@
 plugins:
-  module-anchors-resolve:
-    hash: "sha256:a9fddbd9a9430190da5a4f513194b5603160888a69b6e6a0089a9a11681cea4c"
+  lang-rust:
+    hash: "sha256:0ede8a8ac323d42ede1905abdb5b74bc907ed797dfb2be6e68856379f98b1fbf"
     capabilities: { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }

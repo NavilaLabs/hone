@@ -16,7 +16,7 @@ use crate::manifest::{Lock, read_lock_file};
 use crate::process::{ProcessError, ProcessStore};
 use crate::resolved_file::read_resolved;
 use crate::schema_valid::ContentRules;
-use crate::validate::STANDARD_GATES;
+use crate::validate::{LANGUAGE_GATES, STANDARD_GATES};
 
 static TICKET_ID: LazyLock<Regex> =
     LazyLock::new(|| Regex::new("^tk-[0-9a-hjkmnp-tv-z]{8}$").expect("valid regex"));
@@ -283,7 +283,7 @@ impl TicketRun<'_> {
         let needs_lock = steps.iter().any(|step| {
             selected(step)
                 .iter()
-                .any(|(_, _, gate)| !STANDARD_GATES.contains(gate))
+                .any(|(_, _, gate)| !STANDARD_GATES.contains(gate) || LANGUAGE_GATES.contains(gate))
         });
         let lock = if needs_lock {
             self.read_lock()?

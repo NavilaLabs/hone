@@ -481,7 +481,10 @@ steps: # Section 7
     gates:
       compiles:
         { gate: exec, params: { command: ["cargo", "check", "--workspace"] } }
-      public-api: { gate: public-api-has-decision } # plugin gate
+      public-api: {
+          gate: public-api-has-decision,
+          params: { anchored: module, binding: decision },
+        } # calls the language plugin of each changed file
   implementation:
     title: Implementation
     acts: [human]
@@ -542,11 +545,12 @@ select: # profile selection, the first matching rule wins, otherwise default
   default: standard
 
 plugins: # Section 9
-  public-api-has-decision:
-    wasm: .hone/plugins/public-api-has-decision.wasm # relative to the project root
+  lang-rust:
+    wasm: .hone/plugins/lang-rust.wasm # relative to the project root
     hash: sha256:d83e964ad830a888709a27907868418c04d8847563a35859e04a1681db24b733
     capabilities:
       { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }
+    language: { extensions: [rs] }
 ```
 
 **Roles and actors are separate.** Steps and gates name only roles. Actors are mappings, and where they come from is replaceable (file, generator from CODEOWNERS or an identity provider, tool adapter). Splitting people up means adding or removing entries. The fallback `"*"` makes sure unknown people break nothing. Actors are **handles** (the same as in version control), not real names. Whoever wants more distance generates them from an external source (Question 10).
@@ -614,7 +618,7 @@ extends: [hone/standard@1]
 packages:
   hone/standard: { version: "1.4.2", hash: "sha256:…" } # exact semver version
 plugins:
-  public-api-has-decision:
+  lang-rust:
     hash: "sha256:d83e…" # SHA-256 of the .wasm file
     capabilities: # the approved capabilities
       { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }
@@ -689,7 +693,7 @@ language: { extensions: [ts, tsx, js, jsx, mjs, cjs] }
 { "results": [{ "status": "found", "line": 12 }] }
 ```
 
-One call per plugin carries every symbol of a gate run, because each call starts a fresh instance that parses its files again. `public_api` returns strings that the host compares only as sets, so each language decides what counts as a change (hone's Rust plugin uses signatures). The package `hone/standard` ships `lang-rust`, `lang-typescript`, `lang-python`, `lang-php`, and `lang-dart`; a team approves each in `lock.yaml` like any plugin.
+One call per plugin carries every symbol of a gate run, because each call starts a fresh instance that parses its files again. `public_api` returns strings that the host compares only as sets, so each language decides what counts as a change (hone's Rust plugin uses signatures). Each language plugin is a package of its own (`hone/lang-rust`, `hone/lang-typescript`, `hone/lang-python`, `hone/lang-php`, `hone/lang-dart`), because a plugin in a layer must be approved before the configuration resolves: a team extends only the languages it has and approves only those in `lock.yaml`. `hone/standard` holds no plugin.
 
 ```json
 // check: input (shortened)
@@ -716,8 +720,8 @@ One call per plugin carries every symbol of a gate run, because each call starts
 Capabilities are part of the configuration next to the plugin and are granted by the tool. A plugin cannot grant itself any.
 
 ```yaml
-# plugins.public-api-has-decision in the resolved configuration
-wasm: .hone/plugins/public-api-has-decision.wasm # relative to the project root
+# plugins.lang-rust in the resolved configuration
+wasm: .hone/plugins/lang-rust.wasm # relative to the project root
 hash: sha256:9a1f... # SHA-256 of the module, same format as every other hash
 capabilities: # all four are required
   read: [project] # `project` (the checked directory) or paths relative to the project root, read-only
@@ -1147,7 +1151,7 @@ All questions of this draft are decided. The numbers stay stable because the tex
 
 45. **The commands of a ticket:** Decided with the maintainer. `hone ticket start` writes the record, the snapshot, and `ticket.started` with an author; the profile follows `select`, `--profile` overrides it visibly (`profile-not-selected`); attribute values read like YAML scalars; external tickets as `--external <system>:<key>[=<url>]`; a stale `resolved.json` is refused. `set-attributes` writes the record and `ticket.attributes_changed` and keeps the profile; `switch-config` writes a new snapshot, the record's `config`, and `ticket.config_changed`. The MCP server offers only `ticket_start` (Section 12, "Process commands").
 
-46. **Language plugins:** Decided with the maintainer. `module-anchors-resolve` and `public-api-has-decision` become standard gates that call language plugins; a plugin names its extensions in its plugin file (`language: { extensions }`), and two plugins for one extension are a resolution error. `resolve` and `public_api` take every symbol or file of a gate in one call and return one result per entry; public APIs are strings compared as sets. A file without a plugin is a warning (`symbol-unchecked`, `api-unchecked`); a failing plugin is `plugin-failed` while the results of the others stay. `hone/standard` ships plugins for Rust, TypeScript and JavaScript, Python, PHP, and Dart (Section 9, "Language plugins").
+46. **Language plugins:** Decided with the maintainer. `module-anchors-resolve` and `public-api-has-decision` become standard gates that call language plugins; a plugin names its extensions in its plugin file (`language: { extensions }`), and two plugins for one extension are a resolution error. `resolve` and `public_api` take every symbol or file of a gate in one call and return one result per entry; public APIs are strings compared as sets. A file without a plugin is a warning (`symbol-unchecked`, `api-unchecked`); a failing plugin is `plugin-failed` while the results of the others stay. One package per language (`hone/lang-rust` and so on) ships the plugins for Rust, TypeScript and JavaScript, Python, PHP, and Dart, so a team approves only the languages it has (Section 9, "Language plugins").
 
 ## 16. Next steps
 

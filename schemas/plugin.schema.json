@@ -190,6 +190,122 @@
         }
       },
       "additionalProperties": false
+    },
+    "ResolveInput": {
+      "description": "The input of `resolve` of a language plugin: every symbol of one gate run for this plugin.",
+      "type": "object",
+      "required": ["protocol", "state", "symbols"],
+      "properties": {
+        "protocol": { "const": 1 },
+        "state": {
+          "description": "The state the plugin reads: `project` under `/project`, `base` under `/base`.",
+          "enum": ["project", "base"]
+        },
+        "symbols": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["path", "symbol"],
+            "properties": {
+              "path": { "$ref": "config.schema.json#/$defs/RelativePath" },
+              "symbol": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ResolveOutput": {
+      "description": "The output of `resolve`: one result per symbol, in the order of the input.",
+      "type": "object",
+      "required": ["results"],
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["status"],
+                "properties": {
+                  "status": { "const": "found" },
+                  "line": { "type": "integer", "minimum": 1 }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["status"],
+                "properties": { "status": { "const": "missing" } },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["status", "message"],
+                "properties": {
+                  "status": { "const": "unparsable" },
+                  "message": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "PublicApiInput": {
+      "description": "The input of `public_api` of a language plugin: every file of one gate run and state for this plugin.",
+      "type": "object",
+      "required": ["protocol", "state", "paths"],
+      "properties": {
+        "protocol": { "const": 1 },
+        "state": {
+          "description": "The state the plugin reads: `project` under `/project`, `base` under `/base`.",
+          "enum": ["project", "base"]
+        },
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "config.schema.json#/$defs/RelativePath" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "PublicApiOutput": {
+      "description": "The output of `public_api`: one result per path, in the order of the input. The host compares `symbols` only as sets of strings.",
+      "type": "object",
+      "required": ["results"],
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["status", "symbols"],
+                "properties": {
+                  "status": { "const": "ok" },
+                  "symbols": { "type": "array", "items": { "type": "string" } }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["status", "message"],
+                "properties": {
+                  "status": { "const": "unparsable" },
+                  "message": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

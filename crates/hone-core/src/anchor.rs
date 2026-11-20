@@ -25,6 +25,13 @@ pub(crate) fn hits(anchor: &Value, changed: &str) -> bool {
     }
 }
 
+// Whether the file `path` matches the glob `pattern`, as a `glob` anchor does.
+pub(crate) fn glob_matches(pattern: &str, path: &str) -> bool {
+    let pattern: Vec<&str> = pattern.split('/').collect();
+    let segments: Vec<&str> = path.split('/').collect();
+    glob_segments(&pattern, &segments)
+}
+
 fn split_repository(reference: &str) -> (Option<&str>, &str) {
     match reference.split_once(':') {
         Some((repository, path)) => (Some(repository), path),

@@ -1,1 +1,1 @@
-error interfaces/public-api plugin-hash .hone/plugins/public-api-has-decision.wasm -
+error interfaces/public-api plugin-hash .hone/plugins/lang-rust.wasm -

@@ -58,7 +58,7 @@
           }
         },
         "extra": {
-          "gate": "public-api-has-decision"
+          "gate": "no-such-gate"
         }
       }
     },
@@ -76,7 +76,7 @@
           }
         },
         "api": {
-          "gate": "api-check"
+          "gate": "no-such-gate"
         }
       }
     }

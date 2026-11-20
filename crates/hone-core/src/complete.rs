@@ -36,11 +36,11 @@ pub(crate) fn complete_plugins(
         };
         let at = Pointer::from_segments(["plugins", name]);
         for key in plugin.keys() {
-            if key != "capabilities" && !key.starts_with("x-") {
+            if key != "capabilities" && key != "language" && !key.starts_with("x-") {
                 problems.push(pointer_problem(
                     Category::Shape,
                     &at.child(key),
-                    "a plugin definition holds only `capabilities`, `resolve` writes the rest",
+                    "a plugin definition holds only `capabilities` and `language`, `resolve` writes the rest",
                 ));
             }
         }
@@ -89,7 +89,33 @@ pub(crate) fn complete_plugins(
         plugin.insert("wasm".into(), Value::String(format!(".hone/{wasm}")));
         plugin.insert("hash".into(), Value::String(hash));
     }
+    language_conflicts(plugins, &mut problems);
     problems
+}
+
+// A file belongs to exactly one language plugin, so two plugins must not claim one extension.
+fn language_conflicts(plugins: &Map<String, Value>, problems: &mut Vec<Problem>) {
+    let mut claimed: std::collections::BTreeMap<&str, &str> = std::collections::BTreeMap::new();
+    for (name, plugin) in plugins {
+        let extensions = plugin["language"]["extensions"]
+            .as_array()
+            .into_iter()
+            .flatten();
+        for (index, extension) in extensions.enumerate() {
+            let Some(extension) = extension.as_str() else {
+                continue;
+            };
+            if let Some(first) = claimed.insert(extension, name) {
+                let at = Pointer::from_segments(["plugins", name, "language", "extensions"])
+                    .child(index.to_string());
+                problems.push(pointer_problem(
+                    Category::LanguageConflict,
+                    &at,
+                    format!("the extension `{extension}` is claimed by `{first}` and `{name}`"),
+                ));
+            }
+        }
+    }
 }
 
 fn check_capabilities(

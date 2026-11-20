@@ -1,0 +1,17 @@
+[package]
+name = "lang-rust"
+description = "hone language plugin for Rust: resolves symbols and computes the public API of `.rs` files."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+extism-pdk.workspace = true
+serde_json.workspace = true
+quote.workspace = true
+syn.workspace = true

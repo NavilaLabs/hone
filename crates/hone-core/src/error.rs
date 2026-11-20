@@ -26,6 +26,8 @@ pub enum Category {
     PluginHash,
     /// Capabilities beyond the approved ones, or `net` not empty.
     PluginCapabilities,
+    /// Two language plugins claim the same file extension.
+    LanguageConflict,
     /// A ticket override touches `protocol`, `ticket`, `plugins`, or a kind schema.
     OverrideForbidden,
     /// The result does not match the schema of the resolved configuration.
@@ -49,6 +51,7 @@ impl Category {
             Category::SchemaPath => "schema-path",
             Category::PluginHash => "plugin-hash",
             Category::PluginCapabilities => "plugin-capabilities",
+            Category::LanguageConflict => "language-conflict",
             Category::OverrideForbidden => "override-forbidden",
             Category::Shape => "shape",
             Category::Reference => "reference",

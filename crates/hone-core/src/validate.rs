@@ -11,7 +11,7 @@ use crate::pointer::Pointer;
 const COMMON_SCHEMA: &str = include_str!("../../../schemas/common.schema.json");
 const CONFIG_SCHEMA: &str = include_str!("../../../schemas/config.schema.json");
 
-pub(crate) const STANDARD_GATES: [&str; 10] = [
+pub(crate) const STANDARD_GATES: [&str; 12] = [
     "artifact-exists",
     "status-is",
     "schema-valid",
@@ -22,7 +22,12 @@ pub(crate) const STANDARD_GATES: [&str; 10] = [
     "approvals-valid",
     "steps-complete",
     "change-needs-binding",
+    "module-anchors-resolve",
+    "public-api-has-decision",
 ];
+
+/// The standard gates that call language plugins.
+pub(crate) const LANGUAGE_GATES: [&str; 2] = ["module-anchors-resolve", "public-api-has-decision"];
 
 static CONFIG_VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
     let common: Value = serde_json::from_str(COMMON_SCHEMA).expect("common.schema.json is JSON");
@@ -257,14 +262,29 @@ impl<'a> References<'a> {
                     self.need_kind(&param("type"), kind, true);
                 }
             }
-            "change-needs-binding" => {
+            "change-needs-binding" | "public-api-has-decision" => {
                 self.need_kind(&param("anchored"), &params["anchored"], false);
                 self.need_kind(&param("binding"), &params["binding"], true);
             }
+            "module-anchors-resolve" => {
+                if let Some(kind) = params.get("kind") {
+                    self.need_kind(&param("kind"), kind, false);
+                }
+            }
             standard if STANDARD_GATES.contains(&standard) => {}
+            plugin if self.is_language_plugin(plugin) => self.fail(
+                &at.child("gate"),
+                format!("`{plugin}` is a language plugin, not a gate"),
+            ),
             plugin if self.has_plugin(plugin) => {}
             unknown => self.fail(&at.child("gate"), format!("unknown gate `{unknown}`")),
         }
+    }
+
+    fn is_language_plugin(&self, name: &str) -> bool {
+        self.plugins
+            .and_then(|plugins| plugins.get(name))
+            .is_some_and(|plugin| plugin.get("language").is_some())
     }
 
     fn has_plugin(&self, name: &str) -> bool {

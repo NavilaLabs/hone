@@ -17,10 +17,19 @@ use crate::manifest::Lock;
 const COMMON_SCHEMA: &str = include_str!("../../../schemas/common.schema.json");
 const CONFIG_SCHEMA: &str = include_str!("../../../schemas/config.schema.json");
 const PLUGIN_SCHEMA: &str = include_str!("../../../schemas/plugin.schema.json");
-const ENTRY_POINT: &str = "check";
-
 static OUTPUT_VALIDATOR: LazyLock<Validator> =
     LazyLock::new(|| plugin_validator("#/$defs/CheckOutput"));
+static RESOLVE_VALIDATOR: LazyLock<Validator> =
+    LazyLock::new(|| plugin_validator("#/$defs/ResolveOutput"));
+static PUBLIC_API_VALIDATOR: LazyLock<Validator> =
+    LazyLock::new(|| plugin_validator("#/$defs/PublicApiOutput"));
+
+/// An entry point of a language plugin.
+#[derive(Clone, Copy)]
+pub(crate) enum LanguageCall {
+    Resolve,
+    PublicApi,
+}
 
 // Runs the gates that are not standard gates (concept Section 9): plugin gates in the sandbox and
 // `exec` gates on the host, both only when the lockfile approves them.
@@ -40,6 +49,14 @@ impl<'a> Host<'a> {
             lock,
             compiled: RefCell::default(),
         }
+    }
+
+    pub(crate) fn project_root(&self) -> &Path {
+        self.project_root
+    }
+
+    pub(crate) fn base(&self) -> Option<&Path> {
+        self.base
     }
 
     // `input` is the input of `check` without `tool_output`.
@@ -62,12 +79,69 @@ impl<'a> Host<'a> {
         self.plugin_gate(config, evaluate, &input)
     }
 
+    // Calls `resolve` or `public_api` of the language plugin `name` with `input`, whose list
+    // (`symbols` or `paths`) has `expected` entries, and returns the `results`, one per entry.
+    pub(crate) fn language(
+        &self,
+        config: &Value,
+        name: &str,
+        call: LanguageCall,
+        input: &Value,
+        expected: usize,
+    ) -> Result<Vec<Value>, Finding> {
+        let (entry, validator) = match call {
+            LanguageCall::Resolve => ("resolve", &*RESOLVE_VALIDATOR),
+            LanguageCall::PublicApi => ("public_api", &*PUBLIC_API_VALIDATOR),
+        };
+        let output = self.invoke(config, name, entry, input)?;
+        let failed = |message: String| Finding::error(Code::PluginFailed, message);
+        if let Some(violation) = validator.iter_errors(&output).next() {
+            return Err(failed(format!(
+                "`{name}` returned an invalid output at `{}`: {violation}",
+                violation.instance_path()
+            )));
+        }
+        let results = output["results"].as_array().cloned().unwrap_or_default();
+        if results.len() != expected {
+            return Err(failed(format!(
+                "`{name}` returned {} results for {expected} entries",
+                results.len()
+            )));
+        }
+        Ok(results)
+    }
+
     fn run_plugin(
         &self,
         config: &Value,
         name: &str,
         input: &Value,
     ) -> Result<Vec<Finding>, Finding> {
+        let output = self.invoke(config, name, "check", input)?;
+        if let Some(violation) = OUTPUT_VALIDATOR.iter_errors(&output).next() {
+            return Err(Finding::error(
+                Code::PluginFailed,
+                format!(
+                    "`{name}` returned an invalid output at `{}`: {violation}",
+                    violation.instance_path()
+                ),
+            ));
+        }
+        Ok(output["findings"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(finding)
+            .collect())
+    }
+
+    fn invoke(
+        &self,
+        config: &Value,
+        name: &str,
+        entry: &str,
+        input: &Value,
+    ) -> Result<Value, Finding> {
         let definition = &config["plugins"][name];
         let hash = definition["hash"].as_str().unwrap_or_default();
         let capabilities = definition["capabilities"]
@@ -81,25 +155,13 @@ impl<'a> Host<'a> {
         // a caller inside a runtime, such as the MCP server. A thread of its own has none.
         let output = std::thread::scope(|scope| {
             scope
-                .spawn(|| call(&compiled, name, &input))
+                .spawn(|| call(&compiled, name, entry, &input))
                 .join()
                 .unwrap_or_else(|_| Err(format!("`{name}` made the host panic")))
         })
         .map_err(failed)?;
-        let output: Value = serde_json::from_slice(&output)
-            .map_err(|error| failed(format!("`{name}` returned no JSON: {error}")))?;
-        if let Some(violation) = OUTPUT_VALIDATOR.iter_errors(&output).next() {
-            return Err(failed(format!(
-                "`{name}` returned an invalid output at `{}`: {violation}",
-                violation.instance_path()
-            )));
-        }
-        Ok(output["findings"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(finding)
-            .collect())
+        serde_json::from_slice(&output)
+            .map_err(|error| failed(format!("`{name}` returned no JSON: {error}")))
     }
 
     fn compile(
@@ -214,15 +276,20 @@ impl<'a> Host<'a> {
     }
 }
 
-// Calls `check` on a fresh instance, so that no state passes from one gate to the next.
-fn call(compiled: &CompiledPlugin, name: &str, input: &[u8]) -> Result<Vec<u8>, String> {
+// Calls `entry` on a fresh instance, so that no state passes from one call to the next.
+fn call(
+    compiled: &CompiledPlugin,
+    name: &str,
+    entry: &str,
+    input: &[u8],
+) -> Result<Vec<u8>, String> {
     let mut plugin = Plugin::new_from_compiled(compiled)
         .map_err(|error| format!("`{name}` cannot be instantiated: {}", cause(&error)))?;
-    if !plugin.function_exists(ENTRY_POINT) {
-        return Err(format!("`{name}` does not export `{ENTRY_POINT}`"));
+    if !plugin.function_exists(entry) {
+        return Err(format!("`{name}` does not export `{entry}`"));
     }
     plugin
-        .call::<&[u8], &[u8]>(ENTRY_POINT, input)
+        .call::<&[u8], &[u8]>(entry, input)
         .map(<[u8]>::to_vec)
         .map_err(|error| format!("`{name}` failed: {}", cause(&error)))
 }

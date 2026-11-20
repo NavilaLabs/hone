@@ -10,6 +10,8 @@ use crate::pointer::Pointer;
 use crate::process::{StepStatus, ThreadStatus, TicketEvents};
 use crate::schema_valid;
 
+mod language;
+
 pub(crate) const DIRECTORY_GATES: [&str; 3] = ["schema-valid", "ids-unique", "links-resolve"];
 pub(crate) const PROCESS_GATES: [&str; 3] = [
     "no-open-blocking-threads",
@@ -68,6 +70,8 @@ impl<'a> Scope<'a> {
             "status-is" => self.status_is(params, call.ticket),
             "approvals-valid" => self.approvals_valid(params, call),
             "change-needs-binding" => self.change_needs_binding(params, call.changed_paths),
+            "module-anchors-resolve" => self.module_anchors_resolve(params, call),
+            "public-api-has-decision" => self.public_api_has_decision(params, call),
             gate @ ("no-open-blocking-threads" | "threads-answered" | "steps-complete") => {
                 let Some(process) = call.process else {
                     return vec![Finding::error(
