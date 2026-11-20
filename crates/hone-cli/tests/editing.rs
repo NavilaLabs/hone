@@ -478,6 +478,16 @@ fn file_show_asks_the_language_plugin_for_a_symbol() {
         (found["language"].as_str(), found["resolved"].as_str()),
         (Some("lang-rust"), Some("found"))
     );
+    // The lines of fee.rs, counted by hand: the line of the symbol's name, not of its item.
+    for (symbol, line) in [
+        ("Fee::amount", 2),
+        ("Fee::total", 7),
+        ("Tier::High", 14),
+        ("rounding::round", 18),
+        ("compute", 23),
+    ] {
+        assert_eq!(show(symbol)["line"], line, "{symbol}");
+    }
     let missing = show("Nope");
     assert_eq!(missing["resolved"], "missing");
     assert_eq!(
