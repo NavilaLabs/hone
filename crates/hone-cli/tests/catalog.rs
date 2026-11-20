@@ -140,3 +140,29 @@ fn ticket_show_of_a_malformed_id_fails_with_exit_code_1() {
         json!({ "status": "error", "message": "`PAY-123` is not a ticket ID" })
     );
 }
+
+#[test]
+fn ticket_select_reads_attributes_like_ticket_start() {
+    let (code, value) = hone(&[
+        "ticket",
+        "select",
+        "--attribute",
+        "risk=high",
+        "--attribute",
+        "size=3",
+    ]);
+    assert_eq!(code, Some(0));
+    assert_eq!(
+        value,
+        json!({ "selected": "standard", "rule": null, "rules": [], "default": "standard", "profiles": ["standard"] })
+    );
+    let (code, value) = hone(&["ticket", "select", "--attribute", "risk"]);
+    assert_eq!(code, Some(1));
+    assert_eq!(value["status"], "error");
+    assert!(
+        value["message"]
+            .as_str()
+            .is_some_and(|message| message.ends_with("`risk` is not `<key>=<value>`")),
+        "{value}"
+    );
+}

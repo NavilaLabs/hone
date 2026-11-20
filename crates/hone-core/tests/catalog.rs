@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use hone_core::{Resolved, catalog, ticket_overview};
+use hone_core::{Resolved, catalog, select_profile, ticket_overview};
 use serde_json::{Value, json};
 
 const TICKET: &str = "tk-9f2x4a8m";
@@ -238,4 +238,52 @@ fn an_unknown_ticket_names_the_missing_record() {
         "{}",
         error.message
     );
+}
+
+#[test]
+fn select_names_the_first_matching_rule_or_the_default() {
+    let project = Project::new("select");
+    let path = project.root.join(".hone/resolved.json");
+    let mut config: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("readable")).expect("JSON");
+    config["profiles"]["full"] = config["profiles"]["standard"].clone();
+    config["select"] = json!({
+        "rules": [
+            { "when": { "type": "feature", "risk": ["high", "critical"] }, "profile": "full" },
+            { "when": { "size": 3 }, "profile": "standard" }
+        ],
+        "default": "standard"
+    });
+    let resolved = Resolved::from_document(config).expect("a valid configuration");
+    std::fs::write(&path, resolved.file_contents()).expect("writable");
+    let attributes = |pairs: Value| pairs.as_object().cloned().expect("a map");
+
+    let high = select_profile(
+        &project.root,
+        &attributes(json!({ "type": "feature", "risk": "critical" })),
+    )
+    .expect("selected");
+    assert_eq!(
+        serde_json::to_value(&high).expect("serializable"),
+        json!({
+            "selected": "full",
+            "rule": 0,
+            "rules": [
+                { "when": { "type": "feature", "risk": ["high", "critical"] }, "profile": "full" },
+                { "when": { "size": 3 }, "profile": "standard" }
+            ],
+            "default": "standard",
+            "profiles": ["full", "standard"]
+        })
+    );
+    // The string "3" is not the integer 3: the second rule does not match, the default applies.
+    let text =
+        select_profile(&project.root, &attributes(json!({ "size": "3" }))).expect("selected");
+    assert_eq!(
+        (text.selected.as_deref(), text.rule),
+        (Some("standard"), None)
+    );
+    let number =
+        select_profile(&project.root, &attributes(json!({ "size": 3 }))).expect("selected");
+    assert_eq!(number.rule, Some(1));
 }
