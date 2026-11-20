@@ -466,15 +466,18 @@ fn render_record(
     text.into_bytes()
 }
 
-// Removes the top-level `key:` and the lines that continue it, and appends `key: value` at the
-// end, so every other byte of the record stays. `None` only removes the key.
+// Replaces the top-level `key:` and the lines that continue it with `key: value` at the same
+// place, or appends it at the end when the key is new, so every other byte of the record stays.
+// `None` only removes the key.
 fn replace_key(bytes: &[u8], key: &str, value: Option<&str>) -> Option<Vec<u8>> {
     let text = std::str::from_utf8(bytes).ok()?;
     if text.contains('\r') {
         return None;
     }
+    let replacement = value.map(|value| format!("{key}: {value}\n"));
     let mut kept = String::new();
     let mut inside = false;
+    let mut replaced = false;
     for line in text.split_inclusive('\n') {
         let bare = line.trim_end_matches('\n');
         let starts = bare
@@ -482,6 +485,10 @@ fn replace_key(bytes: &[u8], key: &str, value: Option<&str>) -> Option<Vec<u8>> 
             .is_some_and(|rest| rest.starts_with(':'));
         if starts {
             inside = true;
+            if let Some(replacement) = replacement.as_deref().filter(|_| !replaced) {
+                kept.push_str(replacement);
+            }
+            replaced = true;
             continue;
         }
         if inside && (bare.is_empty() || bare.starts_with([' ', '\t', '-'])) {
@@ -490,11 +497,11 @@ fn replace_key(bytes: &[u8], key: &str, value: Option<&str>) -> Option<Vec<u8>> 
         inside = false;
         kept.push_str(line);
     }
-    if !kept.is_empty() && !kept.ends_with('\n') {
-        kept.push('\n');
-    }
-    if let Some(value) = value {
-        kept.push_str(&format!("{key}: {value}\n"));
+    if let Some(replacement) = replacement.filter(|_| !replaced) {
+        if !kept.is_empty() && !kept.ends_with('\n') {
+            kept.push('\n');
+        }
+        kept.push_str(&replacement);
     }
     Some(kept.into_bytes())
 }
@@ -582,12 +589,19 @@ mod tests {
             replace_key(record, "attributes", Some("{ \"risk\": \"high\" }")).expect("text");
         assert_eq!(
             String::from_utf8(replaced).expect("text"),
-            "id: \"tk-1\"\n# a comment\nprofile: \"x\"\nattributes: { \"risk\": \"high\" }\n"
+            "id: \"tk-1\"\n# a comment\nattributes: { \"risk\": \"high\" }\nprofile: \"x\"\n",
+            "the value stays where the key was"
         );
         let removed = replace_key(record, "attributes", None).expect("text");
         assert_eq!(
             String::from_utf8(removed).expect("text"),
             "id: \"tk-1\"\n# a comment\nprofile: \"x\"\n"
+        );
+        let added = replace_key(b"id: \"tk-1\"", "attributes", Some("{ \"a\": 1 }")).expect("text");
+        assert_eq!(
+            String::from_utf8(added).expect("text"),
+            "id: \"tk-1\"\nattributes: { \"a\": 1 }\n",
+            "a new key goes to the end"
         );
         assert!(replace_key(b"a: 1\r\n", "a", None).is_none());
     }
