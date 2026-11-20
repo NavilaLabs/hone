@@ -693,7 +693,7 @@ language: { extensions: [ts, tsx, js, jsx, mjs, cjs] }
 { "results": [{ "status": "found", "line": 12 }] }
 ```
 
-One call per plugin carries every symbol of a gate run, because each call starts a fresh instance that parses its files again. `public_api` returns strings that the host compares only as sets, so each language decides what counts as a change (hone's Rust plugin uses signatures). Each language plugin is a package of its own (`hone/lang-rust`, `hone/lang-typescript`, `hone/lang-python`, `hone/lang-php`, `hone/lang-dart`), because a plugin in a layer must be approved before the configuration resolves: a team extends only the languages it has and approves only those in `lock.yaml`. `hone/standard` holds no plugin.
+One call per plugin carries every symbol of a gate run, because each call starts a fresh instance that parses its files again. `public_api` returns strings that the host compares only as sets, so each language decides what counts as a change (hone's Rust plugin uses signatures). Each language plugin is a package of its own (`hone/lang-rust`, `hone/lang-typescript`, `hone/lang-python`, `hone/lang-php`, `hone/lang-dart`), because a plugin in a layer must be approved before the configuration resolves: a team extends only the languages it has and approves only those in `lock.yaml`. `hone/standard` holds no plugin. A symbol is written as its language writes it (`Fee::add` in Rust and PHP, `Fee.add` in TypeScript, Python, and Dart). hone's plugins for TypeScript and JavaScript, Python, PHP, and Dart share one engine on tree-sitter grammars, so each language adds only its rules for what declares a name and what is public.
 
 ```json
 // check: input (shortened)
