@@ -4,8 +4,8 @@ use super::common::{Empty, FailureAlert, Loading, Mark, PageHeader, StatusMark};
 use super::{Project, Session};
 use crate::hone::CatalogEntry;
 use crate::ui::{
-    Card, CardContent, CardHeader, CardTitle, Choice, Combobox, Input, Table, TableBody, TableCell,
-    TableHead, TableHeader, TableRow, TableWrapper,
+    Button, Card, CardContent, CardHeader, CardTitle, Choice, Combobox, Input, Table, TableBody,
+    TableCell, TableHead, TableHeader, TableRow, TableWrapper,
 };
 
 /// The kinds among `artifacts` with their counts, in the order of their names, ticket records
@@ -59,6 +59,15 @@ pub(crate) fn Artifacts() -> Element {
         PageHeader {
             context: session.hone.read().root().display().to_string(),
             title: "Artifacts",
+            actions: rsx! {
+                Button {
+                    onclick: move |_| {
+                        let mut open = session.new_artifact;
+                        open.set(true);
+                    },
+                    "New artifact"
+                }
+            },
         }
         match &*project.catalog.read() {
             None => rsx! { Loading {} },

@@ -1,13 +1,17 @@
-//! One artifact: its facts, its links both ways, the threads on it, and its review.
+//! One artifact: its facts, its body, its anchors, its links both ways, the threads on it, and
+//! its review; and its Edit tab.
 
 use dioxus::prelude::*;
 
+use super::artifact_form::ArtifactEditor;
+use super::code::{CodePanel, CodeTarget, open_code};
 use super::common::{
     Empty, FailureAlert, Field, Loading, Mark, PageHeader, ProblemAlert, SectionLabel, StatusMark,
     Tag, open_file,
 };
 use super::{Project, Screen, Session};
-use crate::hone::{CatalogEntry, Event, Failure, ReviewState, Write};
+use crate::hone::{ArtifactSource, CatalogEntry, Event, Failure, ReviewState, Write};
+use crate::markdown::preview;
 use crate::ui::{Button, ButtonVariant, Card, CardContent, CardHeader, CardTitle, Input};
 
 /// A link between two artifacts, as the detail lists it.
@@ -117,7 +121,21 @@ pub(crate) fn ArtifactDetail(id: String) -> Element {
     };
     let root = session.hone.read().root().to_path_buf();
     let path = entry.path.clone();
+    let mut tab = use_signal(|| "overview");
+    let code = use_signal(|| None::<CodeTarget>);
+    let source_id = id.clone();
+    let source = use_resource(move || {
+        let id = source_id.clone();
+        async move {
+            let _ = (session.revision)();
+            (session.hone)().artifact(&id).await
+        }
+    });
+    let editor_id = id.clone();
     rsx! {
+        if let Some(target) = code() {
+            CodePanel { key: "{target.path}#{target.symbol:?}", target, panel: code }
+        }
         PageHeader {
             context: entry.path.clone(),
             title: entry.title.clone().unwrap_or_else(|| id.clone()),
@@ -150,8 +168,27 @@ pub(crate) fn ArtifactDetail(id: String) -> Element {
                 }
             }
         }
+        div { class: "flex gap-0 border-b border-line", role: "tablist",
+            for (value , label) in [("overview", "Overview"), ("edit", "Edit")] {
+                button {
+                    role: "tab",
+                    "aria-selected": if tab() == value { "true" } else { "false" },
+                    class: if tab() == value { "h-11 px-4 -mb-px border-b-[3px] border-signal font-semibold" } else { "h-11 px-4 -mb-px border-b-[3px] border-transparent text-ink-muted hover:text-ink" },
+                    onclick: move |_| tab.set(value),
+                    "{label}"
+                }
+            }
+        }
+        if tab() == "edit" {
+            ArtifactEditor { id: editor_id, code }
+        } else {
         div { class: "grid grid-cols-[repeat(auto-fit,minmax(340px,1fr))] gap-8 items-start",
             div { class: "flex flex-col gap-8 min-w-0",
+                match &*source.read() {
+                    Some(Ok(source)) => rsx! { SourcePanel { source: source.clone(), code } },
+                    Some(Err(failure)) => rsx! { FailureAlert { failure: failure.clone() } },
+                    None => rsx! { Loading {} },
+                }
                 if let Some(ticket) = entry.ticket.clone() {
                     ReviewPanel { key: "{ticket}-{entry.path}", ticket, artifact: entry.id.clone().unwrap_or_default() }
                 } else {
@@ -184,6 +221,77 @@ pub(crate) fn ArtifactDetail(id: String) -> Element {
                         }
                     }
                 }
+            }
+        }
+        }
+    }
+}
+
+/// The anchors (`kind`, `ref`) of an artifact's data, then its `links.code` and `interface.code`
+/// as `code`.
+fn references_of(data: &serde_json::Map<String, serde_json::Value>) -> Vec<(String, String)> {
+    let anchors = data
+        .get("anchors")
+        .and_then(|anchors| anchors.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|anchor| {
+            Some((
+                anchor["kind"].as_str()?.to_owned(),
+                anchor["ref"].as_str()?.to_owned(),
+            ))
+        });
+    // Indexing a `Map` panics on a missing key; indexing a `Value` gives `Null`.
+    let code = data
+        .get("links")
+        .and_then(|links| links["code"].as_array())
+        .into_iter()
+        .flatten()
+        .chain(data.get("interface").map(|interface| &interface["code"]))
+        .filter_map(|reference| reference.as_str())
+        .map(|reference| ("code".to_owned(), reference.to_owned()));
+    anchors.chain(code).collect()
+}
+
+/// The anchors and code references of an artifact, each opening its code, and its rendered
+/// body.
+#[component]
+fn SourcePanel(source: ArtifactSource, code: Signal<Option<CodeTarget>>) -> Element {
+    let session = use_context::<Session>();
+    let project = use_context::<Project>();
+    let references = references_of(&source.data);
+    rsx! {
+        section {
+            SectionLabel { label: "Anchors and code", aside: "click shows the code, Ctrl+click opens the IDE" }
+            if references.is_empty() {
+                Empty { text: "No anchors and no code references. Add them on the Edit tab." }
+            } else {
+                div { class: "border border-line",
+                    for (kind , reference) in references {
+                        div { class: "px-4 py-2 border-b border-line flex items-baseline gap-3",
+                            span { class: "font-mono text-[12.5px] text-ink-muted w-16 shrink-0", "{kind}" }
+                            match CodeTarget::of(&kind, &reference) {
+                                Some(target) => rsx! {
+                                    button {
+                                        class: "font-mono text-[13px] underline text-left break-all",
+                                        onclick: move |event| {
+                                            let modifiers = event.modifiers();
+                                            open_code(session, project, target.clone(), modifiers.ctrl() || modifiers.meta(), code);
+                                        },
+                                        "{reference}"
+                                    }
+                                },
+                                None => rsx! { span { class: "font-mono text-[13px] break-all", "{reference}" } },
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(body) = source.body.clone().filter(|body| !body.trim().is_empty()) {
+            section {
+                SectionLabel { label: "Body" }
+                div { class: "hone-prose border border-line p-5", dangerous_inner_html: preview(&body) }
             }
         }
     }
@@ -521,6 +629,27 @@ mod tests {
             kind: kind.into(),
             other: other.into(),
         }
+    }
+
+    #[test]
+    fn anchors_and_code_references_are_listed_with_or_without_links() {
+        let data = serde_json::json!({
+            "anchors": [{ "kind": "symbol", "ref": "src/fee.rs#Fee" }, { "kind": "path" }],
+            "interface": { "code": "src/fee.rs#Fee::total" }
+        });
+        let pair = |kind: &str, reference: &str| (kind.to_owned(), reference.to_owned());
+        assert_eq!(
+            references_of(data.as_object().expect("a map")),
+            [
+                pair("symbol", "src/fee.rs#Fee"),
+                pair("code", "src/fee.rs#Fee::total")
+            ]
+        );
+        let data = serde_json::json!({ "links": { "code": ["a.rs#b"] }, "interface": {} });
+        assert_eq!(
+            references_of(data.as_object().expect("a map")),
+            [pair("code", "a.rs#b")]
+        );
     }
 
     #[test]

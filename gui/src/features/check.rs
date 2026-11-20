@@ -151,7 +151,7 @@ fn RunResult(run: Run, duration: Option<std::time::Duration>) -> Element {
                             for finding in gate.findings.clone() {
                                 TableRow { class: "hover:bg-transparent",
                                     TableCell { colspan: 4, class: "pt-0",
-                                        div { class: if finding.level == "error" { "border border-bad p-4 flex flex-col gap-1" } else { "border border-line p-4 flex flex-col gap-1" },
+                                        div { class: if finding.level == "error" { "border border-bad p-4 flex flex-col gap-1" } else { "border border-warn p-4 flex flex-col gap-1" },
                                             span { class: "font-mono text-[13px]", "{finding.level} {finding.code}" }
                                             span { "{finding.message}" }
                                             if let Some(location) = finding.location.clone() {

@@ -532,6 +532,8 @@ mod tests {
             level: "error".into(),
             message: String::new(),
             location: None,
+            path: None,
+            pointer: None,
         };
         let mut binding = gate("implementation/binding", false);
         binding.findings = vec![finding("changed-paths-missing")];

@@ -132,7 +132,8 @@ pub(crate) fn NewTicketDialog(seed: Seed) -> Element {
         };
         busy.set(true);
         spawn(async move {
-            match (session.hone)()
+            match project
+                .resolving((session.hone)())
                 .start_ticket(&(session.writer)(), &start)
                 .await
             {
@@ -212,9 +213,10 @@ pub(crate) fn NewTicketDialog(seed: Seed) -> Element {
                         }
                     }
                     if let Some(chosen) = overridden {
-                        div { class: "border-2 border-signal px-4 py-3 text-[13px] flex flex-col gap-1", role: "status",
+                        div { class: "border-2 border-warn px-4 py-3 text-[13px] flex flex-col gap-1", role: "status",
                             span { class: "font-semibold",
-                                "⚠ The ticket will use {chosen}, not {selected.clone().unwrap_or_else(|| \"the selected profile\".to_owned())}."
+                                span { class: "text-warn", "aria-hidden": "true", "⚠ " }
+                                "The ticket will use {chosen}, not {selected.clone().unwrap_or_else(|| \"the selected profile\".to_owned())}."
                             }
                             span { class: "text-ink-muted", "steps-complete keeps this visible as the warning profile-not-selected, so the team sees that the rules were bypassed." }
                         }
@@ -240,6 +242,7 @@ pub(crate) fn NewTicketDialog(seed: Seed) -> Element {
 #[component]
 pub(crate) fn ResolveNow() -> Element {
     let session = use_context::<Session>();
+    let project = use_context::<Project>();
     let mut outcome = use_signal(|| None::<Result<String, Failure>>);
     let mut busy = use_signal(|| false);
     rsx! {
@@ -251,7 +254,7 @@ pub(crate) fn ResolveNow() -> Element {
                 onclick: move |_| {
                     busy.set(true);
                     spawn(async move {
-                        let result = (session.hone)().resolve().await;
+                        let result = project.resolving((session.hone)()).resolve().await;
                         if result.is_ok() {
                             session.changed();
                         }

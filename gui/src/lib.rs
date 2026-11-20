@@ -2,8 +2,12 @@
 //! the command line, in [`hone`].
 
 mod app;
+mod artifact_text;
 mod features;
 pub mod hone;
+mod ide;
+mod markdown;
+mod settings;
 mod tracker;
 mod ui;
 

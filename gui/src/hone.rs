@@ -10,7 +10,7 @@ use std::process::Stdio;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, BufReader, Lines};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, Command};
 
 /// The command line, bound to one project root.
@@ -19,6 +19,7 @@ pub struct Hone {
     binary: PathBuf,
     root: PathBuf,
     environment: Vec<(OsString, OsString)>,
+    packages: Option<PathBuf>,
 }
 
 /// Why a call of the command line gave no result.
@@ -203,6 +204,12 @@ pub struct Finding {
     pub message: String,
     #[serde(default)]
     pub location: Option<Value>,
+    /// The file of the finding, relative to the project root.
+    #[serde(default)]
+    pub path: Option<String>,
+    /// A JSON Pointer into the file's data model.
+    #[serde(default)]
+    pub pointer: Option<String>,
 }
 
 /// The result of `hone sync`.
@@ -448,6 +455,81 @@ pub struct ProfileSelection {
     pub profiles: Vec<String>,
 }
 
+/// A kind of the configuration, from `hone artifact kinds`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct KindInfo {
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// `decided` or `living`.
+    pub lifecycle: String,
+    pub id_prefix: String,
+    pub path: String,
+    pub first_status: Option<String>,
+    /// The fields the kind's schema requires.
+    pub required: Vec<String>,
+}
+
+/// A status of a kind.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct KindStatus {
+    pub name: String,
+    pub binding: bool,
+}
+
+/// The result of `hone artifact show`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ArtifactSource {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub path: String,
+    /// The file as it is.
+    pub text: String,
+    pub data: serde_json::Map<String, Value>,
+    /// The Markdown body, `None` for a YAML file.
+    pub body: Option<String>,
+    pub lifecycle: String,
+    pub statuses: Vec<KindStatus>,
+    /// The kind's additional schema.
+    pub schema: Option<Value>,
+    pub link_types: Vec<String>,
+}
+
+/// The result of `hone artifact save` and `hone artifact new`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ArtifactWritten {
+    pub id: Option<String>,
+    pub path: String,
+    /// Whether the file was written: only without an error finding.
+    pub saved: bool,
+    pub findings: Vec<Finding>,
+}
+
+/// What `hone artifact new` creates.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArtifactNew {
+    pub kind: String,
+    pub title: String,
+    pub ticket: Option<String>,
+    /// The handle for `authors`; empty for the context's author.
+    pub author: Option<String>,
+    /// Anchors as `<kind>:<ref>`.
+    pub anchors: Vec<String>,
+}
+
+/// The result of `hone file show`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SourceFile {
+    pub path: String,
+    pub text: String,
+    pub symbol: Option<String>,
+    pub language: Option<String>,
+    /// `found`, `missing`, `unparsable`, `unchecked`, or `failed`.
+    pub resolved: Option<String>,
+    pub line: Option<usize>,
+    pub message: Option<String>,
+}
+
 /// A running `hone serve`. Dropping it stops the server.
 #[derive(Debug)]
 pub struct ServerProcess {
@@ -470,6 +552,7 @@ impl Hone {
             binary: binary.into(),
             root: root.into(),
             environment: Vec::new(),
+            packages: None,
         }
     }
 
@@ -478,6 +561,14 @@ impl Hone {
     #[must_use]
     pub fn with_variable(mut self, name: impl Into<OsString>, value: impl Into<OsString>) -> Self {
         self.environment.push((name.into(), value.into()));
+        self
+    }
+
+    /// The same command line with `dir` passed as `--packages` to the commands that resolve
+    /// the configuration (`resolve`, `ticket start`, `ticket switch-config`).
+    #[must_use]
+    pub fn with_packages(mut self, dir: Option<PathBuf>) -> Self {
+        self.packages = dir;
         self
     }
 
@@ -667,6 +758,7 @@ impl Hone {
         if let Some(profile) = &start.profile {
             arguments.extend(["--profile".to_owned(), profile.clone()]);
         }
+        arguments.extend(self.packages_arguments());
         self.run_as(writer, arguments).await
     }
 
@@ -705,9 +797,10 @@ impl Hone {
         writer: &Writer,
         ticket: &str,
     ) -> Result<TicketWritten, Failure> {
-        let arguments = ["ticket", "switch-config", "--ticket", ticket]
+        let mut arguments = ["ticket", "switch-config", "--ticket", ticket]
             .map(str::to_owned)
             .to_vec();
+        arguments.extend(self.packages_arguments());
         self.run_as(writer, arguments).await
     }
 
@@ -738,11 +831,21 @@ impl Hone {
             problems: Option<Vec<Value>>,
             status: Option<String>,
         }
-        let output: Output = self.run(&["resolve"], &[0, 1]).await?;
+        let mut arguments = vec!["resolve".to_owned()];
+        arguments.extend(self.packages_arguments());
+        let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        let output: Output = self.run(&arguments, &[0, 1]).await?;
         match (output.hash, output.problems) {
             (Some(hash), _) => Ok(hash),
             (None, problems) => Err(Failure {
-                status: output.status.unwrap_or_else(|| "failed".into()),
+                // The category of the first problem, for example `package-missing`.
+                status: problems
+                    .as_ref()
+                    .and_then(|problems| problems.first())
+                    .and_then(|problem| problem["category"].as_str())
+                    .map(str::to_owned)
+                    .or(output.status)
+                    .unwrap_or_else(|| "failed".into()),
                 message: problems
                     .unwrap_or_default()
                     .iter()
@@ -755,6 +858,88 @@ impl Hone {
                     .join("; "),
             }),
         }
+    }
+
+    /// `hone artifact kinds`: the kinds of the configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`] `error` when the configuration cannot be read.
+    pub async fn kinds(&self) -> Result<Vec<KindInfo>, Failure> {
+        self.run(&["artifact", "kinds"], &[0]).await
+    }
+
+    /// `hone artifact show --id <id>`: an artifact file and what a form needs.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`] `error` for an unknown ID.
+    pub async fn artifact(&self, id: &str) -> Result<ArtifactSource, Failure> {
+        self.run(&["artifact", "show", "--id", id], &[0]).await
+    }
+
+    /// `hone artifact save --path <path>` with `text` on standard input. A refusal for an error
+    /// finding is a result with `saved: false`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`] `error` when the save could not run, for example for a path outside
+    /// the artifact patterns.
+    pub async fn save_artifact(&self, path: &str, text: &str) -> Result<ArtifactWritten, Failure> {
+        self.run_with_input(
+            &["artifact", "save", "--path", path],
+            &[0, 1],
+            text.as_bytes(),
+        )
+        .await
+    }
+
+    /// `hone artifact new` as `author`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`] `error` for example for a decided kind without a ticket.
+    pub async fn new_artifact(&self, new: &ArtifactNew) -> Result<ArtifactWritten, Failure> {
+        let mut arguments = vec![
+            "artifact".to_owned(),
+            "new".to_owned(),
+            "--kind".to_owned(),
+            new.kind.clone(),
+            "--title".to_owned(),
+            new.title.clone(),
+        ];
+        if let Some(ticket) = &new.ticket {
+            arguments.extend(["--ticket".to_owned(), ticket.clone()]);
+        }
+        if let Some(author) = new.author.as_ref().filter(|author| !author.is_empty()) {
+            arguments.extend(["--author".to_owned(), author.clone()]);
+        }
+        for anchor in &new.anchors {
+            arguments.extend(["--anchor".to_owned(), anchor.clone()]);
+        }
+        let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        self.run(&arguments, &[0, 1]).await
+    }
+
+    /// `hone file show --path <path> [--symbol <symbol>]`: a source file and the line of a
+    /// symbol.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`] `error` for a path that is no regular file below the root.
+    pub async fn file(&self, path: &str, symbol: Option<&str>) -> Result<SourceFile, Failure> {
+        let mut arguments = vec!["file", "show", "--path", path];
+        if let Some(symbol) = symbol.filter(|symbol| !symbol.is_empty()) {
+            arguments.extend(["--symbol", symbol]);
+        }
+        self.run(&arguments, &[0]).await
+    }
+
+    fn packages_arguments(&self) -> Vec<String> {
+        self.packages
+            .iter()
+            .flat_map(|dir| ["--packages".to_owned(), dir.display().to_string()])
+            .collect()
     }
 
     async fn run_as<T: DeserializeOwned>(
@@ -808,15 +993,33 @@ impl Hone {
         arguments: &[&str],
         accepted: &[i32],
     ) -> Result<T, Failure> {
-        let output = Command::new(&self.binary)
+        self.run_with_input(arguments, accepted, &[]).await
+    }
+
+    async fn run_with_input<T: DeserializeOwned>(
+        &self,
+        arguments: &[&str],
+        accepted: &[i32],
+        input: &[u8],
+    ) -> Result<T, Failure> {
+        let mut child = Command::new(&self.binary)
             .envs(self.environment.iter().map(|(name, value)| (name, value)))
             .args(arguments)
             .arg("--root")
             .arg(&self.root)
             .arg("--json")
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
-            .output()
+            .spawn()
+            .map_err(|error| self.not_started(&error))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            // A command that reads no input closes the pipe early; that is not a failure.
+            let _ = stdin.write_all(input).await;
+        }
+        let output = child
+            .wait_with_output()
             .await
             .map_err(|error| self.not_started(&error))?;
         let code = output.status.code();

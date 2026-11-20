@@ -36,6 +36,8 @@
   --hone-on-accent: #ffffff;
   --hone-ok: #15803d;
   --hone-bad: #b91c1c;
+  /* #d97706 reaches only 3.2:1 on white, too little for text; amber-700 reaches 5.0:1. */
+  --hone-warn: #b45309;
   color-scheme: light;
 }
 
@@ -53,6 +55,7 @@
     --hone-on-accent: #0b0b0c;
     --hone-ok: #4ade80;
     --hone-bad: #ff6b6b;
+    --hone-warn: #fbbf24;
     color-scheme: dark;
   }
 }
@@ -70,6 +73,7 @@
   --hone-on-accent: #0b0b0c;
   --hone-ok: #4ade80;
   --hone-bad: #ff6b6b;
+  --hone-warn: #fbbf24;
   color-scheme: dark;
 }
 
@@ -91,6 +95,7 @@
   --color-signal-muted: var(--hone-accent-muted);
   --color-ok: var(--hone-ok);
   --color-bad: var(--hone-bad);
+  --color-warn: var(--hone-warn);
 
   /* rust-ui's names. Its `accent` is a hover fill, hone's accent is `primary` here. */
   --color-background: var(--hone-bg);
@@ -110,8 +115,8 @@
   --color-destructive-foreground: var(--hone-bg);
   --color-success: var(--hone-ok);
   --color-success-foreground: var(--hone-bg);
-  --color-warning: var(--hone-accent);
-  --color-warning-foreground: var(--hone-on-accent);
+  --color-warning: var(--hone-warn);
+  --color-warning-foreground: var(--hone-bg);
   --color-border: var(--hone-line);
   --color-input: var(--hone-line);
   --color-ring: var(--hone-accent);
@@ -170,4 +175,65 @@
 
 :root[data-theme="dark"] .hone-logo-dark {
   display: inline-flex;
+}
+
+/* The preview of a Markdown body. Tailwind's base styles remove the look of every element. */
+.hone-prose {
+  font-size: 15px;
+  line-height: 25px;
+  overflow-wrap: anywhere;
+}
+.hone-prose > * + * {
+  margin-top: 12px;
+}
+.hone-prose h1 {
+  font-size: 24px;
+  line-height: 30px;
+  font-weight: 700;
+}
+.hone-prose h2 {
+  font-size: 19px;
+  line-height: 26px;
+  font-weight: 700;
+}
+.hone-prose h3,
+.hone-prose h4 {
+  font-weight: 700;
+}
+.hone-prose ul {
+  list-style: square;
+  padding-left: 24px;
+}
+.hone-prose ol {
+  list-style: decimal;
+  padding-left: 24px;
+}
+.hone-prose code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--hone-surface);
+  padding: 0 3px;
+}
+.hone-prose pre {
+  background: var(--hone-surface);
+  border: 1px solid var(--hone-line);
+  padding: 12px;
+  overflow-x: auto;
+}
+.hone-prose pre code {
+  padding: 0;
+}
+.hone-prose blockquote {
+  border-left: 3px solid var(--hone-line);
+  padding-left: 12px;
+  color: var(--hone-ink-muted);
+}
+.hone-prose table {
+  border-collapse: collapse;
+}
+.hone-prose th,
+.hone-prose td {
+  border: 1px solid var(--hone-line);
+  padding: 4px 8px;
+  text-align: left;
 }

@@ -3,7 +3,8 @@ use dioxus::prelude::*;
 use super::common::{Empty, Field, PageHeader, ProblemAlert, SectionLabel, open_in_browser};
 use super::{Project, Session};
 use crate::hone::CatalogEntry;
-use crate::tracker::{Issue, Settings, TokenSource, Tracker, suggest_github};
+use crate::settings::Settings;
+use crate::tracker::{Issue, TokenSource, Tracker, suggest_github};
 use crate::ui::{
     Button, ButtonSize, ButtonVariant, Input, Skeleton, Table, TableBody, TableCell, TableHead,
     TableHeader, TableRow, TableWrapper,
@@ -27,7 +28,11 @@ fn linked_tickets(tracker: &Tracker, records: &[CatalogEntry], issue: &str) -> V
 #[component]
 pub(crate) fn TrackerScreen() -> Element {
     let project = use_context::<Project>();
-    let tracker = project.tracker.read().clone();
+    let tracker = project
+        .settings
+        .read()
+        .clone()
+        .map(|settings| settings.map(|settings| settings.tracker));
     rsx! {
         PageHeader {
             context: project.project_id().map(|id| format!("{id} · stored on this device, never in the project")).unwrap_or_default(),
@@ -157,11 +162,11 @@ fn TrackerForm(current: Option<Tracker>) -> Element {
         let root = (session.hone)().root().to_path_buf();
         let outcome = Settings::locate()
             .ok_or_else(|| "no configuration directory: set HONE_CONFIG_DIR".to_owned())
-            .and_then(|settings| settings.set_tracker(&id, &root, tracker));
+            .and_then(|settings| settings.update(&id, &root, |kept| kept.tracker = tracker));
         match outcome {
             Ok(()) => {
                 message.set(None);
-                project.tracker_revision += 1;
+                project.settings_revision += 1;
             }
             Err(error) => message.set(Some(error)),
         }

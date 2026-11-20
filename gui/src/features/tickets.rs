@@ -310,9 +310,10 @@ fn TicketDetail(ticket: String) -> Element {
                         }
                     }
                     if overview.selected.as_ref() != Some(&overview.profile) {
-                        div { class: "border-2 border-signal px-5 py-4 flex flex-col gap-1 -mt-3", role: "status",
+                        div { class: "border-2 border-warn px-5 py-4 flex flex-col gap-1 -mt-3", role: "status",
                             span { class: "font-semibold",
-                                "⚠ profile-not-selected: this ticket uses {overview.profile}, but select gives "
+                                span { class: "text-warn", "aria-hidden": "true", "⚠ " }
+                                "profile-not-selected: this ticket uses {overview.profile}, but select gives "
                                 span { class: "font-mono", {overview.selected.clone().unwrap_or_else(|| "no profile".to_owned())} }
                                 " for its attributes."
                             }
@@ -366,6 +367,7 @@ fn short_hash(hash: &str) -> String {
 #[component]
 fn TicketSettings(ticket: String, overview: TicketOverview) -> Element {
     let session = use_context::<Session>();
+    let project = use_context::<Project>();
     let mut editing = use_signal(|| false);
     let mut rows = use_signal(|| rows_of(&overview.attributes));
     let mut outcome = use_signal(|| None::<Result<String, Failure>>);
@@ -413,7 +415,8 @@ fn TicketSettings(ticket: String, overview: TicketOverview) -> Element {
         let ticket = switch_ticket.clone();
         busy.set(true);
         spawn(async move {
-            let result = (session.hone)()
+            let result = project
+                .resolving((session.hone)())
                 .switch_config(&(session.writer)(), &ticket)
                 .await
                 .map(|written| {

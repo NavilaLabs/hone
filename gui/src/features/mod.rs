@@ -2,14 +2,19 @@
 //! command line's results into what the screen shows.
 
 pub(crate) mod artifact;
+mod artifact_form;
 pub(crate) mod artifacts;
 mod attributes;
 pub(crate) mod check;
+pub(crate) mod code;
 mod common;
+pub(crate) mod editor;
 pub(crate) mod events;
 pub(crate) mod graph;
+pub(crate) mod new_artifact;
 pub(crate) mod new_ticket;
 mod progress;
+pub(crate) mod project_settings;
 pub(crate) mod search;
 pub(crate) mod server;
 pub(crate) mod settings;
@@ -25,7 +30,9 @@ use dioxus::prelude::*;
 use crate::hone::{
     Catalog, CheckRun, ContextAuthor, Failure, Hone, StoreLog, TicketEvents, TicketOverview, Writer,
 };
-use crate::tracker::{Settings, Tracker};
+use crate::ide::Ide;
+use crate::settings::{ProjectSettings, Settings};
+use crate::tracker::Tracker;
 use crate::ui::Choice;
 
 /// The screens of the navigation.
@@ -40,6 +47,7 @@ pub(crate) enum Screen {
     Sync,
     Server,
     Tracker,
+    Settings,
 }
 
 /// The state every screen shares: the project, the writer, the open screen and ticket, and a
@@ -61,6 +69,8 @@ pub(crate) struct Session {
     pub(crate) search_open: Signal<bool>,
     /// The ticket the New ticket dialog starts, `None` while it is closed.
     pub(crate) new_ticket: Signal<Option<new_ticket::Seed>>,
+    /// Whether the New artifact dialog is open.
+    pub(crate) new_artifact: Signal<bool>,
 }
 
 /// A full `hone check` and the ticket it ran for.
@@ -88,6 +98,7 @@ impl Session {
             graph_focus: Signal::new(None),
             search_open: Signal::new(false),
             new_ticket: Signal::new(None),
+            new_artifact: Signal::new(false),
         }
     }
 
@@ -122,13 +133,14 @@ pub(crate) struct Project {
     pub(crate) catalog: Resource<Result<Catalog, Failure>>,
     pub(crate) log: Resource<Result<StoreLog, Failure>>,
     pub(crate) context: Resource<Result<ContextAuthor, Failure>>,
-    pub(crate) tracker: Resource<Result<Option<Tracker>, String>>,
+    /// The GUI's settings of the project in this checkout.
+    pub(crate) settings: Resource<Result<ProjectSettings, String>>,
     /// The open ticket with the steps of its profile, `None` without an open ticket.
     pub(crate) overview: Resource<Option<Result<TicketOverview, Failure>>>,
     /// The process state of the open ticket, `None` without an open ticket.
     pub(crate) state: Resource<Option<Result<TicketEvents, Failure>>>,
-    /// Bumped when the tracker setting changes.
-    pub(crate) tracker_revision: Signal<u64>,
+    /// Bumped when a setting changes.
+    pub(crate) settings_revision: Signal<u64>,
 }
 
 impl Project {
@@ -156,26 +168,26 @@ impl Project {
             let ticket = (session.ticket)()?;
             Some((session.hone)().events(&ticket).await)
         });
-        let tracker_revision = use_signal(|| 0u64);
-        let tracker = use_resource(move || async move {
-            let _ = tracker_revision();
+        let settings_revision = use_signal(|| 0u64);
+        let settings = use_resource(move || async move {
+            let _ = settings_revision();
             let root = (session.hone)().root().to_path_buf();
             let project = match &*catalog.read() {
                 Some(Ok(catalog)) => catalog.project.clone(),
-                _ => return Ok(None),
+                _ => return Ok(ProjectSettings::default()),
             };
             let settings = Settings::locate()
                 .ok_or_else(|| "no configuration directory: set HONE_CONFIG_DIR".to_owned())?;
-            settings.tracker(&project, &root)
+            settings.project(&project, &root)
         });
         Self {
             catalog,
             log,
             context,
-            tracker,
+            settings,
             overview,
             state,
-            tracker_revision,
+            settings_revision,
         }
     }
 
@@ -189,8 +201,22 @@ impl Project {
 
     /// The tracker of the project, if one is set.
     pub(crate) fn tracker(&self) -> Option<Tracker> {
-        match &*self.tracker.read() {
-            Some(Ok(tracker)) => tracker.clone(),
+        self.setting(|settings| settings.tracker.clone())
+    }
+
+    /// The editor of the project, if one is set.
+    pub(crate) fn ide(&self) -> Option<Ide> {
+        self.setting(|settings| settings.ide.clone())
+    }
+
+    /// The command line with the project's packages directory, for the commands that resolve.
+    pub(crate) fn resolving(&self, hone: Hone) -> Hone {
+        hone.with_packages(self.setting(|settings| settings.packages.clone()))
+    }
+
+    fn setting<T>(&self, pick: impl FnOnce(&ProjectSettings) -> Option<T>) -> Option<T> {
+        match &*self.settings.read() {
+            Some(Ok(settings)) => pick(settings),
             _ => None,
         }
     }

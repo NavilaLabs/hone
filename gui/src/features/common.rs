@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::hone::Failure;
+use crate::hone::{Failure, Finding};
 use crate::ui::{Alert, AlertDescription, AlertTitle, Skeleton};
 
 /// The head of a screen: a context line, the title, and the actions on the right.
@@ -103,6 +103,39 @@ pub(crate) fn FailureAlert(failure: Failure) -> Element {
         ProblemAlert {
             title: failure_title(&failure.status),
             message: failure.message,
+        }
+    }
+}
+
+/// Something that needs attention but stopped nothing, framed in `warn`.
+#[component]
+pub(crate) fn WarningNote(#[props(into)] text: String) -> Element {
+    rsx! {
+        div { class: "border-2 border-warn px-4 py-3 text-[13px] flex gap-2", role: "status",
+            span { class: "text-warn font-semibold", "aria-hidden": "true", "⚠" }
+            span { "{text}" }
+        }
+    }
+}
+
+/// The findings of a check: errors in `bad`, warnings in `warn`, each with its code and the
+/// pointer of the value it concerns.
+#[component]
+pub(crate) fn FindingList(findings: Vec<Finding>) -> Element {
+    rsx! {
+        div { class: "flex flex-col gap-2",
+            for finding in findings {
+                div { class: if finding.level == "error" { "border border-bad p-3 flex flex-col gap-1" } else { "border border-warn p-3 flex flex-col gap-1" },
+                    span { class: if finding.level == "error" { "font-mono text-[13px] text-bad" } else { "font-mono text-[13px] text-warn" },
+                        if finding.level == "error" { "✕ " } else { "⚠ " }
+                        "{finding.level} {finding.code}"
+                        if let Some(pointer) = finding.pointer.clone() {
+                            span { class: "text-ink-muted", " at {pointer}" }
+                        }
+                    }
+                    span { class: "text-[13px]", "{finding.message}" }
+                }
+            }
         }
     }
 }

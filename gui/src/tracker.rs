@@ -3,7 +3,7 @@
 //! hone configuration directory, keyed by project ID and canonical root, and the token comes from
 //! an environment variable or the OS keyring, never from a file.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use reqwest::Url;
@@ -533,130 +533,6 @@ pub fn github_repository(remote: &str) -> Option<(String, String)> {
     (parts.next().is_none() && !owner.is_empty() && !repo.is_empty()).then_some((owner, repo))
 }
 
-/// The settings file of the GUI.
-#[derive(Debug, Clone)]
-pub struct Settings {
-    path: PathBuf,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct File {
-    #[serde(default)]
-    trackers: Vec<Binding>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Binding {
-    project: String,
-    root: PathBuf,
-    tracker: Tracker,
-}
-
-impl Settings {
-    /// `gui.json` in `HONE_CONFIG_DIR`, otherwise in the platform's configuration directory
-    /// followed by `hone`, the directory of `contexts.yaml`.
-    #[must_use]
-    pub fn locate() -> Option<Self> {
-        let directory = std::env::var_os("HONE_CONFIG_DIR")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| platform_config_directory().map(|directory| directory.join("hone")))?;
-        Some(Self::at(directory.join("gui.json")))
-    }
-
-    /// The settings file `path`.
-    #[must_use]
-    pub fn at(path: PathBuf) -> Self {
-        Self { path }
-    }
-
-    /// The file's path.
-    #[must_use]
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// The tracker of `project` in the checkout `root`. A setting made in another checkout does
-    /// not apply.
-    ///
-    /// # Errors
-    ///
-    /// Returns a message when the file exists but cannot be read.
-    pub fn tracker(&self, project: &str, root: &Path) -> Result<Option<Tracker>, String> {
-        let root = canonical(root)?;
-        Ok(self
-            .read()?
-            .trackers
-            .into_iter()
-            .find(|binding| binding.project == project && binding.root == root)
-            .map(|binding| binding.tracker))
-    }
-
-    /// Sets the tracker of `project` in the checkout `root`, or removes it with `None`.
-    ///
-    /// # Errors
-    ///
-    /// Returns a message when the file cannot be read or written.
-    pub fn set_tracker(
-        &self,
-        project: &str,
-        root: &Path,
-        tracker: Option<Tracker>,
-    ) -> Result<(), String> {
-        let root = canonical(root)?;
-        let mut file = self.read()?;
-        file.trackers
-            .retain(|binding| !(binding.project == project && binding.root == root));
-        if let Some(tracker) = tracker {
-            file.trackers.push(Binding {
-                project: project.to_owned(),
-                root,
-                tracker,
-            });
-        }
-        let text = serde_json::to_string_pretty(&file).map_err(|error| error.to_string())? + "\n";
-        let write = |error: std::io::Error| format!("{}: {error}", self.path.display());
-        if let Some(directory) = self.path.parent() {
-            std::fs::create_dir_all(directory).map_err(write)?;
-        }
-        let temporary = self.path.with_extension("json.tmp");
-        std::fs::write(&temporary, text).map_err(write)?;
-        std::fs::rename(&temporary, &self.path).map_err(write)
-    }
-
-    fn read(&self) -> Result<File, String> {
-        match std::fs::read(&self.path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map_err(|error| format!("{}: {error}", self.path.display())),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(File::default()),
-            Err(error) => Err(format!("{}: {error}", self.path.display())),
-        }
-    }
-}
-
-fn canonical(root: &Path) -> Result<PathBuf, String> {
-    root.canonicalize()
-        .map_err(|error| format!("{}: {error}", root.display()))
-}
-
-#[cfg(target_os = "macos")]
-fn platform_config_directory() -> Option<PathBuf> {
-    std::env::home_dir().map(|home| home.join("Library/Application Support"))
-}
-
-#[cfg(windows)]
-fn platform_config_directory() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(PathBuf::from)
-}
-
-#[cfg(not(any(target_os = "macos", windows)))]
-fn platform_config_directory() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|directory| directory.is_absolute())
-        .or_else(|| std::env::home_dir().map(|home| home.join(".config")))
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -843,41 +719,5 @@ mod tests {
             ),
             "the tracker answered 400: The value 'X' does not exist"
         );
-    }
-
-    #[test]
-    fn a_setting_applies_only_to_its_project_and_checkout() {
-        let directory =
-            std::env::temp_dir().join(format!("hone-gui-settings-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&directory);
-        let first = directory.join("first");
-        let second = directory.join("second");
-        std::fs::create_dir_all(&first).expect("creatable");
-        std::fs::create_dir_all(&second).expect("creatable");
-        let settings = Settings::at(directory.join("config/gui.json"));
-
-        assert_eq!(settings.tracker("prj-8m2k4d7q", &first), Ok(None));
-        settings
-            .set_tracker("prj-8m2k4d7q", &first, Some(github()))
-            .expect("written");
-        assert_eq!(settings.tracker("prj-8m2k4d7q", &first), Ok(Some(github())));
-        assert_eq!(settings.tracker("prj-8m2k4d7q", &second), Ok(None));
-        assert_eq!(settings.tracker("prj-2b7n5k1q", &first), Ok(None));
-        let written: Value =
-            serde_json::from_slice(&std::fs::read(settings.path()).expect("readable"))
-                .expect("JSON");
-        assert_eq!(
-            written,
-            json!({ "trackers": [{
-                "project": "prj-8m2k4d7q",
-                "root": first.canonicalize().expect("canonical"),
-                "tracker": { "kind": "github", "owner": "acme", "repo": "payments" }
-            }] })
-        );
-        settings
-            .set_tracker("prj-8m2k4d7q", &first, None)
-            .expect("written");
-        assert_eq!(settings.tracker("prj-8m2k4d7q", &first), Ok(None));
-        std::fs::remove_dir_all(&directory).expect("removable");
     }
 }

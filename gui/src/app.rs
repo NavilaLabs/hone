@@ -46,6 +46,7 @@ fn App() -> Element {
     let screen = session.screen;
     rsx! {
         document::Style { {STYLE} }
+        document::Script { {features::editor::BUNDLE} }
         div { class: "min-h-screen flex flex-col bg-bg text-ink",
             features::settings::Header {}
             features::search::SearchShortcut {}
@@ -54,6 +55,9 @@ fn App() -> Element {
             }
             if let Some(seed) = (session.new_ticket)() {
                 features::new_ticket::NewTicketDialog { seed }
+            }
+            if (session.new_artifact)() {
+                features::new_artifact::NewArtifactDialog {}
             }
             div { class: "flex flex-wrap flex-1",
                 Navigation {}
@@ -71,6 +75,7 @@ fn App() -> Element {
                         Screen::Sync => rsx! { features::sync::Sync {} },
                         Screen::Server => rsx! { features::server::Server {} },
                         Screen::Tracker => rsx! { features::tracker::TrackerScreen {} },
+                        Screen::Settings => rsx! { features::project_settings::ProjectSettingsScreen {} },
                     }
                 }
             }
@@ -130,6 +135,7 @@ fn Navigation() -> Element {
                 NavItem { screen: Screen::Tracker, label: "Tracker" }
                 NavItem { screen: Screen::Sync, label: "Sync" }
                 NavItem { screen: Screen::Server, label: "Server" }
+                NavItem { screen: Screen::Settings, label: "Settings" }
             }
         }
     }
