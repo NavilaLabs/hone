@@ -1,7 +1,4 @@
 plugins:
-  lang-rust:
-    hash: "sha256:0ede8a8ac323d42ede1905abdb5b74bc907ed797dfb2be6e68856379f98b1fbf"
-    capabilities: { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }
   lang-dart:
     hash: "sha256:a727123ed9d15ab2b5a393efd6f0a7414a0530d7794305dcd5b7a6d80fc51185"
     capabilities: { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }
