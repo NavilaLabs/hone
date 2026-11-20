@@ -2,12 +2,16 @@
 
 hone's own WebAssembly plugins (concept Section 9). They form a Cargo workspace of their own, because they build for the target `wasm32-wasip1` and the main workspace builds for the host.
 
-| Plugin      | Purpose                                                                                                                                                                                                                                                                    |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lang-rust` | A language plugin (concept Section 9, "Language plugins"): resolves Rust symbols and computes the public API of `.rs` files for the standard gates `module-anchors-resolve` and `public-api-has-decision`. Shipped as the package `hone/lang-rust` (`schemas/lang-rust/`). |
-| `probe`     | A test plugin for the gate test cases. The parameter `mode` selects its behaviour (findings, echo, read, write, trap, timeout, memory, invalid output).                                                                                                                    |
+| Plugin                                                    | Purpose                                                                                                                                                                                                                                                                    |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lang-rust`                                               | A language plugin (concept Section 9, "Language plugins"): resolves Rust symbols and computes the public API of `.rs` files for the standard gates `module-anchors-resolve` and `public-api-has-decision`. Shipped as the package `hone/lang-rust` (`schemas/lang-rust/`). |
+| `lang-tree`                                               | The shared engine of the tree-sitter language plugins: parses a file, collects its nested declarations, and answers `resolve` and `public_api`. One module of rules per language.                                                                                          |
+| `lang-typescript`, `lang-python`, `lang-php`, `lang-dart` | Language plugins on `lang-tree` for TypeScript and JavaScript, Python, PHP, and Dart, each shipped as the package `hone/lang-<language>` (`schemas/lang-<language>/`).                                                                                                     |
+| `probe`                                                   | A test plugin for the gate test cases. The parameter `mode` selects its behaviour (findings, echo, read, write, trap, timeout, memory, invalid output).                                                                                                                    |
 
 ## Building
+
+The grammars of the tree-sitter plugins are C code, so building for `wasm32-wasip1` needs the WASI libc. `.cargo/config.toml` points `CFLAGS_wasm32_wasip1` at `/usr/share/wasi-sysroot`, where Arch Linux and Debian install it (package `wasi-libc`); set the variable to use another sysroot, for example one of wasi-sdk. The rules of `lang-tree` are tested natively: `cargo test -p lang-tree --target x86_64-unknown-linux-gnu`.
 
 ```sh
 rustup target add wasm32-wasip1
@@ -43,4 +47,16 @@ public-api:
   params: { anchored: module, binding: decision }
 ```
 
-`module-anchors-resolve` needs neither changed paths nor a base state; a symbol in a file that no language plugin handles is the warning `symbol-unchecked`. `public-api-has-decision` needs `--changed` and `--base <dir>`; a hit file that no language plugin handles is the warning `api-unchecked`. After a rebuild of `lang-rust`, also copy the module into `schemas/lang-rust/plugins/`.
+`module-anchors-resolve` needs neither changed paths nor a base state; a symbol in a file that no language plugin handles is the warning `symbol-unchecked`. `public-api-has-decision` needs `--changed` and `--base <dir>`; a hit file that no language plugin handles is the warning `api-unchecked`. After a rebuild of a language plugin, also copy its module into `schemas/lang-<language>/plugins/`; a test checks that the package and its test case carry the same bytes.
+
+## Symbols per language
+
+| Plugin            | Extensions                                           | A symbol                    | Public                                                                |
+| ----------------- | ---------------------------------------------------- | --------------------------- | --------------------------------------------------------------------- |
+| `lang-rust`       | `rs`                                                 | `Fee::add`                  | `pub` items in `pub mod` paths                                        |
+| `lang-typescript` | `ts`, `tsx`, `mts`, `cts`, `js`, `jsx`, `mjs`, `cjs` | `Fee.add`, `Payments.Inner` | exported declarations, members not `private`, `protected`, or `#name` |
+| `lang-python`     | `py`, `pyi`                                          | `Fee.add`                   | names without a leading `_` (`__name__` is public)                    |
+| `lang-php`        | `php`                                                | `Fee::add`, `Fee::$amount`  | top-level declarations, members not `private` or `protected`          |
+| `lang-dart`       | `dart`                                               | `Fee.add`                   | names without a leading `_`                                           |
+
+The public API of a file is one string per public declaration: its symbol and its signature without the body. A file with a syntax error is `unparsable`.
