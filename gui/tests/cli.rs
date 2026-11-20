@@ -6,7 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
-use hone_gui::hone::{Anchor, GateScope, Hone, Peer, StepStatus, Write, Writer};
+use hone_gui::hone::{
+    Anchor, AttributeValue, GateScope, Hone, Peer, StepStatus, TicketStart, Write, Writer,
+};
 
 const TICKET: &str = "tk-9f2x4a8m";
 const THREAD: &str = "th-0193a8f0-9b2c-7e4d-a1f3-000000000001";
@@ -418,6 +420,89 @@ async fn the_catalog_carries_the_links_of_an_artifact() {
         decision.links.get("affects").map(Vec::as_slice),
         Some(["mod-4t8w2n6c".to_owned()].as_slice())
     );
+}
+
+#[tokio::test]
+async fn a_ticket_starts_changes_and_refuses_a_stale_configuration() {
+    let root = std::env::temp_dir().join(format!("hone-gui-{}-start", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy(
+        &repository().join("schemas/tests/resolve/defaults/project"),
+        &root.join("project"),
+    );
+    let hone = Hone::with_binary(binary(), root.join("project"))
+        .with_variable("HONE_DATA_DIR", root.join("data"));
+    let writer = Writer {
+        author: "bob".into(),
+        role: "human".into(),
+    };
+    let start = TicketStart {
+        attributes: vec![
+            ("size".into(), AttributeValue::Text("3".into())),
+            ("count".into(), AttributeValue::Integer(3)),
+        ],
+        external: vec!["github:12=https://github.com/acme/payments/issues/12".into()],
+        profile: None,
+    };
+
+    let stale = hone
+        .start_ticket(&writer, &start)
+        .await
+        .expect_err("no resolved.json yet");
+    assert_eq!(stale.status, "invalid");
+    assert!(
+        stale.message.contains("run hone resolve"),
+        "{}",
+        stale.message
+    );
+
+    let hash = hone.resolve().await.expect("resolved");
+    let selection = hone.select(&start.attributes).await.expect("selected");
+    assert_eq!(
+        (selection.selected.as_deref(), selection.rule),
+        (Some("only"), None)
+    );
+
+    let started = hone.start_ticket(&writer, &start).await.expect("started");
+    assert_eq!(started.profile, "only");
+    assert_eq!(started.config, hash);
+    assert_eq!(
+        serde_json::Value::Object(started.attributes.clone()),
+        serde_json::json!({ "size": "3", "count": 3 }),
+        "a text that looks like a number stays text"
+    );
+    let catalog = hone.artifacts().await.expect("listed");
+    let record = catalog.tickets().next().expect("the new record");
+    assert_eq!(record.id.as_deref(), Some(started.ticket.as_str()));
+    assert_eq!(record.external[0].key, "12");
+
+    let changed = hone
+        .set_attributes(
+            &writer,
+            &started.ticket,
+            &[("urgent".into(), AttributeValue::Boolean(true))],
+            &["count".into()],
+        )
+        .await
+        .expect("changed");
+    assert_eq!(
+        serde_json::Value::Object(changed.attributes),
+        serde_json::json!({ "size": "3", "urgent": true })
+    );
+    let unchanged = hone
+        .switch_config(&writer, &started.ticket)
+        .await
+        .expect_err("already current");
+    assert_eq!(
+        unchanged.message,
+        format!(
+            "the ticket `{}` already uses the current configuration",
+            started.ticket
+        )
+    );
+    let overview = hone.ticket(&started.ticket).await.expect("shown");
+    assert_eq!(overview.selected.as_deref(), Some("only"));
+    std::fs::remove_dir_all(&root).expect("removable");
 }
 
 #[tokio::test]
