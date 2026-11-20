@@ -1,0 +1,5 @@
+# The grammars of the language plugins are C code compiled for wasm32-wasip1, which needs the WASI
+# libc. This is where Arch Linux and Debian install it (packages wasi-libc); set the variable
+# yourself to use another sysroot, for example one of wasi-sdk.
+[env]
+CFLAGS_wasm32_wasip1 = "--sysroot=/usr/share/wasi-sysroot"

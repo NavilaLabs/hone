@@ -1,0 +1,16 @@
+[package]
+name = "lang-dart"
+description = "hone language plugin for Dart: resolves symbols and computes the public API of its files."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+extism-pdk.workspace = true
+lang-tree = { path = "../lang-tree", features = ["dart"] }
+serde_json.workspace = true

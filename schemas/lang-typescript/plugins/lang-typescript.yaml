@@ -1,0 +1,4 @@
+# The language plugin for TypeScript and JavaScript (concept Section 9, "Language plugins"). Copy
+# lang-typescript.wasm to .hone/plugins/ and approve its hash and capabilities in .hone/lock.yaml.
+capabilities: { read: [project], timeout_ms: 5000, memory_pages: 256 }
+language: { extensions: [ts, tsx, mts, cts, js, jsx, mjs, cjs] }

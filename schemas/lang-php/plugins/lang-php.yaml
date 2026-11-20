@@ -1,0 +1,4 @@
+# The language plugin for PHP (concept Section 9, "Language plugins"). Copy
+# lang-php.wasm to .hone/plugins/ and approve its hash and capabilities in .hone/lock.yaml.
+capabilities: { read: [project], timeout_ms: 5000, memory_pages: 256 }
+language: { extensions: [php] }

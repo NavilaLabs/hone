@@ -1,0 +1,25 @@
+[package]
+name = "lang-tree"
+description = "The shared engine of hone's tree-sitter language plugins: symbols and public APIs from declarations."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+typescript = ["dep:tree-sitter-typescript"]
+python = ["dep:tree-sitter-python"]
+php = ["dep:tree-sitter-php"]
+dart = ["dep:tree-sitter-dart"]
+
+[dependencies]
+serde_json.workspace = true
+tree-sitter = "0.27.2"
+tree-sitter-typescript = { version = "0.23.2", optional = true }
+tree-sitter-python = { version = "0.25.0", optional = true }
+tree-sitter-php = { version = "0.25.2", optional = true }
+tree-sitter-dart = { version = "0.3.0", optional = true }
+
+[dev-dependencies]
+lang-tree = { path = ".", features = ["typescript", "python", "php", "dart"] }

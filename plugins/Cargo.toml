@@ -2,7 +2,7 @@
 # target `wasm32-wasip1`. See README.md.
 [workspace]
 resolver = "3"
-members = ["lang-rust", "probe"]
+members = ["lang-dart", "lang-php", "lang-python", "lang-rust", "lang-tree", "lang-typescript", "probe"]
 
 [workspace.package]
 version = "0.1.0"
