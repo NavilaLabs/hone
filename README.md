@@ -60,7 +60,7 @@ A plugin gate runs a WebAssembly module (WASI preview 1) from `.hone/plugins/<na
 ```yaml
 # .hone/lock.yaml
 plugins:
-  public-api-has-decision:
+  lang-rust:
     hash: "sha256:…"
     capabilities:
       { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }

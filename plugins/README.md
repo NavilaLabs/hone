@@ -2,11 +2,10 @@
 
 hone's own WebAssembly plugins (concept Section 9). They form a Cargo workspace of their own, because they build for the target `wasm32-wasip1` and the main workspace builds for the host.
 
-| Plugin                    | Purpose                                                                                                                                                        |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `public-api-has-decision` | A gate: a change to the public API of a Rust file under an anchored artifact (for example a module) needs a binding decision. It compares with the base state. |
-| `module-anchors-resolve`  | A gate: every anchor of a module (and its `interface.code`) resolves in the checked state: paths exist, globs match, Rust symbols exist.                       |
-| `probe`                   | A test plugin for the gate test cases. The parameter `mode` selects its behaviour (findings, echo, read, write, trap, timeout, memory, invalid output).        |
+| Plugin      | Purpose                                                                                                                                                                                                                                                                    |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lang-rust` | A language plugin (concept Section 9, "Language plugins"): resolves Rust symbols and computes the public API of `.rs` files for the standard gates `module-anchors-resolve` and `public-api-has-decision`. Shipped as the package `hone/lang-rust` (`schemas/lang-rust/`). |
+| `probe`     | A test plugin for the gate test cases. The parameter `mode` selects its behaviour (findings, echo, read, write, trap, timeout, memory, invalid output).                                                                                                                    |
 
 ## Building
 
@@ -22,34 +21,26 @@ The modules land in `plugins/target/wasm32-wasip1/release/`. `cargo test` of the
 
 After a change to a plugin, rebuild it, copy the new module into every test case that uses it (`.hone/plugins/<name>.wasm`), and update the hash in the case's `resolved.json`, snapshot, ticket record, and lockfiles. A compiler update alone can change the bytes, so only rebuild when the source changes.
 
-## Using `public-api-has-decision`
+## Using `lang-rust`
+
+The package `hone/lang-rust` holds the plugin file; copy `schemas/lang-rust/plugins/lang-rust.wasm` to `.hone/plugins/lang-rust.wasm` and approve it in `.hone/lock.yaml`:
 
 ```yaml
-# .hone/plugins/public-api-has-decision.yaml
+# schemas/lang-rust/plugins/lang-rust.yaml
 capabilities: { read: [project], timeout_ms: 5000, memory_pages: 256 }
+language: { extensions: [rs] }
 ```
 
+The standard gates then use it for every `.rs` file:
+
 ```yaml
-# a gate entry in a step
+# gate entries in steps
+anchors:
+  gate: module-anchors-resolve
+  params: { kind: module } # optional, module is the default
 public-api:
   gate: public-api-has-decision
   params: { anchored: module, binding: decision }
 ```
 
-`hone check` then needs `--changed` and `--base <dir>`, for example a `git worktree` of the target branch. Without them, the gate fails with `changed-paths-missing` or `base-missing`.
-
-## Using `module-anchors-resolve`
-
-```yaml
-# .hone/plugins/module-anchors-resolve.yaml
-capabilities: { read: [project], timeout_ms: 5000, memory_pages: 256 }
-```
-
-```yaml
-# a gate entry in a step
-anchors:
-  gate: module-anchors-resolve
-  params: { kind: module } # optional, module is the default
-```
-
-It needs neither changed paths nor a base state. A symbol anchor `path#a::b` resolves in Rust files; in other files only the file is checked, with the warning `symbol-unchecked`.
+`module-anchors-resolve` needs neither changed paths nor a base state; a symbol in a file that no language plugin handles is the warning `symbol-unchecked`. `public-api-has-decision` needs `--changed` and `--base <dir>`; a hit file that no language plugin handles is the warning `api-unchecked`. After a rebuild of `lang-rust`, also copy the module into `schemas/lang-rust/plugins/`.
