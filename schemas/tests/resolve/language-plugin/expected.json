@@ -1,0 +1,102 @@
+{
+  "actors": {},
+  "kinds": {
+    "decision": {
+      "id_prefix": "dec",
+      "lifecycle": "decided",
+      "path": "design/decisions/{id}-{slug}.md",
+      "statuses": {
+        "accepted": {
+          "binding": true
+        },
+        "proposed": {
+          "binding": false
+        }
+      }
+    }
+  },
+  "plugins": {
+    "api-check": {
+      "capabilities": {
+        "memory_pages": 256,
+        "net": [],
+        "read": ["project"],
+        "timeout_ms": 5000
+      },
+      "hash": "sha256:93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476",
+      "wasm": ".hone/plugins/api-check.wasm"
+    },
+    "lang-a": {
+      "capabilities": {
+        "memory_pages": 256,
+        "net": [],
+        "read": ["project"],
+        "timeout_ms": 5000
+      },
+      "hash": "sha256:93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476",
+      "language": {
+        "extensions": ["ts", "tsx"]
+      },
+      "wasm": ".hone/plugins/lang-a.wasm"
+    }
+  },
+  "profiles": {
+    "standard": {
+      "retention": "archive",
+      "review_summary": "full",
+      "steps": {
+        "decision": "required"
+      }
+    }
+  },
+  "protocol": 1,
+  "roles": {
+    "critic": {
+      "can": ["act", "comment"],
+      "kind": "ai"
+    },
+    "human": {
+      "can": ["act", "comment", "approve"],
+      "kind": "human"
+    }
+  },
+  "select": {
+    "default": "standard",
+    "rules": []
+  },
+  "steps": {
+    "decision": {
+      "acts": ["human", "critic"],
+      "decides": "human",
+      "gates": {
+        "anchors": {
+          "gate": "module-anchors-resolve",
+          "params": {
+            "kind": "decision"
+          }
+        },
+        "api": {
+          "gate": "api-check"
+        },
+        "approved": {
+          "gate": "approvals-valid",
+          "params": {
+            "role": "human"
+          }
+        },
+        "exists": {
+          "gate": "artifact-exists",
+          "params": {
+            "type": "decision"
+          }
+        }
+      },
+      "inputs": ["ticket"],
+      "outputs": ["decision"],
+      "requires": []
+    }
+  },
+  "ticket": {
+    "path": "design/tickets/{ticket}/ticket.yaml"
+  }
+}

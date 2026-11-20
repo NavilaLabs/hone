@@ -1,0 +1,3 @@
+gates:
+  api: { gate: api-check }
+  anchors: { gate: module-anchors-resolve, params: { kind: decision } }

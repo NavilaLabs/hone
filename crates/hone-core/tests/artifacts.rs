@@ -232,3 +232,22 @@ fn content_hash_covers_fields_and_text_but_not_notation() {
         "a new line break changes the hash"
     );
 }
+
+#[test]
+fn the_package_lang_rust_ships_the_module_of_the_test_cases() {
+    let shipped = read(&schemas().join("lang-rust/plugins/lang-rust.wasm"));
+    let tested =
+        read(&schemas().join(
+            "tests/check/module-anchors-resolve-resolved/project/.hone/plugins/lang-rust.wasm",
+        ));
+    assert!(
+        shipped == tested,
+        "the package and the test cases use the same module"
+    );
+    let definition = parse_yaml(&read(&schemas().join("lang-rust/plugins/lang-rust.yaml")))
+        .expect("strict YAML profile");
+    assert_eq!(
+        definition["language"]["extensions"],
+        serde_json::json!(["rs"])
+    );
+}

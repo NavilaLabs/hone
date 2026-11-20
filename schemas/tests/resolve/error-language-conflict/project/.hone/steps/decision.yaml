@@ -1,0 +1,2 @@
+gates:
+  api: { gate: api-check }

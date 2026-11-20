@@ -1,0 +1,2 @@
+capabilities: { read: [project], timeout_ms: 5000, memory_pages: 256 }
+language: { extensions: [ts, tsx] }
