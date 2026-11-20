@@ -95,6 +95,29 @@ impl Directory {
         directory
     }
 
+    /// The file `path` with content `bytes` as an artifact of `config`: `None` if the path
+    /// matches no pattern, the violations if the content cannot be read.
+    pub(crate) fn single(
+        config: &Value,
+        path: &str,
+        bytes: &[u8],
+    ) -> Option<Result<Artifact, Vec<String>>> {
+        let (place, captures) = Patterns::of(config).place(path)?;
+        Some(artifact::parse(path, bytes).map(|content| Artifact {
+            path: path.to_owned(),
+            place,
+            id_in_path: captures.id,
+            ticket_in_path: captures.ticket,
+            content,
+        }))
+    }
+
+    /// Whether `path` is a ticket record or an artifact of a kind under `config`, by its
+    /// pattern alone.
+    pub(crate) fn place_of(config: &Value, path: &str) -> Option<Place> {
+        Patterns::of(config).place(path).map(|(place, _)| place)
+    }
+
     pub(crate) fn is_artifact_path(config: &Value, path: &str) -> bool {
         Patterns::of(config).place(path).is_some()
     }

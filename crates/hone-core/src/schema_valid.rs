@@ -137,6 +137,24 @@ pub(crate) fn check_directory(config: &Value, directory: &Directory) -> Vec<Find
     findings
 }
 
+/// The findings of `schema-valid` for one artifact: its path against its content, then its
+/// content, each finding at the artifact's path, sorted.
+pub(crate) fn check_file(config: &Value, artifact: &Artifact) -> Vec<Finding> {
+    let mut found = path_mismatches(artifact);
+    if !found
+        .iter()
+        .any(|finding| finding.pointer.as_deref() == Some("/type"))
+    {
+        found.extend(ContentRules::new(config).check(&artifact.content.data));
+    }
+    let mut findings: Vec<Finding> = found
+        .into_iter()
+        .map(|finding| finding.at_path(&artifact.path))
+        .collect();
+    findings.sort();
+    findings
+}
+
 fn path_mismatches(artifact: &Artifact) -> Vec<Finding> {
     let mut findings = Vec::new();
     let mut expect = |pointer: &str, field: Option<&str>, in_path: &str| {

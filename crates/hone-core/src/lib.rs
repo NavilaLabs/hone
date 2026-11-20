@@ -18,6 +18,7 @@ mod complete;
 mod condense;
 mod contexts;
 mod directory;
+mod editing;
 mod error;
 mod event;
 mod exec;
@@ -57,6 +58,10 @@ pub use check::{
 };
 pub use client::Server;
 pub use contexts::{BoundContext, Context, ContextPeer, Contexts};
+pub use editing::{
+    ArtifactNew, ArtifactSource, ArtifactWritten, KindInfo, KindStatus, SourceFile, kinds,
+    new_artifact, save_artifact, show_artifact, show_file,
+};
 pub use error::{Category, Location, Origin, Problem, ResolveError};
 pub use finding::{Code, Finding, Level};
 pub use hosted::{AppendError, Appender, HostedStore, Rejection};

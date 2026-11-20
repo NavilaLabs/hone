@@ -348,7 +348,7 @@ impl Scope<'_> {
 }
 
 // The language plugins of the configuration by extension.
-fn languages(config: &Value) -> BTreeMap<String, &str> {
+pub(crate) fn languages(config: &Value) -> BTreeMap<String, &str> {
     let mut map = BTreeMap::new();
     for (name, plugin) in config["plugins"].as_object().into_iter().flatten() {
         for extension in plugin["language"]["extensions"]
@@ -364,7 +364,10 @@ fn languages(config: &Value) -> BTreeMap<String, &str> {
     map
 }
 
-fn language_of<'c>(languages: &BTreeMap<String, &'c str>, path: &str) -> Option<&'c str> {
+pub(crate) fn language_of<'c>(
+    languages: &BTreeMap<String, &'c str>,
+    path: &str,
+) -> Option<&'c str> {
     let name = path.rsplit('/').next().unwrap_or(path);
     let (_, extension) = name.rsplit_once('.')?;
     languages.get(&extension.to_lowercase()).copied()

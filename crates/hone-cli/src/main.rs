@@ -1,6 +1,7 @@
 mod catalog;
 mod check;
 mod credentials;
+mod editing;
 mod process;
 
 use std::path::PathBuf;
@@ -55,6 +56,12 @@ enum Command {
     /// List the artifacts of the checked directory, ticket records included, with their
     /// declared and effective status.
     Artifacts(catalog::CatalogArguments),
+    /// Show, save, and create artifact files.
+    #[command(subcommand)]
+    Artifact(editing::Artifact),
+    /// Show source files of the project.
+    #[command(subcommand)]
+    File(editing::File),
     /// Show the tickets of the project.
     #[command(subcommand)]
     Ticket(catalog::Ticket),
@@ -119,6 +126,8 @@ fn main() -> ExitCode {
         Command::Log(target) => process::run_log(&target),
         Command::Artifacts(arguments) => catalog::run_artifacts(&arguments),
         Command::Ticket(command) => catalog::run_ticket(command),
+        Command::Artifact(command) => editing::run_artifact(command),
+        Command::File(command) => editing::run_file(command),
         Command::Export(arguments) => process::run_export(&arguments),
         Command::Forget(arguments) => process::run_forget(&arguments),
         Command::Sync(arguments) => process::run_sync(&arguments),

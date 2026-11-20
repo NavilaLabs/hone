@@ -12,6 +12,8 @@ use crate::schema_valid;
 
 mod language;
 
+pub(crate) use language::{language_of, languages};
+
 pub(crate) const DIRECTORY_GATES: [&str; 3] = ["schema-valid", "ids-unique", "links-resolve"];
 pub(crate) const PROCESS_GATES: [&str; 3] = [
     "no-open-blocking-threads",

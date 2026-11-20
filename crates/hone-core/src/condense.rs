@@ -188,7 +188,11 @@ pub(crate) fn date_of(event_id: &str) -> String {
         .filter(char::is_ascii_hexdigit)
         .take(12)
         .collect();
-    let millis = u64::from_str_radix(&hex, 16).unwrap_or(0);
+    date_of_millis(u64::from_str_radix(&hex, 16).unwrap_or(0))
+}
+
+/// The UTC date `YYYY-MM-DD` of `millis` milliseconds since the Unix epoch.
+pub(crate) fn date_of_millis(millis: u64) -> String {
     let days = i64::try_from(millis / 86_400_000).unwrap_or(0);
     // Howard Hinnant's `civil_from_days`.
     let z = days + 719_468;
