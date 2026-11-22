@@ -7,11 +7,12 @@ hone's own WebAssembly plugins (concept Section 9). They form a Cargo workspace 
 | `lang-rust`                                               | A language plugin (concept Section 9, "Language plugins"): resolves Rust symbols and computes the public API of `.rs` files for the standard gates `module-anchors-resolve` and `public-api-has-decision`. Shipped as the package `hone/lang-rust` (`schemas/lang-rust/`). |
 | `lang-tree`                                               | The shared engine of the tree-sitter language plugins: parses a file, collects its nested declarations, and answers `resolve` and `public_api`. One module of rules per language.                                                                                          |
 | `lang-typescript`, `lang-python`, `lang-php`, `lang-dart` | Language plugins on `lang-tree` for TypeScript and JavaScript, Python, PHP, and Dart, each shipped as the package `hone/lang-<language>` (`schemas/lang-<language>/`).                                                                                                     |
+| `token-form`                                              | The token form of the types in a public API entry (`spec/plugins.md`, item 32), shared by `lang-tree` and `lang-rust`.                                                                                                                                                     |
 | `probe`                                                   | A test plugin for the gate test cases. The parameter `mode` selects its behaviour (findings, echo, read, write, trap, timeout, memory, invalid output).                                                                                                                    |
 
 ## Building
 
-The grammars of the tree-sitter plugins are C code, so building for `wasm32-wasip1` needs the WASI libc. `.cargo/config.toml` points `CFLAGS_wasm32_wasip1` at `/usr/share/wasi-sysroot`, where Arch Linux and Debian install it (package `wasi-libc`); set the variable to use another sysroot, for example one of wasi-sdk. The rules of `lang-tree` are tested natively: `cargo test -p lang-tree --target x86_64-unknown-linux-gnu`.
+The grammars of the tree-sitter plugins are C code, so building for `wasm32-wasip1` needs the WASI libc. `.cargo/config.toml` points `CFLAGS_wasm32_wasip1` at `/usr/share/wasi-sysroot`, where Arch Linux and Debian install it (package `wasi-libc`); set the variable to use another sysroot, for example one of wasi-sdk. The rules of `lang-tree`, the entries of `lang-rust`, and the token form are tested natively: `cargo test -p lang-tree -p lang-rust -p token-form --target x86_64-unknown-linux-gnu`.
 
 ```sh
 rustup target add wasm32-wasip1
@@ -60,3 +61,15 @@ public-api:
 | `lang-dart`       | `dart`                                               | `Fee.add`                   | names without a leading `_`                                           |
 
 The public API of a file is one string per public declaration: its symbol and its signature without the body. A file with a syntax error is `unparsable`.
+
+## Public API entries per language
+
+`public_api` gives one entry per public declaration (`spec/plugins.md`, items 32 to 34). The host compares them without `line`, `text`, `extra`, defaults, and the names of parameters passed by position, so how a language passes parameters decides whether renaming one counts.
+
+| Plugin            | Kinds                                                                                                                                                   | Parameters passed                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `lang-rust`       | `function`, `method`, `struct`, `field`, `enum`, `variant`, `trait`, `type`, `constant`, `static`, `use`, `module`, `impl`                              | by position                                                             |
+| `lang-typescript` | `function`, `generator`, `class`, `interface`, `enum`, `variant`, `namespace`, `type`, `variable`, `method`, `constructor`, `getter`, `setter`, `field` | by position                                                             |
+| `lang-python`     | `function`, `class`, `method`, `property`, `setter`, `field`, `variable`                                                                                | by both; by position before `/`, `*args`; by name after `*`, `**kwargs` |
+| `lang-php`        | `function`, `class`, `interface`, `trait`, `enum`, `variant`, `method`, `constructor`, `constant`, `field`                                              | by both                                                                 |
+| `lang-dart`       | `function`, `class`, `mixin`, `extension`, `enum`, `variant`, `method`, `constructor`, `getter`, `setter`, `field`, `variable`                          | by position; by name inside `{…}`                                       |
