@@ -8,7 +8,7 @@ hone's own WebAssembly plugins (concept Section 9). They form a Cargo workspace 
 | `lang-tree`                                               | The shared engine of the tree-sitter language plugins: parses a file, collects its nested declarations, and answers `resolve` and `public_api`. One module of rules per language.                                                                                          |
 | `lang-typescript`, `lang-python`, `lang-php`, `lang-dart` | Language plugins on `lang-tree` for TypeScript and JavaScript, Python, PHP, and Dart, each shipped as the package `hone/lang-<language>` (`schemas/lang-<language>/`).                                                                                                     |
 | `token-form`                                              | The token form of the types in a public API entry (`spec/plugins.md`, item 32), shared by `lang-tree` and `lang-rust`.                                                                                                                                                     |
-| `probe`                                                   | A test plugin for the gate test cases. The parameter `mode` selects its behaviour (findings, echo, read, write, trap, timeout, memory, invalid output).                                                                                                                    |
+| `probe`                                                   | A test plugin for the gate test cases. The parameter `mode` selects its behaviour (findings, echo, read, write, trap, timeout, memory, invalid output). As a language plugin, the first symbol or file name selects it (`trap`, `extra` for one result too many).          |
 
 ## Building
 

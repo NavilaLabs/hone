@@ -13,6 +13,13 @@
 //! - `trap`, `spin`, `grow`, `error`: panics, loops forever, allocates without bound, or returns
 //!   an error.
 //! - `garbage`, `invalid`: returns bytes that are not JSON, or JSON outside the output schema.
+//!
+//! As a language plugin, the first entry of the input selects what `resolve` and `public_api` do:
+//! its symbol for `resolve`, the name of its file without the extension for `public_api`.
+//!
+//! - `trap`: panics.
+//! - `extra`: returns one result more than the input has entries.
+//! - anything else: every symbol is `found`, every file has no public declaration.
 
 use extism_pdk::{FnResult, WithReturnCode, plugin_fn};
 use serde_json::{Value, json};
@@ -24,7 +31,7 @@ pub fn describe() -> FnResult<String> {
         "name": "probe",
         "version": env!("CARGO_PKG_VERSION"),
         "protocol": 1,
-        "entry_points": ["describe", "check"],
+        "entry_points": ["describe", "check", "resolve", "public_api"],
         "capabilities": { "read": ["project"], "net": [], "timeout_ms": 1000, "memory_pages": 64 },
     })
     .to_string())
@@ -79,6 +86,46 @@ pub fn check(input: String) -> FnResult<String> {
         other => json!([error_finding("unknown-mode", other)]),
     };
     Ok(json!({ "findings": findings }).to_string())
+}
+
+/// The entry point `resolve` of the language plugin contract.
+#[plugin_fn]
+pub fn resolve(input: String) -> FnResult<String> {
+    let input: Value = serde_json::from_str(&input)?;
+    let symbols = input["symbols"].as_array().cloned().unwrap_or_default();
+    let mode = symbols.first().and_then(|first| first["symbol"].as_str());
+    Ok(language_output(
+        mode,
+        symbols.len(),
+        json!({ "status": "found" }),
+    ))
+}
+
+/// The entry point `public_api` of the language plugin contract.
+#[plugin_fn]
+pub fn public_api(input: String) -> FnResult<String> {
+    let input: Value = serde_json::from_str(&input)?;
+    let paths = input["paths"].as_array().cloned().unwrap_or_default();
+    let mode = paths
+        .first()
+        .and_then(Value::as_str)
+        .map(std::path::Path::new)
+        .and_then(std::path::Path::file_stem)
+        .and_then(|stem| stem.to_str());
+    Ok(language_output(
+        mode,
+        paths.len(),
+        json!({ "status": "ok", "symbols": [] }),
+    ))
+}
+
+fn language_output(mode: Option<&str>, entries: usize, result: Value) -> String {
+    let count = match mode {
+        Some("trap") => panic!("the probe traps on purpose"),
+        Some("extra") => entries + 1,
+        _ => entries,
+    };
+    json!({ "results": vec![result; count] }).to_string()
 }
 
 fn echo(input: &Value) -> Vec<Value> {
