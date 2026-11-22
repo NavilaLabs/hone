@@ -243,6 +243,35 @@ async fn resolve_writes_then_compares() {
 }
 
 #[tokio::test]
+async fn resolve_shows_the_layers_and_writes_nothing() {
+    let project = resolve_case("null-removal");
+    let shown = call(project.clone(), "resolve", json!({ "show": true })).await;
+    assert!(!shown.is_error);
+    assert_eq!(shown.content["status"], "shown");
+    assert_eq!(shown.content["file"], "out-of-date");
+    assert_eq!(
+        shown.content["origins"]["kinds"]["decision"],
+        json!([{ "kind": "package", "name": "acme/base" }, { "kind": "project" }])
+    );
+    assert!(!project.root.join(".hone/resolved.json").exists());
+
+    for (input, message) in [
+        (
+            json!({ "show": true, "check": true }),
+            "`show` and `check` exclude each other",
+        ),
+        (json!({ "ticket": TICKET }), "`ticket` needs `show`"),
+    ] {
+        let reply = call(project.clone(), "resolve", input.clone()).await;
+        assert!(reply.is_error, "{input}");
+        assert_eq!(reply.content["status"], "invalid", "{input}");
+        assert_eq!(reply.content["message"], message, "{input}");
+    }
+    assert!(!project.root.join(".hone/resolved.json").exists());
+    std::fs::remove_dir_all(&project.root).expect("removable");
+}
+
+#[tokio::test]
 async fn resolve_failure_is_an_error_with_problems() {
     let project = resolve_case("error-shape");
     let reply = call(project.clone(), "resolve", json!({})).await;
