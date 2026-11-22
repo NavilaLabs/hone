@@ -7,7 +7,8 @@
 use std::path::{Path, PathBuf};
 
 use hone_gui::hone::{
-    Anchor, AttributeValue, GateScope, Hone, Peer, StepStatus, TicketStart, Write, Writer,
+    Anchor, AttributeValue, ConfigView, GateScope, Hone, Peer, StepStatus, TicketStart, Write,
+    Writer,
 };
 
 const TICKET: &str = "tk-9f2x4a8m";
@@ -630,5 +631,38 @@ async fn a_file_is_shown_at_the_line_of_a_symbol() {
     assert_eq!(
         outside.map_err(|failure| failure.status),
         Err("error".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn show_config_gives_the_layers_and_the_lockfile() {
+    let case = repository().join("schemas/tests/resolve/null-removal");
+    let hone = Hone::with_binary(binary(), case.join("project"))
+        .with_packages(Some(case.join("packages")));
+    let ConfigView::Shown(shown) = hone.show_config().await.expect("hone runs") else {
+        panic!("the case resolves");
+    };
+    assert_eq!(
+        shown.hash,
+        "sha256:06425703822e17cfb9101e73544c0549a2454a3d8f1b38a321f5682fbc8d0fd7"
+    );
+    assert_eq!(shown.file, "out-of-date");
+    assert_eq!(
+        shown.origins["steps"]["decision"],
+        serde_json::json!([{ "kind": "package", "name": "acme/base" }, { "kind": "project" }])
+    );
+    assert_eq!(shown.lock["packages"]["acme/base"]["version"], "1.0.0");
+    assert!(!case.join("project/.hone/resolved.json").exists());
+
+    let case = repository().join("schemas/tests/resolve/error-plugin-hash");
+    let hone = Hone::with_binary(binary(), case.join("project"))
+        .with_packages(Some(case.join("packages")));
+    let ConfigView::Failed { problems, lock } = hone.show_config().await.expect("hone runs") else {
+        panic!("the case fails");
+    };
+    assert_eq!(problems[0]["category"], "plugin-hash");
+    assert_eq!(
+        lock.expect("readable")["plugins"]["api-check"]["hash"],
+        "sha256:1111111111111111111111111111111111111111111111111111111111111111"
     );
 }
