@@ -25,3 +25,8 @@ package-lock.json
 
 # Worktrees of agent sessions are separate checkouts with their own fixtures.
 .claude/worktrees/
+# The example project: approvals carry content hashes, and the resolved configuration and its
+# snapshots are canonical JSON.
+/examples/*/design/
+/examples/*/.hone/resolved.json
+/examples/*/.hone/snapshots/

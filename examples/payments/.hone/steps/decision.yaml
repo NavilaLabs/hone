@@ -1,0 +1,8 @@
+acts: [architect]
+requires: [specify]
+outputs: [decision]
+gates:
+  decision-accepted:
+    { gate: artifact-exists, params: { type: decision, status: accepted } }
+  approved: { gate: approvals-valid, params: { role: architect } }
+  no-blockers: { gate: no-open-blocking-threads }

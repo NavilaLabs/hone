@@ -1,0 +1,9 @@
+id: "mod-f8mk9hpn"
+type: "module"
+name: "Payment fees"
+interface:
+  code: "src/payments/fee.rs#Fee"
+  description: "Fees in whole cents; callers never see how a fee is stored."
+anchors:
+  - { kind: "path", ref: "src/payments" }
+  - { kind: "symbol", ref: "src/payments/fee.rs#Fee::add" }

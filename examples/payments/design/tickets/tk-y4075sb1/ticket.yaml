@@ -1,0 +1,8 @@
+id: "tk-y4075sb1"
+type: "ticket"
+project: "prj-p4y7m3nt"
+profile: "standard"
+config: "sha256:207fdc01976f8872436540850411ffd62ed35a0f868398ba42a39306c231e2ff"
+attributes: { "risk": "high" }
+external:
+  - { system: "github", key: "42", url: "https://github.com/example/payments/issues/42" }

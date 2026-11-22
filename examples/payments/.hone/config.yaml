@@ -1,0 +1,3 @@
+workspace: local
+project: prj-p4y7m3nt
+extends: [hone/standard@1, hone/lang-rust@1]

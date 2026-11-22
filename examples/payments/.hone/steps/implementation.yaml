@@ -1,0 +1,8 @@
+acts: [developer]
+requires: [specify]
+gates:
+  binding:
+    {
+      gate: change-needs-binding,
+      params: { anchored: module, binding: decision },
+    }

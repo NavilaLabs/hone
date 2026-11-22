@@ -1,0 +1,3 @@
+rules:
+  - { when: { risk: "high" }, profile: "standard" }
+default: "lite"

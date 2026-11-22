@@ -1,0 +1,7 @@
+acts: [developer]
+outputs: [spec]
+gates:
+  schema: { gate: schema-valid }
+  ids: { gate: ids-unique }
+  links: { gate: links-resolve }
+  spec-exists: { gate: artifact-exists, params: { type: spec } }

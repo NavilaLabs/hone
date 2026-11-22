@@ -1,0 +1,7 @@
+steps:
+  {
+    specify: required,
+    decision: required,
+    interfaces: required,
+    implementation: required,
+  }

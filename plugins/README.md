@@ -48,7 +48,7 @@ public-api:
   params: { anchored: module, binding: decision }
 ```
 
-`module-anchors-resolve` needs neither changed paths nor a base state; a symbol in a file that no language plugin handles is the warning `symbol-unchecked`. `public-api-has-decision` needs `--changed` and `--base <dir>`; a hit file that no language plugin handles is the warning `api-unchecked`. After a rebuild of a language plugin, also copy its module into `schemas/lang-<language>/plugins/`; a test checks that the package and its test case carry the same bytes.
+`module-anchors-resolve` needs neither changed paths nor a base state; a symbol in a file that no language plugin handles is the warning `symbol-unchecked`. `public-api-has-decision` needs `--changed` and `--base <dir>`; a hit file that no language plugin handles is the warning `api-unchecked`. After a rebuild of a language plugin, also copy its module into `schemas/lang-<language>/plugins/`; a test checks that the package and its test case carry the same bytes. A rebuilt `lang-rust`, or any change under `schemas/standard/`, also changes the example `examples/payments` (its lock entries, `resolved.json`, and the ticket's snapshot); the test `example` of `hone-cli` turns red until it is updated.
 
 ## Symbols per language
 

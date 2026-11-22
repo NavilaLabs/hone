@@ -1,0 +1,2 @@
+review_summary: approvals-only
+steps: { specify: required, implementation: required, interfaces: optional }

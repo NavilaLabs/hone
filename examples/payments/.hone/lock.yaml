@@ -1,0 +1,16 @@
+packages:
+  hone/standard:
+    {
+      version: "1.0.0",
+      hash: "sha256:e1880e2c18c1a08cae9f82b5964088c96ee02560dac8917f92adce402f60b221",
+    }
+  hone/lang-rust:
+    {
+      version: "1.0.0",
+      hash: "sha256:06e392113fe24a6b1eb78b6bc1cd853808e2020bf75627aaf1a5b504c5e822cd",
+    }
+plugins:
+  lang-rust:
+    hash: "sha256:a2635400f7c7abd4a746031686b628cbca732b424aea8212f3f0fed57d9b72e2"
+    capabilities:
+      { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }
