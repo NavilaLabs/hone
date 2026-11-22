@@ -4,7 +4,8 @@
 //! [`resolve`] builds the resolved configuration (Level 1) of a project from its layers
 //! (concept Section 8). [`Resolved::from_document`] reads an existing resolved document.
 //! [`write_resolved`] and [`compare_resolved`] keep `.hone/resolved.json` in step with its
-//! sources. [`check`] runs the gates over a checked directory (concept Section 7).
+//! sources, and [`show_resolved`] shows the configuration with the layers it comes from.
+//! [`check`] runs the gates over a checked directory (concept Section 7).
 //! [`ProcessStore`] appends and reads the events of the process store (concept Section 4).
 
 mod anchor;
@@ -37,6 +38,7 @@ mod process;
 mod replication;
 mod resolved_file;
 mod schema_valid;
+mod show;
 mod source;
 mod ticket;
 mod transport;
@@ -73,6 +75,7 @@ pub use process::{
 };
 pub use replication::{SyncCode, SyncProblem, SyncReport};
 pub use resolved_file::{ResolvedFile, ResolvedFileError, compare_resolved, write_resolved};
+pub use show::{Comparison, FileState, ShowError, Shown, SnapshotState, show_resolved};
 pub use source::{NoPackages, PackageDirectory, PackageSource};
 pub use ticket::{External, ProfileSelection, TicketStart, TicketWritten, select_profile};
 pub use transport::{ServerCode, is_project_id, parse_cursor_query};
@@ -81,6 +84,7 @@ pub use yaml::YamlProfileError;
 use crate::error::pointer_problem;
 use crate::packages::Layer;
 use crate::pointer::Pointer;
+use crate::show::{Contributor, Origins};
 
 /// A valid resolved configuration (Level 1).
 #[derive(Debug, Clone, PartialEq)]
@@ -153,6 +157,15 @@ pub fn resolve(
     packages: &dyn PackageSource,
     overrides: Option<&Value>,
 ) -> Result<Resolved, ResolveError> {
+    resolve_with_origins(project_root, packages, overrides).map(|(resolved, _)| resolved)
+}
+
+// `resolve`, which also records the layers that contributed to every definition.
+fn resolve_with_origins(
+    project_root: &Path,
+    packages: &dyn PackageSource,
+    overrides: Option<&Value>,
+) -> Result<(Resolved, Origins), ResolveError> {
     let into_error = |problems| ResolveError { problems };
     let hone = project_root.join(".hone");
 
@@ -188,12 +201,17 @@ pub fn resolve(
 
     let mut tree = Map::new();
     let mut schemas = BTreeMap::new();
-    for layer in loaded {
+    let mut origins = Origins::default();
+    for (layer, source) in loaded.into_iter().zip(&layers) {
+        origins.record(&Contributor::from(&source.origin), &layer.tree);
         merge::merge(&mut tree, layer.tree, &Pointer::root(), &mut problems);
         schemas.extend(layer.schemas);
     }
     if let Some(overrides) = overrides {
         apply_overrides(&mut tree, overrides, &mut problems);
+        if let Value::Object(overrides) = overrides {
+            origins.record(&Contributor::Overrides, overrides);
+        }
     }
     if !problems.is_empty() {
         return Err(into_error(problems));
@@ -206,7 +224,7 @@ pub fn resolve(
     }
     complete::write_defaults(&mut tree);
 
-    Resolved::from_document(Value::Object(tree))
+    Resolved::from_document(Value::Object(tree)).map(|resolved| (resolved, origins))
 }
 
 fn apply_overrides(tree: &mut Map<String, Value>, overrides: &Value, problems: &mut Vec<Problem>) {

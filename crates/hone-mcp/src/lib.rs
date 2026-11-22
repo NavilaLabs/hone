@@ -83,6 +83,15 @@ struct ResolveInput {
     )]
     #[serde(default)]
     check: bool,
+    #[schemars(
+        description = "Return the configuration from its sources with the layers of every definition and the lockfile, write nothing."
+    )]
+    #[serde(default)]
+    show: bool,
+    #[schemars(
+        description = "With `show`: apply the overrides of this ticket and compare with its snapshot."
+    )]
+    ticket: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -274,7 +283,7 @@ impl Server {
     }
 
     #[tool(
-        description = "Resolve the configuration of the project and write `.hone/resolved.json`, or with `check` only compare it. Returns `status` (`written`, `up-to-date`, `out-of-date`) and `hash`."
+        description = "Resolve the configuration of the project and write `.hone/resolved.json`, or with `check` only compare it. Returns `status` (`written`, `up-to-date`, `out-of-date`) and `hash`. With `show`, returns `status: shown`, `hash`, `file` (or `snapshot` with `ticket`), `config`, `origins`, and `lock`, and writes nothing."
     )]
     fn resolve(&self, Parameters(input): Parameters<ResolveInput>) -> CallToolResult {
         let packages: Box<dyn PackageSource> = match &self.project.packages {
@@ -282,6 +291,19 @@ impl Server {
             None => Box::new(NoPackages),
         };
         let root = &self.project.root;
+        if input.show && input.check {
+            return invalid_input("`show` and `check` exclude each other");
+        }
+        if input.show {
+            return match hone_core::show_resolved(root, packages.as_ref(), input.ticket.as_deref())
+            {
+                Ok(shown) => CallToolResult::structured(to_value(&shown)),
+                Err(error) => CallToolResult::structured_error(to_value(&error)),
+            };
+        }
+        if input.ticket.is_some() {
+            return invalid_input("`ticket` needs `show`");
+        }
         let outcome = if input.check {
             hone_core::compare_resolved(root, packages.as_ref())
         } else {
@@ -555,3 +577,9 @@ fn to_value(value: &impl serde::Serialize) -> Value {
 
 #[cfg(test)]
 mod tests;
+
+fn invalid_input(message: &str) -> CallToolResult {
+    CallToolResult::structured_error(to_value(&ProcessError::Invalid {
+        message: message.into(),
+    }))
+}

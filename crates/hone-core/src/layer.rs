@@ -7,8 +7,9 @@ use crate::error::{Category, Origin, Problem, file_problem};
 use crate::packages::Layer;
 use crate::yaml;
 
-const DEFINITION_DIRECTORIES: [&str; 5] = ["kinds", "roles", "steps", "profiles", "plugins"];
-const SUBTREE_FILES: [(&str, &str); 3] = [
+pub(crate) const DEFINITION_DIRECTORIES: [&str; 5] =
+    ["kinds", "roles", "steps", "profiles", "plugins"];
+pub(crate) const SUBTREE_FILES: [(&str, &str); 3] = [
     ("select.yaml", "select"),
     ("actors.yaml", "actors"),
     ("ticket.yaml", "ticket"),

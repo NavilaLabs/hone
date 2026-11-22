@@ -8,7 +8,11 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use hone_core::{NoPackages, PackageDirectory, PackageSource, ResolvedFile, ResolvedFileError};
+use hone_core::{
+    Comparison, FileState, NoPackages, PackageDirectory, PackageSource, ResolvedFile,
+    ResolvedFileError, ShowError, Shown, SnapshotState,
+};
+use serde_json::Value;
 
 /// hone: design artifacts, their links and lifecycle, and the steps from ticket to code.
 #[derive(Parser)]
@@ -29,8 +33,15 @@ enum Command {
         #[arg(long)]
         packages: Option<PathBuf>,
         /// Only check that `.hone/resolved.json` matches its sources, write nothing.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "show")]
         check: bool,
+        /// Print the configuration from its sources with the layers of every definition and
+        /// the lockfile, write nothing.
+        #[arg(long)]
+        show: bool,
+        /// With `--show`: apply the overrides of this ticket and compare with its snapshot.
+        #[arg(long, requires = "show")]
+        ticket: Option<String>,
         /// Print the result as JSON.
         #[arg(long)]
         json: bool,
@@ -98,12 +109,23 @@ fn main() -> ExitCode {
             root,
             packages,
             check,
+            show,
+            ticket,
             json,
         } => {
             let source: Box<dyn PackageSource> = match packages {
                 Some(directory) => Box::new(PackageDirectory::new(directory)),
                 None => Box::new(NoPackages),
             };
+            if show {
+                let outcome = hone_core::show_resolved(&root, source.as_ref(), ticket.as_deref());
+                print_show(&outcome, json);
+                return if outcome.is_ok() {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                };
+            }
             let outcome = if check {
                 hone_core::compare_resolved(&root, source.as_ref())
             } else {
@@ -246,6 +268,66 @@ fn mcp_project(arguments: McpArguments) -> Result<hone_mcp::Project, String> {
         author,
         sync_peer,
     })
+}
+
+fn print_show(outcome: &Result<Shown, ShowError>, as_json: bool) {
+    if as_json {
+        let value = match outcome {
+            Ok(shown) => serde_json::to_value(shown),
+            Err(error) => serde_json::to_value(error),
+        };
+        println!("{}", value.expect("serializable"));
+        return;
+    }
+    let shown = match outcome {
+        Ok(shown) => shown,
+        Err(error) => {
+            eprintln!("{error}");
+            return;
+        }
+    };
+    let comparison = match shown.comparison {
+        Comparison::File(FileState::UpToDate) => ".hone/resolved.json is up to date",
+        Comparison::File(FileState::OutOfDate) => ".hone/resolved.json is out of date",
+        Comparison::Snapshot(SnapshotState::Same) => "the ticket's snapshot is the same",
+        Comparison::Snapshot(SnapshotState::Differs) => "the ticket's snapshot differs",
+    };
+    println!("{} ({comparison})", shown.hash);
+    let layers = |layers: &Value| {
+        layers
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|layer| match layer["kind"].as_str() {
+                Some("package") => layer["name"].as_str().unwrap_or_default().to_owned(),
+                kind => kind.unwrap_or_default().to_owned(),
+            })
+            .collect::<Vec<_>>()
+    };
+    let layers = |origins: &Value| {
+        let names = layers(origins);
+        if names.is_empty() {
+            "-".to_owned()
+        } else {
+            names.join(", ")
+        }
+    };
+    for (section, origins) in shown.origins.as_object().into_iter().flatten() {
+        match origins {
+            Value::Object(definitions) => {
+                for (name, origins) in definitions {
+                    println!("{section}.{name}  {}", layers(origins));
+                }
+            }
+            origins => println!("{section}  {}", layers(origins)),
+        }
+    }
+    for (name, entry) in shown.lock["plugins"].as_object().into_iter().flatten() {
+        println!(
+            "lock plugins.{name}  {}",
+            entry["hash"].as_str().unwrap_or_default()
+        );
+    }
 }
 
 fn print_resolve(outcome: &Result<ResolvedFile, ResolvedFileError>, as_json: bool) {

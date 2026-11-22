@@ -92,10 +92,16 @@ pub fn compare_resolved(
 ) -> Result<ResolvedFile, ResolvedFileError> {
     let resolved = resolve_project(project_root, packages)?;
     let hash = resolved.hash();
-    Ok(match std::fs::read(target(project_root)) {
-        Ok(existing) if existing == resolved.file_contents() => ResolvedFile::UpToDate { hash },
-        _ => ResolvedFile::OutOfDate { hash },
+    Ok(if matches_file(project_root, &resolved) {
+        ResolvedFile::UpToDate { hash }
+    } else {
+        ResolvedFile::OutOfDate { hash }
     })
+}
+
+// Whether `.hone/resolved.json` holds exactly `resolved`; a missing file does not.
+pub(crate) fn matches_file(project_root: &Path, resolved: &Resolved) -> bool {
+    std::fs::read(target(project_root)).is_ok_and(|existing| existing == resolved.file_contents())
 }
 
 impl Resolved {

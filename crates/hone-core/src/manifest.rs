@@ -199,6 +199,14 @@ pub(crate) fn read_lock(hone: &Path) -> Result<Lock, Vec<Problem>> {
     read_lock_file(hone, "lock.yaml")
 }
 
+// The content of `lock.yaml` as written, `{}` for a missing file, or `None` when the lockfile
+// is malformed.
+pub(crate) fn lock_content(hone: &Path) -> Option<Value> {
+    read_lock(hone).ok()?;
+    let content = read_map(hone, "lock.yaml", &Origin::Project).ok()?;
+    Some(Value::Object(content.unwrap_or_default()))
+}
+
 // A missing file is an empty lock: it approves nothing.
 pub(crate) fn read_lock_file(directory: &Path, file: &str) -> Result<Lock, Vec<Problem>> {
     let origin = Origin::Project;

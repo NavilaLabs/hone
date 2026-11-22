@@ -345,7 +345,7 @@ pub(crate) fn load_ticket(
     read_ticket(project_root, current.document(), ticket)
 }
 
-fn read_ticket(
+pub(crate) fn read_ticket(
     project_root: &Path,
     current: &Value,
     ticket: &str,
