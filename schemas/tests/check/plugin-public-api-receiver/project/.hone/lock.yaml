@@ -1,0 +1,4 @@
+plugins:
+  lang-rust:
+    hash: "sha256:a2635400f7c7abd4a746031686b628cbca732b424aea8212f3f0fed57d9b72e2"
+    capabilities: { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }

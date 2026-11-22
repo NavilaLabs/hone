@@ -1,0 +1,4 @@
+plugins:
+  lang-python:
+    hash: "sha256:114da4c88e90c8de93e0eafaa367f448959939fdf126f322639f0bb1c13c518c"
+    capabilities: { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }

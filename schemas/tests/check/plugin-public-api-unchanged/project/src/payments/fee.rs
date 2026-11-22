@@ -3,8 +3,9 @@ pub struct Fee {
     cents: u8,
 }
 
+
 /// Computes the fee.
-pub fn compute(amount: u64) -> Fee {
-    let cents = (amount % 100) as u8;
-    Fee { amount, cents }
+pub fn compute(total: u64) -> Fee {
+    let cents = (total % 100) as u8;
+    Fee { amount: total, cents }
 }

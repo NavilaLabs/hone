@@ -1,0 +1,4 @@
+plugins:
+  lang-php:
+    hash: "sha256:17cae73200a9602ac05a15e2cf6bf21122ecfd20e288247356b3948d522b14b2"
+    capabilities: { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }
