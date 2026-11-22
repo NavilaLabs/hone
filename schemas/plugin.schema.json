@@ -274,8 +274,124 @@
       },
       "additionalProperties": false
     },
+    "PublicApiEntry": {
+      "description": "One public declaration of a file. A list is never empty and a flag is present only as `true`.",
+      "type": "object",
+      "required": ["symbol", "kind", "text"],
+      "properties": {
+        "symbol": {
+          "description": "The symbol as `resolve` takes it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "description": "The kind of declaration, the plugin's choice.",
+          "type": "string",
+          "minLength": 1
+        },
+        "type_parameters": {
+          "description": "The generic parameters in order.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/SourceType" }
+        },
+        "where": {
+          "description": "The predicates of a `where` clause in order.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/SourceType" }
+        },
+        "receiver": {
+          "description": "The receiver of a method, without a binding `mut`.",
+          "$ref": "#/$defs/SourceType"
+        },
+        "static": {
+          "description": "A member called through its type instead of an instance.",
+          "const": true
+        },
+        "self_type": {
+          "description": "The type whose implementation block holds the declaration.",
+          "$ref": "#/$defs/SourceType"
+        },
+        "bases": {
+          "description": "The supertypes in order.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/SourceType" }
+        },
+        "modifiers": {
+          "description": "The keywords other than visibility and `static`, compared as a set.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "attributes": {
+          "description": "The attributes, decorators, and annotations, compared as a set.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/SourceType" }
+        },
+        "parameters": {
+          "description": "The parameters in order.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/PublicApiParameter" }
+        },
+        "returns": {
+          "description": "The return type.",
+          "$ref": "#/$defs/SourceType"
+        },
+        "type": {
+          "description": "The type of a field, constant, or variable, the target of an alias, the fields of an enum variant, or the trait of a trait implementation.",
+          "$ref": "#/$defs/SourceType"
+        },
+        "value": {
+          "description": "The value of a compile-time constant or the explicit value of an enum member.",
+          "$ref": "#/$defs/SourceType"
+        },
+        "line": {
+          "description": "The line of the declaration, counted from 1. Not compared.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "text": {
+          "description": "The source text without the body, whitespace collapsed. Not compared.",
+          "type": "string"
+        },
+        "extra": {
+          "description": "Further data of the plugin. Not compared.",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PublicApiParameter": {
+      "description": "One parameter. `name` counts only when `passing` is not `positional`; `default` never counts.",
+      "type": "object",
+      "required": ["name", "passing"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "$ref": "#/$defs/SourceType" },
+        "optional": {
+          "description": "A caller may leave it out.",
+          "const": true
+        },
+        "variadic": {
+          "description": "It takes any number of arguments.",
+          "const": true
+        },
+        "default": { "$ref": "#/$defs/SourceType" },
+        "passing": { "enum": ["positional", "named", "both"] }
+      },
+      "additionalProperties": false
+    },
+    "SourceType": {
+      "description": "Source text in token form: one space between two words and after a comma, no other space, no comma before a closing bracket.",
+      "type": "string",
+      "minLength": 1
+    },
     "PublicApiOutput": {
-      "description": "The output of `public_api`: one result per path, in the order of the input. The host compares `symbols` only as sets of strings.",
+      "description": "The output of `public_api`: one result per path, in the order of the input. The host compares the entries of a result through a projection: without `line`, `text`, `extra`, parameter defaults, and the names of positional parameters, as sets of canonical JSON.",
       "type": "object",
       "required": ["results"],
       "properties": {
@@ -288,7 +404,10 @@
                 "required": ["status", "symbols"],
                 "properties": {
                   "status": { "const": "ok" },
-                  "symbols": { "type": "array", "items": { "type": "string" } }
+                  "symbols": {
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/PublicApiEntry" }
+                  }
                 },
                 "additionalProperties": false
               },

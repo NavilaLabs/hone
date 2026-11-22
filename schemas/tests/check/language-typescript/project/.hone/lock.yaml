@@ -1,4 +1,4 @@
 plugins:
   lang-typescript:
-    hash: "sha256:41ef14f2d495c1ece052baab8796bb2cbe08f5a259cf2a7da924f8a285ad473e"
+    hash: "sha256:5d1d4fa8262a9350c37c047d8b604a2e58f27f5477ec874c895a6424eb47a08a"
     capabilities: { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }

@@ -5,11 +5,11 @@
 //! type named like the last but one segment, also when the type is defined elsewhere. Re-exports
 //! and out-of-line `mod x;` files are not followed.
 //!
-//! `public_api` lists the public items of a Rust file: function signatures, structs with their
-//! `pub` fields, enums, traits without the bodies of default methods, type aliases, constants and
-//! statics with their types, `pub use`, the `pub` functions of inherent `impl` blocks, and the
-//! headers of trait `impl` blocks, each inside its `pub mod` path. Bodies, private items, and doc
-//! comments do not count.
+//! `public_api` gives one entry per public item of a Rust file (`spec/plugins.md`, item 32): functions,
+//! structs and their `pub` fields, enums and their variants, traits and their items, type aliases,
+//! constants with their values, statics, the names of a `pub use`, `pub mod`, the `pub` functions
+//! of inherent `impl` blocks, and trait `impl` blocks, each inside its `pub mod` path. Every
+//! parameter is passed by position. Bodies, private items, and doc comments do not count.
 
 mod api;
 mod symbol;

@@ -1,5 +1,8 @@
-//! The declarations each language's rules find in a sample, with their visibility, signature,
-//! and line. The expected lists were checked by hand against the samples.
+//! The declarations each language's rules find in a sample, with their line, visibility, symbol,
+//! and text, and the full public API entries of a second sample. The expected values were
+//! written by hand from the samples.
+
+use serde_json::{Value, json};
 
 fn declarations(
     rules: &lang_tree::Rules,
@@ -9,7 +12,23 @@ fn declarations(
     lang_tree::declarations_of(rules, extension, source)
         .expect("the sample parses")
         .into_iter()
-        .map(|(symbol, public, signature, line)| (line, public, symbol, signature))
+        .map(|(public, entry)| {
+            (
+                usize::try_from(entry["line"].as_u64().expect("a line")).expect("a small line"),
+                public,
+                entry["symbol"].as_str().expect("a symbol").to_owned(),
+                entry["text"].as_str().expect("a text").to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn entries(rules: &lang_tree::Rules, extension: &str, source: &str) -> Vec<Value> {
+    lang_tree::declarations_of(rules, extension, source)
+        .expect("the sample parses")
+        .into_iter()
+        .filter(|(public, _)| *public)
+        .map(|(_, entry)| entry)
         .collect()
 }
 
@@ -187,4 +206,104 @@ fn a_syntax_error_names_its_line() {
     )
     .expect_err("not Python");
     assert_eq!(error, "syntax error at line 3");
+}
+
+#[test]
+fn typescript_entries() {
+    let source = "@sealed\nexport abstract class Fee<T extends Base = Base> extends Base<T> implements Priced, Other {\n  static of(x: number, y?: string, z = 3, ...rest: number[]): Fee<T> { return 1 }\n  readonly amount: number = 4;\n  async get total(): Promise<number> { return 1 }\n}\nexport function f<K>(a: Map<\n  K,\n  V,\n>): void {}\nexport type U =\n  | A\n  | B;\nexport enum E { A = 1 }\nexport interface I extends J { p?: string }\n";
+    assert_eq!(
+        entries(&lang_tree::typescript::RULES, "ts", source),
+        vec![
+            json!({ "symbol": "Fee", "kind": "class", "type_parameters": ["T extends Base=Base"], "bases": ["Base<T>", "Priced", "Other"], "modifiers": ["abstract"], "attributes": ["@sealed"], "line": 2, "text": "abstract class Fee<T extends Base = Base> extends Base<T> implements Priced, Other" }),
+            json!({ "symbol": "Fee.of", "kind": "method", "static": true, "parameters": [
+                { "name": "x", "type": "number", "passing": "positional" },
+                { "name": "y", "type": "string", "optional": true, "passing": "positional" },
+                { "name": "z", "optional": true, "default": "3", "passing": "positional" },
+                { "name": "rest", "type": "number[]", "variadic": true, "passing": "positional" }
+            ], "returns": "Fee<T>", "line": 3, "text": "static of(x: number, y?: string, z = 3, ...rest: number[]): Fee<T>" }),
+            json!({ "symbol": "Fee.amount", "kind": "field", "modifiers": ["readonly"], "type": "number", "line": 4, "text": "readonly amount: number" }),
+            json!({ "symbol": "Fee.total", "kind": "getter", "modifiers": ["async"], "returns": "Promise<number>", "line": 5, "text": "async get total(): Promise<number>" }),
+            json!({ "symbol": "f", "kind": "function", "type_parameters": ["K"], "parameters": [{ "name": "a", "type": "Map<K, V>", "passing": "positional" }], "returns": "void", "line": 7, "text": "function f<K>(a: Map< K, V, >): void" }),
+            json!({ "symbol": "U", "kind": "type", "type": "A|B", "line": 11, "text": "type U = | A | B" }),
+            json!({ "symbol": "E", "kind": "enum", "line": 14, "text": "enum E" }),
+            json!({ "symbol": "E.A", "kind": "variant", "value": "1", "line": 14, "text": "A" }),
+            json!({ "symbol": "I", "kind": "interface", "bases": ["J"], "line": 15, "text": "interface I extends J" }),
+            json!({ "symbol": "I.p", "kind": "field", "modifiers": ["?"], "type": "string", "line": 15, "text": "p?: string" }),
+        ]
+    );
+}
+
+#[test]
+fn python_entries() {
+    let source = "@dataclass\nclass Fee(Base, metaclass=M):\n    async def add(self, a, /, b: int = 2, *args, c, d: str = \"x\", **kw) -> int:\n        pass\n    @staticmethod\n    def of(x: int, *, y=1): pass\n    @classmethod\n    def make(cls, z): pass\n    @property\n    def total(self) -> int: pass\ndef top(self): pass\n";
+    assert_eq!(
+        entries(&lang_tree::python::RULES, "py", source),
+        vec![
+            json!({ "symbol": "Fee", "kind": "class", "bases": ["Base", "metaclass=M"], "attributes": ["@dataclass"], "line": 2, "text": "class Fee(Base, metaclass=M)" }),
+            json!({ "symbol": "Fee.add", "kind": "method", "modifiers": ["async"], "parameters": [
+                { "name": "a", "passing": "positional" },
+                { "name": "b", "type": "int", "optional": true, "default": "2", "passing": "both" },
+                { "name": "args", "variadic": true, "passing": "positional" },
+                { "name": "c", "passing": "named" },
+                { "name": "d", "type": "str", "optional": true, "default": "\"x\"", "passing": "named" },
+                { "name": "kw", "variadic": true, "passing": "named" }
+            ], "returns": "int", "line": 3, "text": "async def add(self, a, /, b: int = 2, *args, c, d: str = \"x\", **kw) -> int" }),
+            json!({ "symbol": "Fee.of", "kind": "method", "static": true, "parameters": [
+                { "name": "x", "type": "int", "passing": "both" },
+                { "name": "y", "optional": true, "default": "1", "passing": "named" }
+            ], "line": 6, "text": "def of(x: int, *, y=1)" }),
+            json!({ "symbol": "Fee.make", "kind": "method", "static": true, "parameters": [{ "name": "z", "passing": "both" }], "line": 8, "text": "def make(cls, z)" }),
+            json!({ "symbol": "Fee.total", "kind": "property", "returns": "int", "line": 10, "text": "def total(self) -> int" }),
+            json!({ "symbol": "top", "kind": "function", "parameters": [{ "name": "self", "passing": "both" }], "line": 11, "text": "def top(self)" }),
+        ]
+    );
+}
+
+#[test]
+fn php_entries() {
+    let source = "<?php\n#[Attr(1)]\nfinal class Fee extends Base implements I, J {\n    public const int RATE = 1;\n    public readonly ?int $amount;\n    public static function of(int $x, ?string $y = null, int ...$rest): static {}\n    public function __construct() {}\n}\nenum Color: string implements HasLabel { case Red = 'r'; }\n";
+    assert_eq!(
+        entries(&lang_tree::php::RULES, "php", source),
+        vec![
+            json!({ "symbol": "Fee", "kind": "class", "bases": ["Base", "I", "J"], "modifiers": ["final"], "attributes": ["Attr(1)"], "line": 2, "text": "#[Attr(1)] final class Fee extends Base implements I, J" }),
+            json!({ "symbol": "Fee::RATE", "kind": "constant", "type": "int", "value": "1", "line": 4, "text": "public const int RATE" }),
+            json!({ "symbol": "Fee::$amount", "kind": "field", "modifiers": ["readonly"], "type": "?int", "line": 5, "text": "public readonly ?int $amount" }),
+            json!({ "symbol": "Fee::of", "kind": "method", "static": true, "parameters": [
+                { "name": "$x", "type": "int", "passing": "both" },
+                { "name": "$y", "type": "?string", "optional": true, "default": "null", "passing": "both" },
+                { "name": "$rest", "type": "int", "variadic": true, "passing": "both" }
+            ], "returns": "static", "line": 6, "text": "public static function of(int $x, ?string $y = null, int ...$rest): static" }),
+            json!({ "symbol": "Fee::__construct", "kind": "constructor", "line": 7, "text": "public function __construct()" }),
+            json!({ "symbol": "Color", "kind": "enum", "bases": ["HasLabel"], "type": "string", "line": 9, "text": "enum Color: string implements HasLabel" }),
+            json!({ "symbol": "Color::Red", "kind": "variant", "value": "'r'", "line": 9, "text": "case Red = 'r'" }),
+        ]
+    );
+}
+
+#[test]
+fn dart_entries() {
+    let source = "@immutable\nabstract class Fee<T extends num> extends Base<T> with M implements I {\n  static const int rate = 1;\n  final int amount;\n  Fee(this.amount, {required int a, String? b = 'x'});\n  static Fee of(int x, [int y = 2]) => Fee(x, a: 1);\n  factory Fee.named(int x) => Fee(x, a: 1);\n}\nenum Color { red }\nextension E on Fee { int twice() => 2; }\nconst limit = 5;\n";
+    assert_eq!(
+        entries(&lang_tree::dart::RULES, "dart", source),
+        vec![
+            json!({ "symbol": "Fee", "kind": "class", "type_parameters": ["T extends num"], "bases": ["Base<T>", "M", "I"], "modifiers": ["abstract"], "attributes": ["@immutable"], "line": 1, "text": "@immutable abstract class Fee<T extends num> extends Base<T> with M implements I" }),
+            json!({ "symbol": "Fee.rate", "kind": "field", "static": true, "modifiers": ["const"], "type": "int", "value": "1", "line": 3, "text": "static const int rate" }),
+            json!({ "symbol": "Fee.amount", "kind": "field", "modifiers": ["final"], "type": "int", "line": 4, "text": "final int amount" }),
+            json!({ "symbol": "Fee.Fee", "kind": "constructor", "parameters": [
+                { "name": "amount", "passing": "positional" },
+                { "name": "a", "type": "int", "passing": "named" },
+                { "name": "b", "type": "String?", "optional": true, "default": "'x'", "passing": "named" }
+            ], "line": 5, "text": "Fee(this.amount, {required int a, String? b = 'x'})" }),
+            json!({ "symbol": "Fee.of", "kind": "method", "static": true, "parameters": [
+                { "name": "x", "type": "int", "passing": "positional" },
+                { "name": "y", "type": "int", "optional": true, "default": "2", "passing": "positional" }
+            ], "returns": "Fee", "line": 6, "text": "static Fee of(int x, [int y = 2])" }),
+            json!({ "symbol": "Fee.Fee", "kind": "constructor", "modifiers": ["factory"], "parameters": [{ "name": "x", "type": "int", "passing": "positional" }], "line": 7, "text": "factory Fee.named(int x)" }),
+            json!({ "symbol": "Color", "kind": "enum", "line": 9, "text": "enum Color" }),
+            json!({ "symbol": "Color.red", "kind": "variant", "line": 9, "text": "red" }),
+            json!({ "symbol": "E", "kind": "extension", "self_type": "Fee", "line": 10, "text": "extension E on Fee" }),
+            json!({ "symbol": "E.twice", "kind": "method", "returns": "int", "line": 10, "text": "int twice()" }),
+            json!({ "symbol": "limit", "kind": "variable", "modifiers": ["const"], "value": "5", "line": 11, "text": "const limit" }),
+        ]
+    );
 }

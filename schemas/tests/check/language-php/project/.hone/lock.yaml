@@ -1,4 +1,4 @@
 plugins:
   lang-php:
-    hash: "sha256:e3b26a49c63861afca61d1e0705320c775c0068c9b8c7365f7e47c6ee6c6f5be"
+    hash: "sha256:17cae73200a9602ac05a15e2cf6bf21122ecfd20e288247356b3948d522b14b2"
     capabilities: { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }

@@ -1,4 +1,4 @@
 plugins:
   lang-dart:
-    hash: "sha256:a727123ed9d15ab2b5a393efd6f0a7414a0530d7794305dcd5b7a6d80fc51185"
+    hash: "sha256:808b6c20818e64ca77d9281218399be90744d1fe2179b0947b7d7be056a7f6af"
     capabilities: { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }

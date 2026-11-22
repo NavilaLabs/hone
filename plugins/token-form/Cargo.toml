@@ -1,0 +1,8 @@
+[package]
+name = "token-form"
+description = "The token form of hone's public API entries: source text that formatting does not change."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true

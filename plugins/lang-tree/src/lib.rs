@@ -3,9 +3,8 @@
 //! entry points `resolve` and `public_api` from them. A language contributes only its [`Rules`].
 //!
 //! A symbol is the names of the nested declarations joined by the language's separator, for
-//! example `Fee.add` or `Fee::add`. The public API of a file is one string per public
-//! declaration whose enclosing declarations are public too: its symbol, `: `, and its
-//! signature, the declaration's text without its body and with whitespace collapsed.
+//! example `Fee.add` or `Fee::add`. The public API of a file is one entry (`spec/plugins.md`,
+//! item 32) per public declaration whose enclosing declarations are public too.
 
 #[cfg(feature = "dart")]
 pub mod dart;
@@ -16,9 +15,9 @@ pub mod python;
 #[cfg(feature = "typescript")]
 pub mod typescript;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tree_sitter::{Node, Parser};
 
 /// What a language contributes to the engine.
@@ -39,15 +38,61 @@ pub struct Declared {
     pub public: bool,
     /// Whether its children can declare members, for example a class.
     pub container: bool,
-    /// The signature, or `None` for the node's text up to its `body` field.
-    pub signature: Option<String>,
+    /// What its public API entry says about it.
+    pub entry: Entry,
+}
+
+/// The fields of a public API entry other than `symbol` and `line` (`spec/plugins.md`, items 32
+/// and 33). An empty list and a `false` flag are left out of the entry.
+#[derive(Default)]
+pub struct Entry {
+    /// The kind of declaration, for example `function` or `class`.
+    pub kind: &'static str,
+    /// The source text without the body, or `None` for the node's text up to its `body` field.
+    pub text: Option<String>,
+    /// The generic parameters in order, each in token form.
+    pub type_parameters: Vec<String>,
+    /// Whether the member is called through its type instead of an instance.
+    pub is_static: bool,
+    /// The type the declaration extends, for example the type of a Dart extension.
+    pub self_type: Option<String>,
+    /// The supertypes in order, each in token form.
+    pub bases: Vec<String>,
+    /// The keywords other than visibility and `static`.
+    pub modifiers: Vec<String>,
+    /// The attributes, decorators, and annotations, each in token form.
+    pub attributes: Vec<String>,
+    /// The parameters in order.
+    pub parameters: Vec<Parameter>,
+    /// The return type in token form.
+    pub returns: Option<String>,
+    /// The type in token form.
+    pub value_type: Option<String>,
+    /// The value of a constant or an enum member in token form.
+    pub value: Option<String>,
+}
+
+/// A parameter of a public API entry.
+pub struct Parameter {
+    /// The name, or the pattern of a destructured parameter in token form.
+    pub name: String,
+    /// The type in token form.
+    pub value_type: Option<String>,
+    /// Whether a caller may leave it out.
+    pub optional: bool,
+    /// Whether it takes any number of arguments.
+    pub variadic: bool,
+    /// The default value in token form.
+    pub default: Option<String>,
+    /// How a caller passes it: `positional`, `named`, or `both`.
+    pub passing: &'static str,
 }
 
 struct Found {
     symbol: String,
     public: bool,
-    signature: String,
     line: usize,
+    entry: Value,
 }
 
 /// The entry point `resolve`: `input` as the plugin contract defines it, the files read below
@@ -93,10 +138,10 @@ pub fn public_api(rules: &Rules, input: &str) -> String {
             let path = path.as_str().unwrap_or_default();
             match read(rules, &format!("{root}/{path}"), path) {
                 Ok(found) => {
-                    let symbols: BTreeSet<String> = found
+                    let symbols: Vec<Value> = found
                         .into_iter()
                         .filter(|found| found.public)
-                        .map(|found| format!("{}: {}", found.symbol, found.signature))
+                        .map(|found| found.entry)
                         .collect();
                     json!({ "status": "ok", "symbols": symbols })
                 }
@@ -126,8 +171,8 @@ fn read(rules: &Rules, file: &str, path: &str) -> Result<Vec<Found>, String> {
     declarations(rules, &extension, &source)
 }
 
-/// Every declaration of `source`, a file with the extension `extension`, as `(symbol, public,
-/// signature, line)`.
+/// Every declaration of `source`, a file with the extension `extension`, as whether it is public
+/// and its public API entry.
 ///
 /// # Errors
 ///
@@ -136,10 +181,10 @@ pub fn declarations_of(
     rules: &Rules,
     extension: &str,
     source: &str,
-) -> Result<Vec<(String, bool, String, usize)>, String> {
+) -> Result<Vec<(bool, Value)>, String> {
     Ok(declarations(rules, extension, source)?
         .into_iter()
-        .map(|found| (found.symbol, found.public, found.signature, found.line))
+        .map(|found| (found.public, found.entry))
         .collect())
 }
 
@@ -200,18 +245,76 @@ fn collect(
         };
         path.push(declared.name);
         let visible = public && declared.public;
+        let symbol = path.join(rules.separator);
+        let line = child.start_position().row + 1;
+        let text = declared
+            .entry
+            .text
+            .clone()
+            .unwrap_or_else(|| collapse(head(child, source)));
         found.push(Found {
-            symbol: path.join(rules.separator),
+            entry: to_json(&symbol, line, text, declared.entry),
+            symbol,
             public: visible,
-            signature: declared
-                .signature
-                .unwrap_or_else(|| collapse(head(child, source))),
-            line: child.start_position().row + 1,
+            line,
         });
         if declared.container {
             collect(rules, child, source, path, visible, true, found);
         }
         path.pop();
+    }
+}
+
+fn to_json(symbol: &str, line: usize, text: String, entry: Entry) -> Value {
+    let mut out = Map::new();
+    out.insert("symbol".into(), symbol.into());
+    out.insert("kind".into(), entry.kind.into());
+    list(&mut out, "type_parameters", entry.type_parameters);
+    if entry.is_static {
+        out.insert("static".into(), true.into());
+    }
+    optional(&mut out, "self_type", entry.self_type);
+    list(&mut out, "bases", entry.bases);
+    list(&mut out, "modifiers", entry.modifiers);
+    list(&mut out, "attributes", entry.attributes);
+    let parameters: Vec<Value> = entry
+        .parameters
+        .into_iter()
+        .map(|parameter| {
+            let mut out = Map::new();
+            out.insert("name".into(), parameter.name.into());
+            optional(&mut out, "type", parameter.value_type);
+            if parameter.optional {
+                out.insert("optional".into(), true.into());
+            }
+            if parameter.variadic {
+                out.insert("variadic".into(), true.into());
+            }
+            optional(&mut out, "default", parameter.default);
+            out.insert("passing".into(), parameter.passing.into());
+            Value::Object(out)
+        })
+        .collect();
+    if !parameters.is_empty() {
+        out.insert("parameters".into(), parameters.into());
+    }
+    optional(&mut out, "returns", entry.returns);
+    optional(&mut out, "type", entry.value_type);
+    optional(&mut out, "value", entry.value);
+    out.insert("line".into(), line.into());
+    out.insert("text".into(), text.into());
+    Value::Object(out)
+}
+
+fn list(out: &mut Map<String, Value>, key: &str, values: Vec<String>) {
+    if !values.is_empty() {
+        out.insert(key.into(), values.into());
+    }
+}
+
+fn optional(out: &mut Map<String, Value>, key: &str, value: Option<String>) {
+    if let Some(value) = value.filter(|value| !value.is_empty()) {
+        out.insert(key.into(), value.into());
     }
 }
 
@@ -229,7 +332,10 @@ pub fn head<'s>(node: Node<'_>, source: &'s str) -> &'s str {
     let end = node
         .child_by_field_name("body")
         .map_or(node.end_byte(), |body| body.start_byte());
-    source[node.start_byte()..end].trim_end_matches([' ', '\t', '\n', '\r', ';', '=', '>'])
+    let text = source[node.start_byte()..end].trim_end();
+    // The `=>` of an arrow body, but not the `>` that closes a generic type.
+    let text = text.strip_suffix("=>").unwrap_or(text);
+    text.trim_end_matches([' ', '\t', '\n', '\r', ';', '='])
 }
 
 /// `text` with every run of whitespace replaced by one space.
@@ -257,4 +363,59 @@ pub fn child_of_kind<'t>(node: Node<'t>, kind: &str) -> Option<Node<'t>> {
     let mut cursor = node.walk();
     node.named_children(&mut cursor)
         .find(|child| child.kind() == kind)
+}
+
+/// The text of `node` in token form (`spec/plugins.md`, item 32), without comments. A string
+/// literal is one token.
+#[must_use]
+pub fn token_form(node: Node<'_>, source: &str) -> String {
+    let mut tokens = Vec::new();
+    leaves(node, source, &mut tokens);
+    token_form::join(tokens)
+}
+
+/// The texts of `nodes` in token form, joined as one token list.
+#[must_use]
+pub fn token_form_of(nodes: &[Node<'_>], source: &str) -> String {
+    let mut tokens = Vec::new();
+    for node in nodes {
+        leaves(*node, source, &mut tokens);
+    }
+    token_form::join(tokens)
+}
+
+fn leaves<'s>(node: Node<'_>, source: &'s str, tokens: &mut Vec<&'s str>) {
+    if node.kind().contains("comment") {
+        return;
+    }
+    if node.child_count() == 0 || (node.is_named() && node.kind().contains("string")) {
+        let token = text(node, source);
+        if !token.is_empty() {
+            tokens.push(token);
+        }
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        leaves(child, source, tokens);
+    }
+}
+
+/// The named children of `node` of kind `kind`.
+#[must_use]
+pub fn children_of_kind<'t>(node: Node<'t>, kind: &str) -> Vec<Node<'t>> {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .filter(|child| child.kind() == kind)
+        .collect()
+}
+
+/// The texts of the unnamed children of `node` that are one of `keywords`, in order.
+#[must_use]
+pub fn keywords(node: Node<'_>, keywords: &[&str]) -> Vec<String> {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .filter(|child| !child.is_named() && keywords.contains(&child.kind()))
+        .map(|child| child.kind().to_owned())
+        .collect()
 }

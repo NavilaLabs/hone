@@ -1,4 +1,4 @@
 plugins:
   lang-python:
-    hash: "sha256:ffd08ab0459114fbc5ec230c0a5702eea528f326bd6d1c8279ac72325a92549a"
+    hash: "sha256:114da4c88e90c8de93e0eafaa367f448959939fdf126f322639f0bb1c13c518c"
     capabilities: { read: [project], net: [], timeout_ms: 5000, memory_pages: 256 }

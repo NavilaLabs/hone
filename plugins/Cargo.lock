@@ -208,6 +208,7 @@ dependencies = [
  "quote",
  "serde_json",
  "syn 2.0.119",
+ "token-form",
 ]
 
 [[package]]
@@ -216,6 +217,7 @@ version = "0.1.0"
 dependencies = [
  "lang-tree",
  "serde_json",
+ "token-form",
  "tree-sitter",
  "tree-sitter-dart",
  "tree-sitter-php",
@@ -471,6 +473,10 @@ dependencies = [
  "quote",
  "unicode-ident",
 ]
+
+[[package]]
+name = "token-form"
+version = "0.1.0"
 
 [[package]]
 name = "toml_datetime"

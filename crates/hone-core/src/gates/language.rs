@@ -8,9 +8,14 @@ use serde_json::{Value, json};
 
 use super::{Scope, TicketCall, id_list};
 use crate::anchor;
+use crate::canonical;
 use crate::finding::{Code, Finding};
 use crate::host::LanguageCall;
 use crate::log;
+
+// The public API of a file: per symbol, its entries in the projection of spec/plugins.md item
+// 34, each as canonical JSON.
+type Api = BTreeMap<String, BTreeSet<String>>;
 
 // One anchor to check: the artifact's path, the pointer of the anchor, its kind and reference.
 struct Anchor<'a> {
@@ -255,10 +260,9 @@ impl Scope<'_> {
         findings
     }
 
-    // The public API of every path in `state`, one entry per path: the symbols, or the message
-    // of a file that does not parse. A file missing in the state has an empty API and is not
+    // The public API of every path in `state`, one entry per path: the API, or the message of a
+    // file that does not parse. A file missing in the state has an empty API and is not
     // passed to the plugin.
-    #[allow(clippy::type_complexity)]
     fn public_api(
         &self,
         call: &TicketCall<'_>,
@@ -266,13 +270,13 @@ impl Scope<'_> {
         state: &str,
         root: &Path,
         paths: &[&str],
-    ) -> Result<Vec<Result<BTreeSet<String>, String>>, Finding> {
+    ) -> Result<Vec<Result<Api, String>>, Finding> {
         let present: Vec<&str> = paths
             .iter()
             .copied()
             .filter(|path| exists_below(root, path, true))
             .collect();
-        let mut apis: BTreeMap<&str, Result<BTreeSet<String>, String>> = BTreeMap::new();
+        let mut apis: BTreeMap<&str, Result<Api, String>> = BTreeMap::new();
         if !present.is_empty() {
             let input = json!({ "protocol": 1, "state": state, "paths": present });
             let results = call.host.language(
@@ -284,13 +288,12 @@ impl Scope<'_> {
             )?;
             for (path, result) in present.iter().zip(results) {
                 let api = if result["status"] == "ok" {
-                    Ok(result["symbols"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(Value::as_str)
-                        .map(str::to_owned)
-                        .collect())
+                    let mut api = Api::new();
+                    let entries = result["symbols"].as_array().into_iter().flatten();
+                    for (symbol, projected) in entries.filter_map(project) {
+                        api.entry(symbol).or_default().insert(projected);
+                    }
+                    Ok(api)
                 } else {
                     Err(format!(
                         "`{path}`: {}",
@@ -302,7 +305,7 @@ impl Scope<'_> {
         }
         Ok(paths
             .iter()
-            .map(|path| apis.remove(path).unwrap_or_else(|| Ok(BTreeSet::new())))
+            .map(|path| apis.remove(path).unwrap_or_else(|| Ok(Api::new())))
             .collect())
     }
 
@@ -427,13 +430,92 @@ fn walk(root: &Path, relative: &str, files: &mut Vec<String>) {
     }
 }
 
-fn difference(checked: &BTreeSet<String>, base: &BTreeSet<String>) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    for item in checked.difference(base).take(3) {
-        parts.push(format!("added `{item}`"));
+// The symbol of `entry` and the entry without what the comparison ignores: the line, the text,
+// `extra`, parameter defaults, and the names of positional parameters. `modifiers` and
+// `attributes` are sets.
+fn project(entry: &Value) -> Option<(String, String)> {
+    let mut entry = entry.as_object()?.clone();
+    let symbol = entry.get("symbol")?.as_str()?.to_owned();
+    for ignored in ["line", "text", "extra"] {
+        entry.remove(ignored);
     }
-    for item in base.difference(checked).take(3) {
-        parts.push(format!("removed `{item}`"));
+    for set in ["modifiers", "attributes"] {
+        if let Some(Value::Array(items)) = entry.get_mut(set) {
+            items.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+        }
     }
-    parts.join(", ")
+    if let Some(Value::Array(parameters)) = entry.get_mut("parameters") {
+        for parameter in parameters.iter_mut().filter_map(Value::as_object_mut) {
+            parameter.remove("default");
+            if parameter.get("passing").and_then(Value::as_str) == Some("positional") {
+                parameter.remove("name");
+            }
+        }
+    }
+    Some((symbol, canonical::to_canonical(&Value::Object(entry))))
+}
+
+fn difference(checked: &Api, base: &Api) -> String {
+    let symbols: BTreeSet<&String> = checked.keys().chain(base.keys()).collect();
+    symbols
+        .into_iter()
+        .filter_map(|symbol| match (checked.get(symbol), base.get(symbol)) {
+            (Some(_), None) => Some(format!("`{symbol}` added")),
+            (None, Some(_)) => Some(format!("`{symbol}` removed")),
+            (Some(now), Some(before)) if now != before => Some(format!("`{symbol}` changed")),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{Api, difference, project};
+
+    fn api(entries: &[serde_json::Value]) -> Api {
+        let mut api = Api::new();
+        for (symbol, projected) in entries.iter().filter_map(project) {
+            api.entry(symbol).or_default().insert(projected);
+        }
+        api
+    }
+
+    #[test]
+    fn the_projection_keeps_only_what_callers_depend_on() {
+        let base = json!({ "symbol": "pay", "kind": "function", "modifiers": ["async", "const"], "parameters": [
+            { "name": "amount", "passing": "positional", "default": "1" },
+            { "name": "note", "passing": "both" }
+        ], "line": 1, "text": "a", "extra": { "doc": "a" } });
+        let moved = json!({ "symbol": "pay", "kind": "function", "modifiers": ["const", "async"], "parameters": [
+            { "name": "sum", "passing": "positional", "default": "2" },
+            { "name": "note", "passing": "both" }
+        ], "line": 9, "text": "b", "extra": { "doc": "b" } });
+        let renamed = json!({ "symbol": "pay", "kind": "function", "modifiers": ["async", "const"], "parameters": [
+            { "name": "amount", "passing": "positional" },
+            { "name": "memo", "passing": "both" }
+        ], "line": 1, "text": "a" });
+        assert_eq!(project(&base), project(&moved));
+        assert_ne!(project(&base), project(&renamed));
+    }
+
+    #[test]
+    fn the_message_names_added_removed_and_changed_symbols() {
+        let before = api(&[
+            json!({ "symbol": "Fee.add", "kind": "method", "line": 1, "text": "" }),
+            json!({ "symbol": "Fee.of", "kind": "method", "line": 2, "text": "" }),
+            json!({ "symbol": "Fee", "kind": "class", "line": 3, "text": "" }),
+        ]);
+        let now = api(&[
+            json!({ "symbol": "Fee.add", "kind": "method", "static": true, "line": 1, "text": "" }),
+            json!({ "symbol": "Fee.new", "kind": "method", "line": 2, "text": "" }),
+            json!({ "symbol": "Fee", "kind": "class", "line": 4, "text": "" }),
+        ]);
+        assert_eq!(
+            difference(&now, &before),
+            "`Fee.add` changed, `Fee.new` added, `Fee.of` removed"
+        );
+    }
 }
