@@ -33,6 +33,37 @@ pub struct Failure {
     pub message: String,
 }
 
+/// The result of `hone resolve --show`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(tag = "status", rename_all = "kebab-case")]
+pub enum ConfigView {
+    /// The configuration resolved.
+    Shown(ShownConfig),
+    /// The resolution failed.
+    Failed {
+        /// The problems, each with `category`, `location`, and `message`.
+        problems: Vec<Value>,
+        /// The content of `.hone/lock.yaml`, absent when it is malformed.
+        lock: Option<Value>,
+    },
+}
+
+/// The resolved configuration with the layers of every definition and the lockfile.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ShownConfig {
+    /// The hash of the configuration.
+    pub hash: String,
+    /// `up-to-date` or `out-of-date`: whether `.hone/resolved.json` holds the configuration.
+    pub file: String,
+    /// The resolved configuration.
+    pub config: Value,
+    /// Per definition of `kinds`, `roles`, `steps`, `profiles`, and `plugins`, and per subtree
+    /// `select`, `actors`, and `ticket`, the layers from bottom to top.
+    pub origins: BTreeMap<String, Value>,
+    /// The content of `.hone/lock.yaml`.
+    pub lock: Value,
+}
+
 /// The author and role of the events the GUI writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Writer {
@@ -858,6 +889,19 @@ impl Hone {
                     .join("; "),
             }),
         }
+    }
+
+    /// `hone resolve --show`: the configuration from its sources with the layers of every
+    /// definition and the lockfile, or the problems of a failed resolution. Writes nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`] when `hone` cannot run or its output is not understood.
+    pub async fn show_config(&self) -> Result<ConfigView, Failure> {
+        let mut arguments = vec!["resolve".to_owned(), "--show".to_owned()];
+        arguments.extend(self.packages_arguments());
+        let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        self.run(&arguments, &[0, 1]).await
     }
 
     /// `hone artifact kinds`: the kinds of the configuration.

@@ -183,6 +183,12 @@ pub(crate) fn Tag(
     }
 }
 
+/// A content hash cut to its first eight hex digits.
+pub(crate) fn short_hash(hash: &str) -> String {
+    let hex = hash.strip_prefix("sha256:").unwrap_or(hash);
+    format!("sha256:{}…", hex.chars().take(8).collect::<String>())
+}
+
 /// Opens an `http` or `https` address in the system browser. Other addresses are ignored, so a
 /// value from a tracker or a ticket record cannot start a program.
 pub(crate) fn open_in_browser(url: &str) {

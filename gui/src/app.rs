@@ -74,6 +74,8 @@ fn App() -> Element {
                         Screen::Check => rsx! { features::check::CheckRun {} },
                         Screen::Sync => rsx! { features::sync::Sync {} },
                         Screen::Server => rsx! { features::server::Server {} },
+                        Screen::Profiles => rsx! { features::configuration::Profiles {} },
+                        Screen::Plugins => rsx! { features::configuration::Plugins {} },
                         Screen::Tracker => rsx! { features::tracker::TrackerScreen {} },
                         Screen::Settings => rsx! { features::project_settings::ProjectSettingsScreen {} },
                     }
@@ -132,6 +134,8 @@ fn Navigation() -> Element {
                 NavItem { screen: Screen::Events, label: "Event log" }
             }
             NavGroup { label: "Project",
+                NavItem { screen: Screen::Profiles, label: "Profiles" }
+                NavItem { screen: Screen::Plugins, label: "Plugins" }
                 NavItem { screen: Screen::Tracker, label: "Tracker" }
                 NavItem { screen: Screen::Sync, label: "Sync" }
                 NavItem { screen: Screen::Server, label: "Server" }

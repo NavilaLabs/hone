@@ -8,6 +8,7 @@ mod attributes;
 pub(crate) mod check;
 pub(crate) mod code;
 mod common;
+pub(crate) mod configuration;
 pub(crate) mod editor;
 pub(crate) mod events;
 pub(crate) mod graph;
@@ -46,6 +47,8 @@ pub(crate) enum Screen {
     Check,
     Sync,
     Server,
+    Profiles,
+    Plugins,
     Tracker,
     Settings,
 }

@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 
 use super::attributes::{AttributeEditor, attribute_changes, parse_rows, rows_of, rule_keys};
 use super::common::{
-    Empty, FailureAlert, Loading, Mark, PageHeader, SectionLabel, StatusMark, Tag,
+    Empty, FailureAlert, Loading, Mark, PageHeader, SectionLabel, StatusMark, Tag, short_hash,
 };
 use super::progress::{self, Stage, StepTrack};
 use super::{Project, Screen, Session};
@@ -356,11 +356,6 @@ fn TicketDetail(ticket: String) -> Element {
             super::events::InvalidPanel { invalid: state.invalid.clone() }
         }
     }
-}
-
-fn short_hash(hash: &str) -> String {
-    let hex = hash.strip_prefix("sha256:").unwrap_or(hash);
-    format!("sha256:{}…", hex.chars().take(8).collect::<String>())
 }
 
 /// The ticket's attributes to edit, and the switch to the current rules.
