@@ -1,0 +1,7 @@
+id: "mod-4t8w2n6c"
+type: "module"
+anchors:
+  - { kind: "path", ref: "src/payments" }
+  - { kind: "symbol", ref: "src/payments/fee.py#Fee.add" }
+  - { kind: "symbol", ref: "src/payments/api.py#create_user" }
+  - { kind: "symbol", ref: "src/payments/fee.probe#trap" }

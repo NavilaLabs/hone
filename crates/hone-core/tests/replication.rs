@@ -860,6 +860,75 @@ mod git_branch {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_rejected_push_is_retried_after_a_rebase() {
+        let remote_scratch = Scratch::new("git-race-remote");
+        let remote = remote_scratch.root.join("remote.git");
+        git(
+            &remote_scratch.root,
+            &["init", "--quiet", "--bare", "remote.git"],
+        );
+        let case = schemas().join("tests/sync/exchange");
+        let alice = Scratch::new("git-race-alice");
+        repository(&alice, &remote);
+        copy_directory(&case.join("local"), &alice.local_store());
+        // Another device creates the branch after Alice's checkout and before her first push, so
+        // that push is rejected. The hook runs inside Git, which sets `GIT_DIR` for it.
+        let raced = remote_scratch.root.join("raced");
+        let hook = alice.root.join("project/.git/hooks/pre-push");
+        std::fs::write(
+            &hook,
+            format!(
+                "#!/bin/sh\n\
+                 [ -e '{raced}' ] && exit 0\n\
+                 touch '{raced}'\n\
+                 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY\n\
+                 cd '{remote}' || exit 1\n\
+                 blob=$(printf 'other\\n' | git hash-object -w --stdin)\n\
+                 tree=$(printf '100644 blob %s\\tother.txt\\n' \"$blob\" | git mktree)\n\
+                 commit=$(git -c user.name=other -c user.email=other@example.invalid \
+                 commit-tree \"$tree\" -m 'other device')\n\
+                 git update-ref refs/heads/{BRANCH} \"$commit\"\n",
+                raced = raced.display(),
+                remote = remote.display(),
+            ),
+        )
+        .expect("writable");
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&hook).expect("exists").permissions();
+        PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(&hook, permissions).expect("executable");
+
+        let report = alice.store().sync(peer()).expect("syncs");
+
+        assert!(raced.exists(), "the other device pushed first");
+        assert_eq!(
+            serde_json::to_value(&report.sent).expect("JSON"),
+            json!({ "dev-3k9a5h2t": 2 })
+        );
+        assert_eq!(
+            git(&remote, &["log", "--format=%s", BRANCH]),
+            "hone: log of dev-3k9a5h2t\nother device\n",
+            "Alice's commit sits on top of the other device's"
+        );
+        assert_eq!(
+            git(&remote, &["show", &format!("{BRANCH}:other.txt")]),
+            "other\n"
+        );
+        let pushed = git(
+            &remote,
+            &[
+                "show",
+                &format!("{BRANCH}:local/{PROJECT}/log/dev-3k9a5h2t/1.ndjson"),
+            ],
+        );
+        assert_eq!(
+            pushed.as_bytes(),
+            std::fs::read(case.join("local/log/dev-3k9a5h2t/1.ndjson")).expect("readable"),
+        );
+    }
+
     #[test]
     fn a_branch_name_like_an_option_is_rejected() {
         let scratch = Scratch::new("git-option");
