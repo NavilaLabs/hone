@@ -762,3 +762,32 @@ async fn show_config_gives_the_layers_and_the_lockfile() {
         "sha256:1111111111111111111111111111111111111111111111111111111111111111"
     );
 }
+
+#[tokio::test]
+async fn supersede_creates_an_artifact_that_supersedes_the_binding_one() {
+    let scratch = Scratch::new("supersede");
+    let hone = scratch.hone();
+    let new = hone_gui::hone::ArtifactNew {
+        kind: "decision".into(),
+        title: "Pending ends after 30 seconds".into(),
+        ticket: Some(TICKET.into()),
+        author: Some("alice".into()),
+        supersedes: vec!["dec-7k3m2q8p".into()],
+        ..Default::default()
+    };
+    let created = hone.new_artifact(&new).await.expect("ran");
+    assert!(created.saved, "{:?}", created.findings);
+    let id = created.id.expect("an ID");
+    let shown = hone.artifact(&id).await.expect("shown");
+    assert_eq!(
+        shown.data["links"],
+        serde_json::json!({ "supersedes": ["dec-7k3m2q8p"] })
+    );
+    let catalog = hone.artifacts().await.expect("listed");
+    let old = catalog
+        .artifacts
+        .iter()
+        .find(|entry| entry.id.as_deref() == Some("dec-7k3m2q8p"))
+        .expect("listed");
+    assert_eq!(old.effective.as_deref(), Some("accepted"));
+}
