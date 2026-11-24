@@ -6,6 +6,8 @@ use hone_core::{Catalog, CheckError, ProfileSelection, TicketList, TicketOvervie
 use serde::Serialize;
 use serde_json::json;
 
+use crate::process::printable;
+
 #[derive(Args)]
 pub(crate) struct CatalogArguments {
     /// Project root, the directory that contains `.hone/`.
@@ -131,13 +133,14 @@ fn print_list(list: &TicketList) {
             .iter()
             .filter(|step| step.status == "done" || step.status == "skipped")
             .count();
+        // Titles and store-only ticket IDs come from other people's files and events.
         println!(
             "{} {} {}/{} {}",
-            ticket.ticket,
-            ticket.profile.as_deref().unwrap_or("-"),
+            printable(&ticket.ticket),
+            printable(ticket.profile.as_deref().unwrap_or("-")),
             done,
             ticket.steps.len(),
-            ticket.title.as_deref().unwrap_or("")
+            printable(ticket.title.as_deref().unwrap_or(""))
         );
     }
 }

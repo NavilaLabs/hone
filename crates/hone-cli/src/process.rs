@@ -1064,7 +1064,7 @@ fn print_sync(report: &SyncReport) {
 
 // Paths and messages can carry text from an untrusted folder, which must not reach the terminal
 // as control sequences.
-fn printable(text: &str) -> String {
+pub(crate) fn printable(text: &str) -> String {
     text.chars()
         .map(|character| {
             if character.is_control() {
