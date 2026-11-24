@@ -311,6 +311,44 @@ async fn the_context_author_comes_from_the_bound_context() {
 }
 
 #[tokio::test]
+async fn the_gui_check_is_stored_and_the_ticket_list_reads_it() {
+    let scratch = Scratch::new("runs").with_store();
+    let hone = scratch.hone();
+    let before = hone.ticket_list().await.expect("readable");
+    assert_eq!(before.tickets.len(), 1);
+    assert_eq!(before.tickets[0].ticket, TICKET);
+    assert_eq!(before.tickets[0].last_run, None);
+    assert_eq!(before.tickets[0].threads.blocking, 1);
+
+    let run = hone
+        .check(Some(TICKET), GateScope::Pure)
+        .await
+        .expect("ran");
+    let id = run.run.clone().expect("a stored run");
+    let runs = hone.runs(TICKET).await.expect("readable");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(
+        (runs[0].id.as_str(), runs[0].source.as_str()),
+        (id.as_str(), "gui")
+    );
+    assert_eq!(runs[0].arguments["class"], "pure");
+    assert_eq!(runs[0].gates, run.gates);
+
+    let after = hone.ticket_list().await.expect("readable");
+    let last = after.tickets[0].last_run.clone().expect("the run");
+    assert_eq!(last.id, id);
+    let failed: Vec<String> = run
+        .gates
+        .iter()
+        .filter(|gate| !gate.ok)
+        .map(|gate| gate.name.clone())
+        .collect();
+    assert_eq!(last.failed, failed);
+    let log = hone.log().await.expect("readable");
+    assert_eq!(log.device.as_deref(), Some(runs[0].device.as_str()));
+}
+
+#[tokio::test]
 async fn a_pure_check_runs_no_exec_gate() {
     let scratch = Scratch::new("pure").with_store();
     let run = scratch
