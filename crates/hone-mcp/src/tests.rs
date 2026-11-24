@@ -656,6 +656,53 @@ async fn process_tools_write_the_events_the_gates_read() {
 }
 
 #[tokio::test]
+async fn check_stores_its_run_for_runs_and_ticket_list() {
+    let bob = process_case("runs", Some(("bob", "human")));
+    let opened = call(
+        bob.clone(),
+        "thread_open",
+        json!({
+            "ticket": TICKET,
+            "kind": "concern",
+            "blocking": true,
+            "anchor": { "kind": "code", "ref": "src/ledger.rs#Ledger" },
+            "body": "What happens when the queue fails?",
+        }),
+    )
+    .await;
+    assert!(!opened.is_error, "{:?}", opened.content);
+    let checked = call(
+        bob.clone(),
+        "check",
+        json!({ "ticket": TICKET, "step": "completion" }),
+    )
+    .await;
+    let run = checked.content["run"].as_str().expect("a stored run");
+
+    let runs = call(bob.clone(), "runs", json!({ "ticket": TICKET })).await;
+    assert!(!runs.is_error, "{:?}", runs.content);
+    assert_eq!(runs.content["runs"].as_array().map(Vec::len), Some(1));
+    assert_eq!(runs.content["runs"][0]["id"], run);
+    assert_eq!(runs.content["runs"][0]["source"], "mcp");
+
+    let list = call(bob.clone(), "ticket_list", json!({})).await;
+    assert!(!list.is_error, "{:?}", list.content);
+    let ticket = &list.content["tickets"][0];
+    assert_eq!(ticket["ticket"], TICKET);
+    assert_eq!(ticket["last_run"]["id"], run);
+    assert_eq!(ticket["threads"], json!({ "open": 1, "blocking": 1 }));
+    assert_eq!(ticket["authors"], json!(["bob"]));
+
+    let refused = call(bob.clone(), "runs", json!({ "ticket": "../x" })).await;
+    assert!(refused.is_error);
+    assert_eq!(
+        refused.content,
+        json!({ "status": "invalid", "message": "`../x` is not a ticket ID" })
+    );
+    remove(&bob);
+}
+
+#[tokio::test]
 async fn writing_without_an_author_is_an_error() {
     let project = process_case("process-no-author", None);
     let reply = call(
