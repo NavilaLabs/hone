@@ -332,3 +332,16 @@ The maintainer decided with this slice that a click selects a node for the inspe
 ## Confirmations (maintainer, 2026-11-24, review inline and link graph)
 
 237. **Confirmed as built:** items 220 to 236. Item 221 keeps `status` in the result of `check_artifact` although the findings imply it (`failed` exactly when a finding is an `error`): every MCP tool carries `status`, and a result marked `isError` needs it to tell `error` from `io-error`, so an agent reads one field everywhere. The JSON of `hone artifact check --json` stays without it, because the exit code gives it.
+
+## GUI v2: event log (build-time rules)
+
+The mockup fixes the columns, the type filter, the detail below the table, and Copy JSON. These rules came up while building and are reported for confirmation.
+
+238. **Scope.** The tab in a ticket shows that ticket's events of `hone log` and has no ticket filter; the Sync view shows the whole store with a filter by ticket, as before. The head counts the events and devices of the scope before the type filter (`process store · tk-y4075sb1 · 8 events · 1 device`).
+239. **Order.** Newest first is the order of `read` reversed, not a sort by the time in the ID, because that order is the protocol's and the times of two devices need not agree.
+240. **The type filter** offers All types, every type of the scope, and a family `<prefix>.*` before its first type when two types or more share the part before the first dot (`thread.*`, `ticket.*`). A type without a dot (`x-note`) has no family.
+241. **Time.** The column shows the UTC clock `HH:MM` for an event of the current UTC day and the date `YYYY-MM-DD` otherwise; the mockup's seconds and month names are left out, because every other time in the GUI is UTC to the minute. The detail shows the full time.
+242. **Device · seq** shows the device ID without `dev-`, all eight characters; the mockup's four (`3k9a`) could name two devices alike.
+243. **The payload summary** per type: `thread.opened` `[blocking · ]<kind> · <anchor>` (an artifact anchor with its quote's first line, a code or change anchor with its `ref`, a transcript with its `url`); `thread.message` the thread and the body's first line; `thread.resolved` and `thread.reopened` the thread; `approval.given` artifact and decision; `review.confirmed` artifact and short hash; `step.changed` `<step> → <status>`; `ticket.started` profile and short config hash; `ticket.config_changed` the short hash; `ticket.attributes_changed` `name: value` pairs; any other type its compact payload. A long summary wraps. The mockup's accent on `blocking` is left out.
+244. **The detail** stands below the table (before: beside it) and shows `time` from the ID, then the envelope in the order `id`, `type`, `ticket`, `device`, `seq`, `author`, `project`, `after`, `payload`, then any `x-` field by name; a string without quotes, every other value as compact JSON. Copy JSON copies the event as compact JSON. A selected event hidden by a filter shows no detail.
+245. **Not covered by tests:** the view (checked against `examples/payments`). The filters and their choices, the order, the time, the summary, and the detail lines are unit-tested.
