@@ -45,6 +45,7 @@ pub(crate) fn NewArtifactDialog() -> Element {
             ticket: Some(ticket()).filter(|ticket| decided && !ticket.is_empty()),
             author: Some((session.writer)().author).filter(|author| !author.is_empty()),
             anchors: anchor_arguments(&anchors()),
+            supersedes: Vec::new(),
         };
         busy.set(true);
         spawn(async move {

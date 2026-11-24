@@ -9,8 +9,8 @@ use super::common::{
     Empty, FailureAlert, Field, Loading, Mark, PageHeader, ProblemAlert, SectionLabel, StatusMark,
     open_file,
 };
-use super::{Project, Session, Tab};
-use crate::hone::{ArtifactSource, CatalogEntry, Event, Failure, ReviewState, Write};
+use super::{Project, Screen, Session};
+use crate::hone::{ArtifactSource, CatalogEntry, Failure, ReviewState, Write};
 use crate::ui::{Button, ButtonVariant, Card, CardContent, CardHeader, CardTitle, Input};
 
 /// A link between two artifacts, as the detail lists it.
@@ -69,30 +69,6 @@ pub(crate) fn links_of(entry: &CatalogEntry, all: &[CatalogEntry]) -> (Vec<Link>
     (stored, computed)
 }
 
-/// The threads of `events` anchored to the artifact `id`: the thread ID and its first line.
-fn anchored_threads(events: &[Event], id: &str) -> Vec<(String, String, String)> {
-    events
-        .iter()
-        .filter(|event| {
-            event.kind == "thread.opened"
-                && event.payload["anchor"]["artifact"].as_str() == Some(id)
-        })
-        .filter_map(|event| {
-            Some((
-                event.ticket.clone()?,
-                format!("th-{}", event.id.strip_prefix("ev-")?),
-                event.payload["body"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .lines()
-                    .next()
-                    .unwrap_or_default()
-                    .to_owned(),
-            ))
-        })
-        .collect()
-}
-
 /// The artifact `id` on the Artifacts view: its head and its tab.
 #[component]
 pub(crate) fn ArtifactDetail(id: String) -> Element {
@@ -132,94 +108,6 @@ pub(crate) fn ArtifactDetail(id: String) -> Element {
     }
 }
 
-/// What the catalog and the log know about the artifact `id`: its anchors and code references,
-/// its links both ways, the threads on it, and its review in its ticket.
-#[component]
-pub(crate) fn ArtifactFacts(id: String, code: Signal<Option<CodeTarget>>) -> Element {
-    let mut session = use_context::<Session>();
-    let project = use_context::<Project>();
-    let catalog = project.catalog.read().clone();
-    let Some(Ok(catalog)) = catalog else {
-        return rsx! { Loading {} };
-    };
-    let Some(entry) = catalog
-        .artifacts
-        .iter()
-        .find(|entry| entry.id.as_deref() == Some(id.as_str()))
-        .cloned()
-    else {
-        return rsx! {};
-    };
-    let (stored, computed) = links_of(&entry, &catalog.artifacts);
-    let threads = match &*project.log.read() {
-        Some(Ok(log)) => anchored_threads(&log.events, &id),
-        _ => Vec::new(),
-    };
-    let source_id = id.clone();
-    let source = use_resource(move || {
-        let id = source_id.clone();
-        async move {
-            let _ = (session.revision)();
-            (session.hone)().artifact(&id).await
-        }
-    });
-    rsx! {
-        div { class: "grid grid-cols-[repeat(auto-fit,minmax(340px,1fr))] gap-8 items-start pt-4",
-            div { class: "flex flex-col gap-8 min-w-0",
-                match &*source.read() {
-                    Some(Ok(source)) => rsx! { SourcePanel { source: source.clone(), code } },
-                    Some(Err(failure)) => rsx! { FailureAlert { failure: failure.clone() } },
-                    None => rsx! { Loading {} },
-                }
-                if let Some(ticket) = entry.ticket.clone() {
-                    ReviewPanel { key: "{ticket}-{entry.path}", ticket, artifact: entry.id.clone().unwrap_or_default() }
-                } else {
-                    section {
-                        SectionLabel { label: "Review" }
-                        Empty { text: "This artifact names no ticket. Approvals belong to a ticket, so there is nothing to review here." }
-                    }
-                }
-            }
-            div { class: "flex flex-col gap-8 min-w-0",
-                if (session.ticket)().is_some() {
-                    div {
-                        Button {
-                            variant: ButtonVariant::Outline,
-                            onclick: move |_| {
-                                session.graph_focus.set(Some(id.clone()));
-                                session.open_tab(Tab::Graph);
-                            },
-                            "Show in the link graph"
-                        }
-                    }
-                }
-                LinksPanel { stored, computed }
-                section {
-                    SectionLabel { label: "Threads on it", aside: format!("{}", threads.len()) }
-                    if threads.is_empty() {
-                        Empty { text: "No thread is anchored to this artifact. Open one under Threads with the artifact as anchor." }
-                    } else {
-                        div { class: "border border-line",
-                            for (ticket , thread , line) in threads {
-                                button {
-                                    class: "w-full text-left px-4 py-3 border-b border-line hover:bg-surface-2 flex flex-col gap-1",
-                                    onclick: {
-                                        let ticket = ticket.clone();
-                                        let thread = thread.clone();
-                                        move |_| session.open_thread(ticket.clone(), thread.clone())
-                                    },
-                                    span { class: "font-semibold", "{line}" }
-                                    span { class: "font-mono text-[12.5px] text-ink-muted", "{ticket} · {thread}" }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// The anchors (`kind`, `ref`) of an artifact's data, then its `links.code` and `interface.code`
 /// as `code`.
 fn references_of(data: &serde_json::Map<String, serde_json::Value>) -> Vec<(String, String)> {
@@ -248,7 +136,7 @@ fn references_of(data: &serde_json::Map<String, serde_json::Value>) -> Vec<(Stri
 
 /// The anchors and code references of an artifact, each opening its code.
 #[component]
-fn SourcePanel(source: ArtifactSource, code: Signal<Option<CodeTarget>>) -> Element {
+pub(crate) fn SourcePanel(source: ArtifactSource, code: Signal<Option<CodeTarget>>) -> Element {
     let session = use_context::<Session>();
     let project = use_context::<Project>();
     let references = references_of(&source.data);
@@ -256,7 +144,7 @@ fn SourcePanel(source: ArtifactSource, code: Signal<Option<CodeTarget>>) -> Elem
         section {
             SectionLabel { label: "Anchors and code", aside: "click shows the code, Ctrl+click opens the IDE" }
             if references.is_empty() {
-                Empty { text: "No anchors and no code references. Add them on the Edit tab." }
+                Empty { text: "No anchors and no code references." }
             } else {
                 div { class: "border border-line",
                     for (kind , reference) in references {
@@ -284,7 +172,7 @@ fn SourcePanel(source: ArtifactSource, code: Signal<Option<CodeTarget>>) -> Elem
 }
 
 #[component]
-fn LinksPanel(stored: Vec<Link>, computed: Vec<Link>) -> Element {
+pub(crate) fn LinksPanel(stored: Vec<Link>, computed: Vec<Link>) -> Element {
     rsx! {
         Card { class: "py-0 gap-0",
             CardHeader { class: "bg-surface border-b border-line py-3",
@@ -334,34 +222,32 @@ fn LinkRow(link: Link, computed: bool) -> Element {
 
 /// Who decided on the artifact in its ticket, and the actions of a reviewer.
 #[component]
-fn ReviewPanel(ticket: String, artifact: String) -> Element {
+pub(crate) fn ReviewPanel(
+    ticket: String,
+    artifact: String,
+    state: Option<Result<ReviewState, Failure>>,
+) -> Element {
     let session = use_context::<Session>();
-    // The artifact's ticket becomes the open ticket, so that the writer's roles are the roles a
-    // review in that ticket is checked against.
+    // On the Artifacts view, the artifact's ticket becomes the open ticket, so that the writer's
+    // roles are the roles a review in that ticket is checked against. Inside a workspace the
+    // open ticket stays, so that opening another ticket's artifact does not leave it.
     let mut open_ticket = session.ticket;
+    let screen = session.screen;
     let wanted = ticket.clone();
     use_effect(move || {
-        if open_ticket.peek().as_deref() != Some(wanted.as_str()) {
+        if screen() != Screen::Ticket && open_ticket.peek().as_deref() != Some(wanted.as_str()) {
             open_ticket.set(Some(wanted.clone()));
-        }
-    });
-    let shown = (ticket.clone(), artifact.clone());
-    let state = use_resource(move || {
-        let (ticket, artifact) = shown.clone();
-        async move {
-            let _ = (session.revision)();
-            (session.hone)().review(&ticket, &artifact).await
         }
     });
     rsx! {
         section { class: "flex flex-col gap-4",
-            SectionLabel { label: "Review", aside: format!("in {ticket}") }
-            match &*state.read() {
+            SectionLabel { label: "Approvals", aside: format!("in {ticket}") }
+            match state {
                 None => rsx! { Loading {} },
-                Some(Err(failure)) => rsx! { FailureAlert { failure: failure.clone() } },
+                Some(Err(failure)) => rsx! { FailureAlert { failure } },
                 Some(Ok(review)) => rsx! {
                     ReviewFacts { review: review.clone() }
-                    ReviewActions { ticket: ticket.clone(), artifact: artifact.clone(), review: review.clone() }
+                    ReviewActions { ticket: ticket.clone(), artifact: artifact.clone(), review }
                 },
             }
         }

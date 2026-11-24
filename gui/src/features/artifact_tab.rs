@@ -7,12 +7,12 @@ use std::time::Duration;
 use dioxus::prelude::*;
 use serde_json::{Map, Value};
 
-use super::artifact::ArtifactFacts;
 use super::artifact_form::FieldsForm;
 use super::code::CodeTarget;
 use super::common::{FailureAlert, Loading, Tag, WarningNote};
 use super::editor::CodeEditor;
-use super::{Draft, Session};
+use super::review::{BindingBar, ResolveThread, ReviewLayout, chosen_thread, inline_threads};
+use super::{Draft, Project, Session};
 use crate::artifact_text::ArtifactText;
 use crate::hone::{ArtifactSource, Failure, Finding};
 use crate::markdown::preview;
@@ -31,6 +31,8 @@ enum Mode {
 
 impl Mode {
     const ALL: [Self; 4] = [Self::Fields, Self::Source, Self::Split, Self::Preview];
+    /// The modes of an artifact that may not change: no Fields, because nothing can be edited.
+    const READ_ONLY: [Self; 3] = [Self::Source, Self::Split, Self::Preview];
 
     fn label(self) -> &'static str {
         match self {
@@ -40,6 +42,15 @@ impl Mode {
             Self::Preview => "Preview",
         }
     }
+}
+
+/// Whether the saved status `status` binds, so that the artifact may not change (concept
+/// Section 6): a change is a new artifact that supersedes it.
+pub(crate) fn binding_status(status: Option<&str>, source: &ArtifactSource) -> bool {
+    source
+        .statuses
+        .iter()
+        .any(|known| Some(known.name.as_str()) == status && known.binding)
 }
 
 /// A problem of the text, with the line its pointer names.
@@ -106,9 +117,29 @@ fn Workbench(
     code: Signal<Option<CodeTarget>>,
 ) -> Element {
     let session = use_context::<Session>();
+    let project = use_context::<Project>();
     let mut drafts = session.drafts;
     let markdown = source.body.is_some();
-    let mut mode = use_signal(|| Mode::Split);
+    let saved_status = source.data.get("status").and_then(Value::as_str);
+    let locked = binding_status(saved_status, &source);
+    let mut mode = use_signal(|| if locked { Mode::Preview } else { Mode::Split });
+    let mut review_request = session.review;
+    let review_id = id.clone();
+    use_effect(move || {
+        if review_request().as_deref() == Some(review_id.as_str()) {
+            mode.set(Mode::Preview);
+            review_request.set(None);
+        }
+    });
+    let threads = match &*project.log.read() {
+        Some(Ok(log)) => inline_threads(&log.events, &id),
+        _ => Vec::new(),
+    };
+    let chosen = chosen_thread(&threads, (session.thread)().as_deref());
+    let chosen_inline = threads
+        .iter()
+        .find(|thread| Some(&thread.thread) == chosen.as_ref())
+        .cloned();
     let mut busy = use_signal(|| false);
     let mut refused = use_signal(|| None::<Failure>);
     let mut not_saved = use_signal(|| false);
@@ -268,6 +299,7 @@ fn Workbench(
             div { class: "flex flex-wrap items-center gap-3",
                 span { class: "font-mono text-[13px] text-ink-muted break-all", "{source.path}" }
                 match (&status, binding) {
+                    _ if locked => rsx! {},
                     (Some(status), Some(true)) => rsx! { Tag { inverted: true, "{status} · binding" } },
                     (Some(status), Some(false)) => rsx! { Tag { "{status} · not binding" } },
                     (Some(status), None) => rsx! { Tag { "{status}" } },
@@ -278,9 +310,13 @@ fn Workbench(
                     span { class: "font-mono text-[12.5px] text-ink-muted", "● unsaved" }
                 }
             }
+            if locked {
+                BindingBar { source: source.clone(), status: saved_status.unwrap_or_default().to_owned() }
+            }
             div { class: "flex flex-wrap items-center gap-2",
                 div { class: "flex gap-0 border border-line w-fit", role: "tablist", "aria-label": "View",
-                    for value in Mode::ALL {
+                    for value in if locked { &Mode::READ_ONLY[..] } else { &Mode::ALL[..] } {
+                        {let value = *value; rsx! {
                         button {
                             role: "tab",
                             "aria-selected": if mode() == value { "true" } else { "false" },
@@ -288,9 +324,10 @@ fn Workbench(
                             onclick: move |_| mode.set(value),
                             "{value.label()}"
                         }
+                        }}
                     }
                 }
-                if let Some(proposed) = propose_text.filter(|_| can_propose(status.as_deref(), &source)) {
+                if let Some(proposed) = propose_text.filter(|_| !locked && can_propose(status.as_deref(), &source)) {
                     Button {
                         disabled: busy(),
                         title: "Save with the status proposed",
@@ -299,6 +336,12 @@ fn Workbench(
                     }
                 }
                 div { class: "ml-auto flex gap-2",
+                    if mode() == Mode::Preview {
+                        if let Some(thread) = chosen_inline.clone() {
+                            ResolveThread { key: "{thread.thread}", thread }
+                        }
+                    }
+                    if !locked {
                     Button {
                         variant: ButtonVariant::Outline,
                         disabled: busy() || !changed,
@@ -314,6 +357,7 @@ fn Workbench(
                         "Discard"
                     }
                     Button { disabled: busy() || !changed, onclick: move |_| save.call(saved_text.clone()), "Save" }
+                    }
                 }
             }
             if let Some(failure) = refused() {
@@ -330,19 +374,18 @@ fn Workbench(
                     }
                 },
                 Mode::Source => rsx! {
-                    SourceEditor { key: "{editor_key}", text: text.clone(), markdown, jump, set_text, class: "h-[48vh]" }
+                    SourceEditor { key: "{editor_key}", text: text.clone(), markdown, read_only: locked, jump, set_text, class: "h-[48vh]" }
                 },
                 Mode::Split => rsx! {
                     div { class: "grid grid-cols-2 gap-4 items-stretch",
-                        SourceEditor { key: "{editor_key}", text: text.clone(), markdown, jump, set_text, class: "h-[48vh]" }
+                        SourceEditor { key: "{editor_key}", text: text.clone(), markdown, read_only: locked, jump, set_text, class: "h-[48vh]" }
                         div { class: "border border-line p-5 h-[48vh] overflow-y-auto",
                             ArtifactPreview { data: data.clone(), body: body.clone() }
                         }
                     }
                 },
                 Mode::Preview => rsx! {
-                    ArtifactPreview { data: data.clone(), body: body.clone() }
-                    ArtifactFacts { id: id.clone(), code }
+                    ReviewLayout { source: source.clone(), data: data.clone(), body: body.clone(), threads: threads.clone(), chosen: chosen.clone(), code }
                 },
             }
             ProblemList { checked: checked(), problems: found, mode, jump }
@@ -355,6 +398,7 @@ fn Workbench(
 fn SourceEditor(
     text: String,
     markdown: bool,
+    read_only: bool,
     jump: Signal<Option<usize>>,
     set_text: Callback<(String, Option<Map<String, Value>>)>,
     class: String,
@@ -363,6 +407,7 @@ fn SourceEditor(
         CodeEditor {
             doc: text,
             language: if markdown { "markdown" } else { "yaml" },
+            read_only,
             line: jump.peek().to_owned(),
             jump,
             onchange: move |new: String| set_text.call((new, None)),

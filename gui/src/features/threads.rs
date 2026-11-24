@@ -10,15 +10,15 @@ use crate::ui::{
 
 /// One event of a thread, as the conversation shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Entry {
-    author: String,
-    role: String,
+pub(crate) struct Entry {
+    pub(crate) author: String,
+    pub(crate) role: String,
     /// When it was written, from the event ID.
-    time: Option<String>,
+    pub(crate) time: Option<String>,
     /// `opened`, `message`, `resolved`, or `reopened`.
-    kind: String,
-    body: Option<String>,
-    anchor: Option<String>,
+    pub(crate) kind: String,
+    pub(crate) body: Option<String>,
+    pub(crate) anchor: Option<String>,
 }
 
 /// The thread ID of an opening event: `th-` plus the UUID of the event (concept Section 10).
@@ -30,7 +30,7 @@ fn thread_id(event: &Event) -> Option<String> {
 }
 
 /// The events of `thread` among the ticket's `events`, in their order.
-fn conversation(events: &[Event], thread: &str) -> Vec<Entry> {
+pub(crate) fn conversation(events: &[Event], thread: &str) -> Vec<Entry> {
     events
         .iter()
         .filter_map(|event| {
@@ -57,6 +57,16 @@ fn conversation(events: &[Event], thread: &str) -> Vec<Entry> {
             })
         })
         .collect()
+}
+
+/// The artifact the thread `thread` is anchored to, if its anchor is an artifact.
+pub(crate) fn anchored_artifact(events: &[Event], thread: &str) -> Option<String> {
+    events
+        .iter()
+        .find(|event| event.kind == "thread.opened" && thread_id(event).as_deref() == Some(thread))
+        .filter(|event| event.payload["anchor"]["kind"].as_str() == Some("artifact"))
+        .and_then(|event| event.payload["anchor"]["artifact"].as_str())
+        .map(str::to_owned)
 }
 
 fn first_line(text: &str) -> String {
@@ -92,7 +102,7 @@ fn anchor_text(anchor: &serde_json::Value) -> String {
 }
 
 /// The kinds hone/standard suggests (concept Section 10), then every other kind the log uses.
-fn kind_choices(seen: &[String]) -> Vec<Choice> {
+pub(crate) fn kind_choices(seen: &[String]) -> Vec<Choice> {
     let mut choices: Vec<Choice> = ["question", "concern", "suggestion", "note"]
         .into_iter()
         .map(|kind| Choice::plain(kind).note("hone/standard"))

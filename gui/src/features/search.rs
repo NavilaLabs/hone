@@ -14,9 +14,11 @@ use crate::tracker::{Issue, Tracker};
 pub(crate) enum Target {
     Ticket(String),
     Artifact(String),
+    /// A thread, and the artifact its anchor names.
     Thread {
         ticket: String,
         thread: String,
+        artifact: Option<String>,
     },
     /// A tracker ticket that no record names: start a ticket for it.
     Start(super::new_ticket::Seed),
@@ -102,11 +104,22 @@ pub(crate) fn search(catalog: Option<&Catalog>, events: &[Event], query: &str) -
                 .next()
                 .unwrap_or_default()
                 .to_owned();
+            let artifact = (event.payload["anchor"]["kind"].as_str() == Some("artifact"))
+                .then(|| {
+                    event.payload["anchor"]["artifact"]
+                        .as_str()
+                        .map(str::to_owned)
+                })
+                .flatten();
             matches(&ticket, &line).then(|| Hit {
                 group: "Threads",
                 key: ticket.clone(),
                 text: line,
-                target: Target::Thread { ticket, thread },
+                target: Target::Thread {
+                    ticket,
+                    thread,
+                    artifact,
+                },
                 note: None,
             })
         });
@@ -232,7 +245,11 @@ pub(crate) fn SearchDialog() -> Element {
         match target {
             Target::Ticket(ticket) => session.open_ticket(ticket),
             Target::Artifact(id) => session.open_artifact(id),
-            Target::Thread { ticket, thread } => session.open_thread(ticket, thread),
+            Target::Thread {
+                ticket,
+                thread,
+                artifact,
+            } => session.open_thread(ticket, thread, artifact),
             Target::Start(seed) => session.new_ticket.set(Some(seed)),
         }
     };
@@ -443,7 +460,8 @@ mod tests {
             hits[0].target,
             Target::Thread {
                 ticket: "tk-9f2x4a8m".into(),
-                thread: "th-0193a8f0-9b2c-7e4d-a1f3-000000000001".into()
+                thread: "th-0193a8f0-9b2c-7e4d-a1f3-000000000001".into(),
+                artifact: None,
             }
         );
         assert_eq!(hits[0].text, "Why async?");

@@ -254,12 +254,17 @@ fn Item(
 #[component]
 fn ThreadItem(ticket: String, thread: String, kind: String, blocking: bool) -> Element {
     let session = use_context::<Session>();
+    let project = use_context::<Project>();
+    let artifact = match &*project.log.read() {
+        Some(Ok(log)) => super::threads::anchored_artifact(&log.events, &thread),
+        _ => None,
+    };
     let shown = thread.clone();
     rsx! {
         li {
             button {
                 class: "w-full min-h-10 px-5 flex items-baseline gap-2 text-left hover:bg-surface-2",
-                onclick: move |_| session.open_thread(ticket.clone(), thread.clone()),
+                onclick: move |_| session.open_thread(ticket.clone(), thread.clone(), artifact.clone()),
                 span { class: "shrink-0", "{kind}" }
                 span { class: "font-mono text-[12px] text-ink-muted truncate", title: "{shown}", "{shown}" }
                 if blocking {

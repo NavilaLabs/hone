@@ -21,6 +21,7 @@ pub(crate) mod new_ticket;
 pub(crate) mod overview;
 mod progress;
 pub(crate) mod project_settings;
+mod review;
 pub(crate) mod search;
 pub(crate) mod server;
 pub(crate) mod settings;
@@ -188,6 +189,8 @@ pub(crate) struct Session {
     pub(crate) drafts: Signal<std::collections::BTreeMap<String, Draft>>,
     /// The tab with unsaved changes that asks before it closes.
     pub(crate) closing: Signal<Option<Tab>>,
+    /// The artifact whose tab is to show its review, until the tab has done so.
+    pub(crate) review: Signal<Option<String>>,
 }
 
 impl Session {
@@ -214,6 +217,7 @@ impl Session {
             new_artifact: Signal::new(false),
             drafts: Signal::new(std::collections::BTreeMap::new()),
             closing: Signal::new(None),
+            review: Signal::new(None),
         }
     }
 
@@ -257,10 +261,18 @@ impl Session {
         }
     }
 
-    pub(crate) fn open_thread(mut self, ticket: String, thread: String) {
+    /// Opens the thread `thread` of `ticket`: in the review of the artifact it is anchored to,
+    /// otherwise on the Threads tab.
+    pub(crate) fn open_thread(mut self, ticket: String, thread: String, artifact: Option<String>) {
         self.open_ticket(ticket);
         self.thread.set(Some(thread));
-        self.open_tab(Tab::Threads);
+        match artifact {
+            Some(artifact) => {
+                self.review.set(Some(artifact.clone()));
+                self.open_tab(Tab::Artifact(artifact));
+            }
+            None => self.open_tab(Tab::Threads),
+        }
     }
 }
 

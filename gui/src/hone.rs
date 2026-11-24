@@ -672,6 +672,8 @@ pub struct ArtifactNew {
     pub author: Option<String>,
     /// Anchors as `<kind>:<ref>`.
     pub anchors: Vec<String>,
+    /// The IDs the new artifact supersedes.
+    pub supersedes: Vec<String>,
 }
 
 /// The result of `hone file show`.
@@ -1152,6 +1154,9 @@ impl Hone {
         }
         for anchor in &new.anchors {
             arguments.extend(["--anchor".to_owned(), anchor.clone()]);
+        }
+        for superseded in &new.supersedes {
+            arguments.extend(["--supersedes".to_owned(), superseded.clone()]);
         }
         let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
         self.run(&arguments, &[0, 1]).await

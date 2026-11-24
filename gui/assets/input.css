@@ -237,3 +237,16 @@
   padding: 4px 8px;
   text-align: left;
 }
+.hone-prose mark.hone-quote {
+  background: transparent;
+  color: inherit;
+  border-bottom: 2px solid var(--hone-accent);
+}
+.hone-prose mark.hone-quote-chosen {
+  background: var(--hone-accent-muted);
+}
+.hone-prose sup.hone-quote-number {
+  color: var(--hone-accent);
+  font-size: 11px;
+  margin-left: 2px;
+}
