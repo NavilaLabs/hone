@@ -386,6 +386,41 @@ fn new_creates_an_artifact_with_the_fields_of_its_lifecycle() {
 }
 
 #[test]
+fn new_writes_the_artifacts_it_supersedes() {
+    let scratch = Scratch::new("new-supersedes");
+    let (code, value) = scratch.hone(
+        &[
+            "artifact",
+            "new",
+            "--kind",
+            "decision",
+            "--ticket",
+            "tk-9f2x4a8m",
+            "--title",
+            "Pending ends after 30 seconds",
+            "--supersedes",
+            "dec-7k3m2q8p",
+            "--supersedes",
+            "spec-3b8n1c5w",
+            "--author",
+            "alice",
+        ],
+        None,
+    );
+    assert_eq!(code, Some(0), "{value}");
+    let id = value["id"].as_str().expect("an ID").to_owned();
+    assert_eq!(
+        scratch.read(&format!(
+            "design/decisions/{id}-pending-ends-after-30-seconds.md"
+        )),
+        format!(
+            "---\nid: \"{id}\"\ntype: \"decision\"\nticket: \"tk-9f2x4a8m\"\nstatus: \"proposed\"\ncreated: \"{}\"\nauthors: [\"alice\"]\nlinks: {{ supersedes: [\"dec-7k3m2q8p\", \"spec-3b8n1c5w\"] }}\n---\n# Pending ends after 30 seconds\n",
+            today()
+        )
+    );
+}
+
+#[test]
 fn new_refuses_before_it_writes() {
     let scratch = Scratch::new("new-refused");
     let before: Vec<_> = std::fs::read_dir(scratch.project().join("design/decisions"))
@@ -449,6 +484,36 @@ fn new_refuses_before_it_writes() {
         (
             vec!["--kind", "module", "--title", "X", "--anchor", "src"],
             "`src` is not `<kind>:<ref>`",
+        ),
+        (
+            vec![
+                "--kind",
+                "decision",
+                "--ticket",
+                "tk-9f2x4a8m",
+                "--title",
+                "X",
+                "--author",
+                "bob",
+                "--supersedes",
+                "dec-2b7n5k1q",
+            ],
+            "`dec-2b7n5k1q` is no artifact of the project to supersede",
+        ),
+        (
+            vec![
+                "--kind",
+                "decision",
+                "--ticket",
+                "tk-9f2x4a8m",
+                "--title",
+                "X",
+                "--author",
+                "bob",
+                "--supersedes",
+                "tk-9f2x4a8m",
+            ],
+            "`tk-9f2x4a8m` is no artifact of the project to supersede",
         ),
     ] {
         let mut all = vec!["artifact", "new"];
