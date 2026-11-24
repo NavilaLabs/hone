@@ -492,6 +492,60 @@ async fn check_artifact_fails_on_an_error() {
 }
 
 #[tokio::test]
+async fn check_artifact_reports_a_link_to_a_missing_artifact() {
+    let path = "design/decisions/dec-7k3m2q8p-payment-async.md";
+    let reply = call(
+        project(check_case("links-resolve-affects")),
+        "check_artifact",
+        artifact("links-resolve-affects", path),
+    )
+    .await;
+    assert!(!reply.is_error);
+    assert_eq!(reply.content["status"], "failed");
+    assert_eq!(reply.content["id"], "dec-7k3m2q8p");
+    assert_eq!(reply.content["path"], path);
+    assert_eq!(codes(&reply.content["findings"]), ["error link-unresolved"]);
+    assert_eq!(reply.content["findings"][0]["pointer"], "/links/affects/0");
+}
+
+#[tokio::test]
+async fn check_artifact_checks_the_text_in_place_of_the_file() {
+    let path = "design/decisions/dec-7k3m2q8p-payment-async.md";
+    let mut input = artifact("links-resolve-affects", path);
+    let fixed = input["content"]
+        .as_str()
+        .expect("text")
+        .replace("mod-9z9z9z9z", "mod-4t8w2n6c");
+    input["content"] = json!(fixed);
+    let reply = call(
+        project(check_case("links-resolve-affects")),
+        "check_artifact",
+        input,
+    )
+    .await;
+    assert!(!reply.is_error);
+    assert_eq!(reply.content["status"], "passed");
+    assert_eq!(reply.content["findings"], json!([]));
+}
+
+#[tokio::test]
+async fn check_artifact_refuses_a_ticket_record() {
+    let path = "design/tickets/tk-9f2x4a8m/ticket.yaml";
+    let reply = call(
+        project(check_case("links-resolve-affects")),
+        "check_artifact",
+        artifact("links-resolve-affects", path),
+    )
+    .await;
+    assert!(reply.is_error);
+    assert_eq!(reply.content["status"], "error");
+    assert_eq!(
+        reply.content["message"],
+        "`design/tickets/tk-9f2x4a8m/ticket.yaml` is a ticket record: change it with hone ticket set-attributes"
+    );
+}
+
+#[tokio::test]
 async fn check_artifact_without_resolved_configuration_is_an_error() {
     let path = "design/decisions/dec-4h7r2x9b-extra.md";
     let reply = call(
