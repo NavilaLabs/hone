@@ -37,10 +37,12 @@ mod pointer;
 mod process;
 mod replication;
 mod resolved_file;
+mod runs;
 mod schema_valid;
 mod show;
 mod source;
 mod ticket;
+mod ticket_list;
 mod transport;
 mod validate;
 mod yaml;
@@ -75,9 +77,13 @@ pub use process::{
 };
 pub use replication::{SyncCode, SyncProblem, SyncReport};
 pub use resolved_file::{ResolvedFile, ResolvedFileError, compare_resolved, write_resolved};
+pub use runs::RunRecord;
 pub use show::{Comparison, FileState, ShowError, Shown, SnapshotState, show_resolved};
 pub use source::{NoPackages, PackageDirectory, PackageSource};
 pub use ticket::{External, ProfileSelection, TicketStart, TicketWritten, select_profile};
+pub use ticket_list::{
+    LastRun, Started, ThreadCounts, TicketList, TicketStep, TicketSummary, Waiting, ticket_list,
+};
 pub use transport::{ServerCode, is_project_id, parse_cursor_query};
 pub use yaml::YamlProfileError;
 

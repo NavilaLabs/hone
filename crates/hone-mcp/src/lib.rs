@@ -330,6 +330,7 @@ impl Server {
             data_directory: self.project.data_directory.clone(),
             base: input.base.map(|base| self.project.root.join(base)),
             lock: input.lock.map(|lock| self.project.root.join(lock)),
+            source: Some("mcp".into()),
         };
         report_result(hone_core::check(&self.project.root, &request))
     }
@@ -342,6 +343,7 @@ impl Server {
             &self.project.root,
             &input.ticket,
             &input.path,
+            None,
         ))
     }
 
@@ -399,6 +401,26 @@ impl Server {
         match hone_core::ticket_overview(&self.project.root, &input.ticket) {
             Ok(overview) => CallToolResult::structured(to_value(&overview)),
             Err(error) => could_not_run(&error.message),
+        }
+    }
+
+    #[tool(
+        description = "List every ticket of the project like `hone ticket list --json`: per ticket `record`, `title`, `external`, `profile`, `started`, `authors`, `steps` with `status` (`done`, `skipped`, `waiting`, `open`), `current`, `complete`, `threads`, `last_event`, `last_run`, and `waiting`, the reasons it waits (`gates`, `threads`, `approval`, `step`), which name roles."
+    )]
+    fn ticket_list(&self) -> CallToolResult {
+        match hone_core::ticket_list(&self.project.root, self.project.data_directory.as_deref()) {
+            Ok(list) => CallToolResult::structured(to_value(&list)),
+            Err(error) => could_not_run(&error.message),
+        }
+    }
+
+    #[tool(
+        description = "Read the stored check runs of a ticket, newest first: per run `id`, `source`, `device`, `arguments`, `status`, `duration_ms`, and `gates`."
+    )]
+    fn runs(&self, Parameters(input): Parameters<TicketOverviewInput>) -> CallToolResult {
+        match self.store().and_then(|store| store.runs(&input.ticket)) {
+            Ok(runs) => CallToolResult::structured(json!({ "runs": runs })),
+            Err(error) => CallToolResult::structured_error(to_value(&error)),
         }
     }
 
@@ -556,6 +578,10 @@ fn report_result(result: Result<CheckReport, hone_core::CheckError>) -> CallTool
         Ok(report) => CallToolResult::structured(json!({
             "status": if report.passed() { "passed" } else { "failed" },
             "gates": report.gates,
+            "run": match &report.record {
+                hone_core::RunRecord::Stored(id) => Some(id),
+                _ => None,
+            },
         })),
         Err(error) => could_not_run(&error.message),
     }

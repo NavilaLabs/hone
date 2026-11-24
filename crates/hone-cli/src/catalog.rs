@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
-use hone_core::{Catalog, CheckError, ProfileSelection, TicketOverview};
+use hone_core::{Catalog, CheckError, ProfileSelection, TicketList, TicketOverview};
 use serde::Serialize;
 use serde_json::json;
 
@@ -26,6 +26,16 @@ pub(crate) enum Ticket {
         /// The ticket.
         #[arg(long)]
         ticket: String,
+        /// Print the result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List every ticket of the project with its steps, threads, last check run, and what it
+    /// waits on. Writes nothing.
+    List {
+        /// Project root, the directory that contains `.hone/`.
+        #[arg(long, default_value = ".")]
+        root: PathBuf,
         /// Print the result as JSON.
         #[arg(long)]
         json: bool,
@@ -69,6 +79,9 @@ pub(crate) fn run_ticket(command: Ticket) -> ExitCode {
             hone_core::ticket_overview(&root, &ticket),
             print_overview,
         ),
+        Ticket::List { root, json } => {
+            finish(json, hone_core::ticket_list(&root, None), print_list)
+        }
         Ticket::Start(arguments) => crate::process::run_ticket_start(&arguments),
         Ticket::SetAttributes(arguments) => crate::process::run_set_attributes(&arguments),
         Ticket::SwitchConfig(arguments) => crate::process::run_switch_config(&arguments),
@@ -108,6 +121,24 @@ fn finish<T: Serialize>(as_json: bool, outcome: Result<T, CheckError>, print: fn
             eprintln!("{message}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn print_list(list: &TicketList) {
+    for ticket in &list.tickets {
+        let done = ticket
+            .steps
+            .iter()
+            .filter(|step| step.status == "done" || step.status == "skipped")
+            .count();
+        println!(
+            "{} {} {}/{} {}",
+            ticket.ticket,
+            ticket.profile.as_deref().unwrap_or("-"),
+            done,
+            ticket.steps.len(),
+            ticket.title.as_deref().unwrap_or("")
+        );
     }
 }
 

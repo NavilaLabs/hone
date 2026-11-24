@@ -1,6 +1,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use std::time::Instant;
 
 use regex::Regex;
 use serde::Serialize;
@@ -15,6 +16,7 @@ use crate::host::Host;
 use crate::manifest::{Lock, read_lock_file};
 use crate::process::{ProcessError, ProcessStore};
 use crate::resolved_file::read_resolved;
+use crate::runs::{RunRecord, is_source};
 use crate::schema_valid::ContentRules;
 use crate::validate::{LANGUAGE_GATES, STANDARD_GATES};
 
@@ -52,6 +54,10 @@ pub struct CheckRequest {
     /// The lockfile that approves plugins and `exec` commands, or `None` for
     /// `.hone/lock.yaml`. CI passes the lockfile of the protected base state.
     pub lock: Option<PathBuf>,
+    /// Who runs the check, for example `cli`, `gui`, or `pre-push`: lowercase letters, digits,
+    /// and `-`, at most 32 characters. With a ticket and an existing process store, the run is
+    /// stored under this source; `None` stores nothing.
+    pub source: Option<String>,
 }
 
 /// The result of one gate.
@@ -65,6 +71,8 @@ pub struct GateReport {
     pub ok: bool,
     /// The findings, sorted.
     pub findings: Vec<Finding>,
+    /// How long the gate ran, in milliseconds.
+    pub duration_ms: u64,
 }
 
 /// The result of a call of [`check`].
@@ -72,6 +80,12 @@ pub struct GateReport {
 pub struct CheckReport {
     /// One report per gate that ran, directory gates first.
     pub gates: Vec<GateReport>,
+    /// How long the whole check ran, in milliseconds.
+    #[serde(skip)]
+    pub duration_ms: u64,
+    /// Whether the run was stored in the process store.
+    #[serde(skip)]
+    pub record: RunRecord,
 }
 
 impl CheckReport {
@@ -104,10 +118,48 @@ impl std::error::Error for CheckError {}
 /// # Errors
 ///
 /// Returns a [`CheckError`] if `.hone/resolved.json`, the ticket record, or its snapshot is
-/// missing or invalid, if the request names an unknown step, a base that is not a directory, or
-/// a lockfile that does not exist, or if a plugin or `exec` gate runs and the lockfile is
-/// malformed.
+/// missing or invalid, if the request names an unknown step, a base that is not a directory, a
+/// lockfile that does not exist, or an invalid source, or if a plugin or `exec` gate runs and the
+/// lockfile is malformed.
 pub fn check(project_root: &Path, request: &CheckRequest) -> Result<CheckReport, CheckError> {
+    if let Some(source) = &request.source
+        && !is_source(source)
+    {
+        return Err(error(format!(
+            "`{source}` is not a source: lowercase letters, digits, and `-`, at most 32 characters"
+        )));
+    }
+    let started = Instant::now();
+    let mut report = run_gates(project_root, request)?;
+    report.duration_ms = elapsed_ms(started);
+    if let (Some(ticket), Some(source)) = (&request.ticket, &request.source) {
+        report.record = record_run(project_root, request, ticket, source, &report);
+    }
+    Ok(report)
+}
+
+fn record_run(
+    project_root: &Path,
+    request: &CheckRequest,
+    ticket: &str,
+    source: &str,
+    report: &CheckReport,
+) -> RunRecord {
+    let store = match ProcessStore::locate(project_root, request.data_directory.as_deref()) {
+        Ok(store) => store,
+        Err(failure) => return RunRecord::Failed(failure.to_string()),
+    };
+    // A check creates no store: without one, there is nowhere a run belongs.
+    if !store.directory().is_dir() {
+        return RunRecord::NotStored;
+    }
+    match store.store_run(request, ticket, source, report) {
+        Ok(id) => RunRecord::Stored(id),
+        Err(failure) => RunRecord::Failed(failure.to_string()),
+    }
+}
+
+fn run_gates(project_root: &Path, request: &CheckRequest) -> Result<CheckReport, CheckError> {
     if request.ticket.is_none() && request.step.is_some() {
         return Err(error("`step` requires a ticket"));
     }
@@ -135,9 +187,11 @@ pub fn check(project_root: &Path, request: &CheckRequest) -> Result<CheckReport,
         let scope = Scope::new(current, &directory);
         for gate in DIRECTORY_GATES {
             if contains_gate(current, gate) {
+                let started = Instant::now();
+                let findings = scope.directory_gate(gate);
                 report
                     .gates
-                    .push(gate_report(gate.into(), gate, scope.directory_gate(gate)));
+                    .push(gate_report(gate.into(), gate, findings, started));
             }
         }
     }
@@ -167,7 +221,8 @@ pub fn check(project_root: &Path, request: &CheckRequest) -> Result<CheckReport,
 /// The check before an agent writes the file `path` (relative to `project_root`) for `ticket`:
 /// the `change-needs-binding` gates of every `required` step of the ticket's profile, with
 /// `path` as the only changed path. Edits to artifact files are never checked, so the report is
-/// then empty.
+/// then empty and nothing is stored. With a `source`, a run whose gates ran is stored like one of
+/// [`check`].
 ///
 /// # Errors
 ///
@@ -176,7 +231,9 @@ pub fn check_edit(
     project_root: &Path,
     ticket: &str,
     path: &str,
+    source: Option<&str>,
 ) -> Result<CheckReport, CheckError> {
+    let started = Instant::now();
     let current = Resolved::load(project_root)?;
     let current = current.document();
     let mut report = CheckReport::default();
@@ -195,6 +252,16 @@ pub fn check_edit(
         lock: None,
     };
     run.gates(&mut report, |gate| gate == "change-needs-binding")?;
+    report.duration_ms = elapsed_ms(started);
+    if let Some(source) = source {
+        let request = CheckRequest {
+            ticket: Some(ticket.to_owned()),
+            changed_paths: Some(changed.to_vec()),
+            source: Some(source.to_owned()),
+            ..CheckRequest::default()
+        };
+        report.record = record_run(project_root, &request, ticket, source, &report);
+    }
     Ok(report)
 }
 
@@ -305,10 +372,14 @@ impl TicketRun<'_> {
                 host: &host,
             };
             for (label, entry, gate) in selected(step) {
+                let started = Instant::now();
                 let findings = scope.ticket_gate(entry, &call);
-                report
-                    .gates
-                    .push(gate_report(format!("{step}/{label}"), gate, findings));
+                report.gates.push(gate_report(
+                    format!("{step}/{label}"),
+                    gate,
+                    findings,
+                    started,
+                ));
             }
         }
         Ok(())
@@ -395,14 +466,28 @@ fn contains_gate(config: &Value, gate: &str) -> bool {
         })
 }
 
-fn gate_report(name: String, gate: &str, mut findings: Vec<Finding>) -> GateReport {
+fn gate_report(
+    name: String,
+    gate: &str,
+    mut findings: Vec<Finding>,
+    started: Instant,
+) -> GateReport {
     findings.sort();
     GateReport {
         name,
         gate: gate.to_owned(),
         ok: findings.iter().all(|finding| finding.level != Level::Error),
         findings,
+        duration_ms: elapsed_ms(started),
     }
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+pub(crate) fn is_ticket_id(ticket: &str) -> bool {
+    TICKET_ID.is_match(ticket)
 }
 
 fn error(message: impl Into<String>) -> CheckError {

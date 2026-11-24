@@ -396,11 +396,54 @@ pub(crate) fn run_events(arguments: &EventsArguments) -> ExitCode {
 struct StoreLog {
     cursor: Cursor,
     events: Vec<Value>,
+    device: Option<String>,
+}
+
+pub(crate) fn run_runs(arguments: &RunsArguments) -> ExitCode {
+    let outcome = ProcessStore::locate(&arguments.target.root, None)
+        .and_then(|store| store.runs(&arguments.ticket))
+        .map(|runs| RunList { runs });
+    finish(arguments.target.json, outcome, print_runs)
+}
+
+/// The stored check runs of a ticket, newest first.
+#[derive(Serialize)]
+struct RunList {
+    runs: Vec<Value>,
+}
+
+#[derive(Args)]
+pub(crate) struct RunsArguments {
+    #[command(flatten)]
+    target: Target,
+    /// The ticket.
+    #[arg(long)]
+    ticket: String,
+}
+
+fn print_runs(list: &RunList) {
+    for run in &list.runs {
+        let failed = run["gates"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|gate| gate["ok"] == false)
+            .count();
+        println!(
+            "{} {} {} {} failed, {} ms",
+            printable(run["id"].as_str().unwrap_or_default()),
+            printable(run["source"].as_str().unwrap_or_default()),
+            printable(run["status"].as_str().unwrap_or_default()),
+            failed,
+            run["duration_ms"]
+        );
+    }
 }
 
 pub(crate) fn run_log(target: &Target) -> ExitCode {
     let outcome = ProcessStore::locate(&target.root, None).and_then(|store| {
         Ok(StoreLog {
+            device: store.own_device()?,
             cursor: store.cursor()?,
             events: store.read(&Cursor::new())?,
         })

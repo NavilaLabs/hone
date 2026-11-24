@@ -33,7 +33,7 @@ fn log_lists_every_event_and_the_cursor() {
     assert_eq!(code, Some(0));
     assert_eq!(
         value,
-        json!({ "cursor": { "dev-3k9a5h2t": 1 }, "events": [event] })
+        json!({ "cursor": { "dev-3k9a5h2t": 1 }, "events": [event], "device": null })
     );
 }
 

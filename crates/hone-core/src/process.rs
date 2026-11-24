@@ -425,6 +425,24 @@ impl ProcessStore {
         Ok(ticket_events(&self.load_existing()?, ticket))
     }
 
+    /// The process state of every ticket that has an event, read in one pass. A store that does
+    /// not exist has none.
+    pub(crate) fn every_ticket(&self) -> Result<BTreeMap<String, TicketEvents>, ProcessError> {
+        if !self.directory.is_dir() {
+            return Ok(BTreeMap::new());
+        }
+        let log = self.load()?;
+        let tickets: std::collections::BTreeSet<&str> = log
+            .events
+            .iter()
+            .filter_map(|event| event["ticket"].as_str())
+            .collect();
+        Ok(tickets
+            .into_iter()
+            .map(|ticket| (ticket.to_owned(), ticket_events(&log, ticket)))
+            .collect())
+    }
+
     /// The cursor of the store (concept Section 4, "Replication"): for every device, the
     /// highest `seq` up to which its valid events are contiguous.
     ///
@@ -918,7 +936,16 @@ impl ProcessStore {
         }
     }
 
-    fn device(&self) -> Result<String, ProcessError> {
+    /// The device ID of this device in the store, or `None` while the store has none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProcessError::IoError`] if the device file cannot be read or holds no device ID.
+    pub fn own_device(&self) -> Result<Option<String>, ProcessError> {
+        self.existing_device()
+    }
+
+    pub(crate) fn device(&self) -> Result<String, ProcessError> {
         if let Some(device) = self.existing_device()? {
             return Ok(device);
         }

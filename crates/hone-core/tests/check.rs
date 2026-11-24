@@ -48,6 +48,8 @@ fn request(case: &Path) -> CheckRequest {
         data_directory: Some(case.join("data")),
         base: Some(case.join("base")).filter(|base| base.is_dir()),
         lock: Some(case.join("lock.yaml")).filter(|lock| lock.is_file()),
+        // The data directory is a fixture: a stored run would change it.
+        source: None,
     }
 }
 
@@ -224,7 +226,7 @@ fn a_missing_resolved_configuration_stops_the_check() {
 #[test]
 fn an_edit_of_code_without_a_binding_decision_fails() {
     let project = case("change-needs-binding-missing/project");
-    let report = check_edit(&project, "tk-9f2x4a8m", "src/payments/fee.rs").expect("runs");
+    let report = check_edit(&project, "tk-9f2x4a8m", "src/payments/fee.rs", None).expect("runs");
     assert!(!report.passed());
     let names: Vec<&str> = report.gates.iter().map(|gate| gate.name.as_str()).collect();
     assert_eq!(names, ["implementation/binding"]);
@@ -233,7 +235,7 @@ fn an_edit_of_code_without_a_binding_decision_fails() {
 #[test]
 fn an_edit_of_unanchored_code_passes() {
     let project = case("change-needs-binding-missing/project");
-    let report = check_edit(&project, "tk-9f2x4a8m", "src/ledger/export.rs").expect("runs");
+    let report = check_edit(&project, "tk-9f2x4a8m", "src/ledger/export.rs", None).expect("runs");
     assert!(report.passed());
 }
 
@@ -244,6 +246,7 @@ fn an_edit_of_an_artifact_is_never_checked() {
         &project,
         "tk-9f2x4a8m",
         "design/decisions/dec-4h7r2x9b-no-authors.md",
+        None,
     )
     .expect("runs");
     assert!(report.gates.is_empty());

@@ -360,17 +360,8 @@ impl<'a> Scope<'a> {
         process: &TicketEvents,
         profile: &Map<String, Value>,
     ) -> Vec<Finding> {
-        profile
-            .iter()
-            .filter(|(_, strictness)| *strictness == "required")
-            .map(|(step, _)| step)
-            .filter(|step| !self.contains_steps_complete(step))
-            .filter(|step| {
-                process
-                    .steps
-                    .get(step.as_str())
-                    .is_none_or(|state| state.status == StepStatus::Open)
-            })
+        incomplete_steps(self.config, process, profile)
+            .into_iter()
             .map(|step| {
                 Finding::error(
                     Code::StepIncomplete,
@@ -394,14 +385,6 @@ impl<'a> Scope<'a> {
                 format!("the ticket uses the profile `{profile}`, `select` gives `{selected}` for its attributes"),
             )
         })
-    }
-
-    fn contains_steps_complete(&self, step: &str) -> bool {
-        self.config["steps"][step]["gates"]
-            .as_object()
-            .into_iter()
-            .flatten()
-            .any(|(_, entry)| entry["gate"] == "steps-complete")
     }
 
     fn actor_has_role(&self, name: &str, role: &str) -> bool {
@@ -515,6 +498,33 @@ fn unanswered_threads(process: &TicketEvents, params: &Value) -> Vec<Finding> {
                     thread.thread, thread.opened_by.name
                 ),
             )
+        })
+        .collect()
+}
+
+/// The `required` steps of `profile` that are neither done nor skipped, except the steps that
+/// contain `steps-complete` themselves: what `steps-complete` reports.
+pub(crate) fn incomplete_steps<'p>(
+    config: &Value,
+    process: &TicketEvents,
+    profile: &'p Map<String, Value>,
+) -> Vec<&'p str> {
+    profile
+        .iter()
+        .filter(|(_, strictness)| *strictness == "required")
+        .map(|(step, _)| step.as_str())
+        .filter(|step| {
+            !config["steps"][*step]["gates"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .any(|(_, entry)| entry["gate"] == "steps-complete")
+        })
+        .filter(|step| {
+            process
+                .steps
+                .get(*step)
+                .is_none_or(|state| state.status == StepStatus::Open)
         })
         .collect()
 }

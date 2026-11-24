@@ -267,7 +267,7 @@ fn external(record: &Map<String, Value>) -> Vec<ExternalTicket> {
 // spec/gates.md item 4: the order follows from inputs and outputs, `requires` adds to it.
 // Steps that no order separates keep the order of their names, and a cycle of inputs and
 // outputs puts its steps at the end, in the order of their names.
-fn profile_steps(config: &Value, profile: &str) -> Vec<ProfileStep> {
+pub(crate) fn profile_steps(config: &Value, profile: &str) -> Vec<ProfileStep> {
     let listed: BTreeMap<&str, &str> = config["profiles"][profile]["steps"]
         .as_object()
         .into_iter()

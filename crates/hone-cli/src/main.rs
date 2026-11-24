@@ -64,6 +64,8 @@ enum Command {
     Events(process::EventsArguments),
     /// Show every valid event of the project's process store and its cursor.
     Log(process::Target),
+    /// Show the stored check runs of a ticket, newest first.
+    Runs(process::RunsArguments),
     /// List the artifacts of the checked directory, ticket records included, with their
     /// declared and effective status.
     Artifacts(catalog::CatalogArguments),
@@ -146,6 +148,7 @@ fn main() -> ExitCode {
         Command::Review(review) => process::run_review(review),
         Command::Events(arguments) => process::run_events(&arguments),
         Command::Log(target) => process::run_log(&target),
+        Command::Runs(arguments) => process::run_runs(&arguments),
         Command::Artifacts(arguments) => catalog::run_artifacts(&arguments),
         Command::Ticket(command) => catalog::run_ticket(command),
         Command::Artifact(command) => editing::run_artifact(command),

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand, ValueEnum};
-use hone_core::{CheckError, CheckReport, CheckRequest, GateClass};
+use hone_core::{CheckError, CheckReport, CheckRequest, GateClass, RunRecord};
 use serde_json::{Value, json};
 
 const GATE_FAILED: u8 = 1;
@@ -38,6 +38,10 @@ pub(crate) struct CheckArguments {
     /// The lockfile that approves plugins and `exec` commands, instead of `.hone/lock.yaml`.
     #[arg(long, value_name = "FILE")]
     lock: Option<PathBuf>,
+    /// Who runs the check, stored with the run of a ticket: lowercase letters, digits, and `-`,
+    /// at most 32 characters, for example `pre-push`.
+    #[arg(long, default_value = "cli")]
+    source: String,
     /// Print the result as JSON.
     #[arg(long)]
     json: bool,
@@ -78,12 +82,21 @@ pub(crate) fn run_check(arguments: &CheckArguments) -> ExitCode {
         data_directory: None,
         base: arguments.base.clone(),
         lock: arguments.lock.clone(),
+        source: Some(arguments.source.clone()),
     };
     match hone_core::check(&arguments.root, &request) {
         Ok(report) => {
+            warn_unstored(&report.record);
             if arguments.json {
                 let status = if report.passed() { "passed" } else { "failed" };
-                println!("{}", json!({ "status": status, "gates": report.gates }));
+                let run = match &report.record {
+                    RunRecord::Stored(id) => Some(id),
+                    _ => None,
+                };
+                println!(
+                    "{}",
+                    json!({ "status": status, "gates": report.gates, "run": run })
+                );
             } else {
                 print_report(&report);
             }
@@ -176,9 +189,13 @@ pub(crate) fn run_hook(hook: &Hook) -> ExitCode {
     let Some(path) = relative_to(&root, Path::new(file)) else {
         return ExitCode::SUCCESS;
     };
-    match hone_core::check_edit(&root, &ticket, &path) {
-        Ok(report) if report.passed() => ExitCode::SUCCESS,
+    match hone_core::check_edit(&root, &ticket, &path, Some("agent-hook")) {
+        Ok(report) if report.passed() => {
+            warn_unstored(&report.record);
+            ExitCode::SUCCESS
+        }
         Ok(report) => {
+            warn_unstored(&report.record);
             eprintln!("hone: {path} must not be changed yet, the change has no binding decision:");
             for finding in report.gates.iter().flat_map(|gate| &gate.findings) {
                 eprintln!("  {finding}");
@@ -189,6 +206,12 @@ pub(crate) fn run_hook(hook: &Hook) -> ExitCode {
             eprintln!("hone hook: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn warn_unstored(record: &RunRecord) {
+    if let RunRecord::Failed(message) = record {
+        eprintln!("hone: the run was not stored: {message}");
     }
 }
 
