@@ -1,4 +1,4 @@
-//! `hone artifact show/save/new` and `hone file show`, the commands of an artifact editor and a
+//! `hone artifact show/save/check/new` and `hone file show`, the commands of an artifact editor and a
 //! code view (concept Section 12, "Desktop GUI").
 
 use std::io::Write;
@@ -226,6 +226,67 @@ fn save_refuses_errors_and_writes_nothing() {
     }
     assert!(!scratch.project().join("notes").exists());
     assert!(!scratch.root.join("outside.md").exists());
+}
+
+#[test]
+fn check_finds_errors_and_unresolved_links_of_the_text_and_writes_nothing() {
+    let scratch = Scratch::new("check");
+    let original = scratch.read(DECISION);
+    let edited = original
+        .replace("status: \"accepted\"", "status: \"bogus\"")
+        .replace("[\"mod-4t8w2n6c\"]", "[\"mod-4t8w2n6c\", \"mod-9c3d6h4v\"]");
+    let (code, value) = scratch.hone(&["artifact", "check", "--path", DECISION], Some(&edited));
+    assert_eq!(code, Some(1));
+    assert_eq!(
+        value,
+        json!({
+            "id": "dec-7k3m2q8p",
+            "path": DECISION,
+            "findings": [
+                { "level": "error", "code": "status", "message": "`bogus` is not a status of the kind", "path": DECISION, "pointer": "/status" },
+                { "level": "error", "code": "link-unresolved", "message": "no artifact `mod-9c3d6h4v`", "path": DECISION, "pointer": "/links/affects/1" },
+            ]
+        })
+    );
+    assert_eq!(scratch.read(DECISION), original);
+
+    // The file on disk links nowhere; the checked text replaces it, so only the text counts.
+    let broken = original.replace("[\"mod-4t8w2n6c\"]", "[\"mod-9c3d6h4v\"]");
+    std::fs::write(scratch.project().join(DECISION), &broken).expect("writable");
+    let (code, value) = scratch.hone(&["artifact", "check", "--path", DECISION], Some(&original));
+    assert_eq!(code, Some(0));
+    assert_eq!(
+        value,
+        json!({ "id": "dec-7k3m2q8p", "path": DECISION, "findings": [] })
+    );
+
+    // A file that does not exist yet is checked against the directory as well.
+    let draft = "design/decisions/dec-2h6r9t1x-retry.md";
+    let text = original
+        .replace("dec-7k3m2q8p", "dec-2h6r9t1x")
+        .replace("tk-9f2x4a8m", "tk-7m2k4d8q");
+    let (code, value) = scratch.hone(&["artifact", "check", "--path", draft], Some(&text));
+    assert_eq!(code, Some(1));
+    assert_eq!(
+        value["findings"],
+        json!([{ "level": "error", "code": "link-unresolved", "message": "no ticket record `tk-7m2k4d8q`", "path": draft, "pointer": "/ticket" }])
+    );
+    assert!(!scratch.project().join(draft).exists());
+
+    let (code, value) = scratch.hone(
+        &[
+            "artifact",
+            "check",
+            "--path",
+            "design/tickets/tk-9f2x4a8m/ticket.yaml",
+        ],
+        Some(&original),
+    );
+    assert_eq!(code, Some(2));
+    assert_eq!(
+        value,
+        json!({ "status": "error", "message": "`design/tickets/tk-9f2x4a8m/ticket.yaml` is a ticket record: change it with hone ticket set-attributes" })
+    );
 }
 
 #[cfg(unix)]
