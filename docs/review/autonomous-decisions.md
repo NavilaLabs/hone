@@ -359,3 +359,7 @@ The maintainer decided that the Profiles screen takes the mockup's layout and ke
 ## Decisions (maintainer, 2026-11-25, assistant)
 
 251. **Assistant details decided** (concept Section 12, "Assistant"). The GUI offers the agent no ACP `fs` or `terminal`, so code edits go through the agent's own tools and `hone hook` where configured. A permission request is a card in the conversation with the agent's options word for word; the GUI stores no permission, and a new chat or a closed window answers it as cancelled. A chat persists per project, root, and ticket as its ACP session ID with the `argv` that started it, in `assistant.json` in the data directory, not in `gui.json`, because it is state, not a setting; it is loaded with `session/load` only when the agent announces `loadSession` and `argv` is unchanged. The agent is set up in the assistant panel, not on a new settings screen; its choices come from the ACP Registry at run time (agents started through `npx` or `uvx`) plus a custom command, and a choice only fills `argv`. The mockup's action buttons in answers and its note on `hone hook` are left out: ACP has no buttons, and the GUI cannot know whether the agent uses the hook.
+
+## Confirmations (maintainer, 2026-11-25, event log and profiles)
+
+252. **Confirmed as built:** items 238 to 250.
