@@ -146,9 +146,9 @@ fn use_config() -> Resource<Result<ConfigView, crate::hone::Failure>> {
     })
 }
 
-/// The state of `resolved.json` and, while it is out of date, the action that writes it.
+/// Runs `hone resolve` and reads the project again; a failure shows below the button.
 #[component]
-fn FileState(shown: ShownConfig) -> Element {
+fn ResolveButton() -> Element {
     let session = use_context::<Session>();
     let project = use_context::<Project>();
     let mut failure = use_signal(|| None::<crate::hone::Failure>);
@@ -168,6 +168,21 @@ fn FileState(shown: ShownConfig) -> Element {
         });
     };
     rsx! {
+        div { class: "flex flex-col gap-2",
+            Button { disabled: running(), onclick: resolve, "Run hone resolve" }
+            if let Some(failure) = failure() {
+                FailureAlert { failure }
+            }
+        }
+    }
+}
+
+const STALE: &str = ".hone/resolved.json does not hold this configuration: the checks and new tickets still use the old one.";
+
+/// The state of `resolved.json` and, while it is out of date, the action that writes it.
+#[component]
+fn FileState(shown: ShownConfig) -> Element {
+    rsx! {
         div { class: "flex flex-wrap items-center gap-2",
             Tag { muted: true, "config {short_hash(&shown.hash)}" }
             if shown.file == "up-to-date" {
@@ -175,13 +190,8 @@ fn FileState(shown: ShownConfig) -> Element {
             }
         }
         if shown.file != "up-to-date" {
-            WarningNote { text: ".hone/resolved.json does not hold this configuration: the checks and new tickets still use the old one." }
-            div {
-                Button { disabled: running(), onclick: resolve, "Run hone resolve" }
-            }
-        }
-        if let Some(failure) = failure() {
-            FailureAlert { failure }
+            WarningNote { text: STALE }
+            div { ResolveButton {} }
         }
     }
 }
@@ -210,18 +220,32 @@ fn Layers(names: Vec<String>) -> Element {
     }
 }
 
+/// A selection rule's condition: each attribute with its value or list as JSON, so that a text
+/// `"3"` and a number `3` read apart.
+fn condition(when: &Value) -> String {
+    when.as_object()
+        .into_iter()
+        .flatten()
+        .map(|(name, value)| format!("{name}: {value}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Every profile against every step, with the layers each comes from.
 #[component]
 pub(crate) fn Profiles() -> Element {
     let config = use_config();
-    rsx! {
-        PageHeader { context: "hone resolve --show", title: "Profiles" }
-        match &*config.read() {
-            None => rsx! { Loading {} },
-            Some(Err(failure)) => rsx! { FailureAlert { failure: failure.clone() } },
-            Some(Ok(ConfigView::Failed { problems, .. })) => rsx! { ResolveProblems { problems: problems.clone() } },
-            Some(Ok(ConfigView::Shown(shown))) => rsx! { ProfileMatrix { shown: shown.clone() } },
-        }
+    match &*config.read() {
+        Some(Ok(ConfigView::Shown(shown))) => rsx! { ProfileMatrix { shown: shown.clone() } },
+        other => rsx! {
+            PageHeader { context: "hone resolve --show", title: "Profiles" }
+            match other {
+                None => rsx! { Loading {} },
+                Some(Err(failure)) => rsx! { FailureAlert { failure: failure.clone() } },
+                Some(Ok(ConfigView::Failed { problems, .. })) => rsx! { ResolveProblems { problems: problems.clone() } },
+                Some(Ok(ConfigView::Shown(_))) => rsx! {},
+            }
+        },
     }
 }
 
@@ -230,51 +254,74 @@ fn ProfileMatrix(shown: ShownConfig) -> Element {
     let matrix = matrix(&shown.config);
     let select = &shown.config["select"];
     let rules = select["rules"].as_array().cloned().unwrap_or_default();
+    let up_to_date = shown.file == "up-to-date";
+    let state = if up_to_date {
+        "up to date"
+    } else {
+        "out of date"
+    };
     rsx! {
-        FileState { shown: shown.clone() }
-        section {
-            SectionLabel { label: "Steps per profile", aside: format!("{} profiles, {} steps", matrix.profiles.len(), matrix.rows.len()) }
-            if matrix.profiles.is_empty() {
-                Empty { text: "The configuration has no profile. A profile is a file under .hone/profiles/ or in a package." }
-            } else {
-                TableWrapper {
-                    Table {
-                        TableHeader { class: "bg-surface",
-                            TableRow {
-                                TableHead { "Step" }
-                                for profile in matrix.profiles.clone() {
-                                    TableHead {
-                                        div { class: "flex flex-col gap-1",
-                                            span { class: "font-mono", "{profile}" }
-                                            Layers { names: layer_names(&shown.origins["profiles"][&profile]) }
-                                            span { class: "font-mono text-[12px] text-ink-muted",
-                                                {format!(
-                                                    "retention {} · review {}",
-                                                    shown.config["profiles"][&profile]["retention"].as_str().unwrap_or("-"),
-                                                    shown.config["profiles"][&profile]["review_summary"].as_str().unwrap_or("-"),
-                                                )}
-                                            }
+        div { class: "flex flex-col gap-3",
+            PageHeader {
+                context: format!(".hone/resolved.json · {state} · config {}", short_hash(&shown.hash)),
+                title: "Profiles",
+                actions: rsx! {
+                    if !up_to_date {
+                        ResolveButton {}
+                    }
+                },
+            }
+            p { class: "m-0 text-[14px] text-ink-muted",
+                "Project settings apply to new tickets. Running tickets keep their frozen configuration."
+            }
+        }
+        if !up_to_date {
+            WarningNote { text: STALE }
+        }
+        if matrix.profiles.is_empty() {
+            Empty { text: "The configuration has no profile. A profile is a file under .hone/profiles/ or in a package." }
+        } else {
+            TableWrapper { class: "shrink-0",
+                Table {
+                    TableHeader { class: "bg-surface",
+                        TableRow {
+                            TableHead { class: "align-top py-4", "Step" }
+                            for profile in matrix.profiles.clone() {
+                                TableHead { class: "align-top py-4",
+                                    div { class: "flex flex-col gap-1",
+                                        span { class: "font-mono font-bold text-[15px] text-ink", "{profile}" }
+                                        Layers { names: layer_names(&shown.origins["profiles"][&profile]) }
+                                        span { class: "font-mono text-[12px] text-ink-muted",
+                                            {format!(
+                                                "retention {} · review {}",
+                                                shown.config["profiles"][&profile]["retention"].as_str().unwrap_or("-"),
+                                                shown.config["profiles"][&profile]["review_summary"].as_str().unwrap_or("-"),
+                                            )}
                                         }
                                     }
                                 }
                             }
                         }
-                        TableBody {
-                            for (step, cells) in matrix.rows.clone() {
-                                TableRow {
-                                    TableCell {
-                                        div { class: "flex flex-col gap-1",
-                                            span { class: "font-mono", "{step}" }
-                                            Layers { names: layer_names(&shown.origins["steps"][&step]) }
-                                        }
+                    }
+                    TableBody {
+                        for (step, cells) in matrix.rows.clone() {
+                            TableRow {
+                                TableCell { class: "py-3",
+                                    div { class: "flex flex-col gap-1",
+                                        span { class: "font-semibold text-[15px]", "{step}" }
+                                        Layers { names: layer_names(&shown.origins["steps"][&step]) }
                                     }
-                                    for cell in cells {
-                                        TableCell { class: "font-mono",
-                                            match cell.as_deref() {
-                                                Some("required") => rsx! { span { "required" } },
-                                                Some(other) => rsx! { span { class: "text-ink-muted", "{other}" } },
-                                                None => rsx! { span { class: "text-ink-muted", "aria-label": "not in this profile", "–" } },
-                                            }
+                                }
+                                for cell in cells {
+                                    TableCell { class: "py-3 font-mono text-[13px]",
+                                        match cell.as_deref() {
+                                            Some("required") => rsx! {
+                                                span { span { "aria-hidden": "true", "■ " } "required" }
+                                            },
+                                            Some(other) => rsx! {
+                                                span { class: "text-ink-muted", span { "aria-hidden": "true", "□ " } "{other}" }
+                                            },
+                                            None => rsx! { span { class: "text-ink-muted", "aria-label": "not in this profile", "–" } },
                                         }
                                     }
                                 }
@@ -284,16 +331,25 @@ fn ProfileMatrix(shown: ShownConfig) -> Element {
                 }
             }
         }
-        section {
-            SectionLabel { label: "Selection", aside: layer_names(&shown.origins["select"]).join(" → ") }
-            div { class: "flex flex-col gap-2 text-[13px]",
-                for (index, rule) in rules.iter().enumerate() {
-                    div { class: "font-mono",
-                        {format!("{}. when {} → {}", index + 1, rule["when"], rule["profile"].as_str().unwrap_or_default())}
+        div { class: "grid grid-cols-[repeat(auto-fill,minmax(360px,1fr))] gap-6 items-start",
+            section { class: "border border-line",
+                div { class: "px-5 py-3 bg-surface border-b border-line flex items-baseline justify-between gap-4",
+                    h2 { class: "m-0 font-mono text-[11px] leading-4 font-medium tracking-[0.08em] uppercase",
+                        "Selection rules · first match wins"
                     }
+                    Layers { names: layer_names(&shown.origins["select"]) }
                 }
-                div { class: "font-mono",
-                    {format!("otherwise → {}", select["default"].as_str().unwrap_or_default())}
+                ol { class: "m-0 p-0 list-none font-mono text-[13px]",
+                    for rule in rules {
+                        li { class: "px-5 py-3 border-b border-line flex justify-between gap-4",
+                            span { class: "break-all", {condition(&rule["when"])} }
+                            span { class: "whitespace-nowrap", "→ {rule[\"profile\"].as_str().unwrap_or_default()}" }
+                        }
+                    }
+                    li { class: "px-5 py-3 flex justify-between gap-4",
+                        span { class: "text-ink-muted", "default" }
+                        span { class: "whitespace-nowrap", "→ {select[\"default\"].as_str().unwrap_or_default()}" }
+                    }
                 }
             }
         }
@@ -537,6 +593,16 @@ mod tests {
             "read project, docs · net none · 10000 ms · 256 pages"
         );
         assert_eq!(capabilities(&Value::Null), "not approved");
+    }
+
+    #[test]
+    fn a_condition_keeps_text_and_numbers_apart() {
+        assert_eq!(
+            condition(
+                &serde_json::json!({ "risk": "high", "size": 3, "type": ["fix", "feature"] })
+            ),
+            "risk: \"high\", size: 3, type: [\"fix\",\"feature\"]"
+        );
     }
 
     #[test]
