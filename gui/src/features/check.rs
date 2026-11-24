@@ -4,6 +4,7 @@
 use dioxus::prelude::*;
 use serde_json::Value;
 
+use super::assistant::{Assistant, Chip, ChipKind};
 use super::code::CodeTarget;
 use super::common::{Empty, FailureAlert, Loading, Mark, ProblemAlert, StatusMark, WarningNote};
 use super::journal::clock;
@@ -132,7 +133,7 @@ pub(crate) fn NoRun(ticket: String) -> Element {
         match transient() {
             Some(result) => rsx! {
                 WarningNote { text: "The run was not stored, because the project has no process store yet." }
-                RunBody { status: result.status, gates: result.gates, duration_ms: None }
+                RunBody { status: result.status, gates: result.gates, duration_ms: None, run: None }
             },
             None => rsx! { Empty { text: "No stored run of this ticket yet. Run hone check to run every gate, exec gates included." } },
         }
@@ -215,9 +216,9 @@ pub(crate) fn RunView(ticket: String, id: String) -> Element {
         }
         if let Some(result) = transient() {
             WarningNote { text: "The new run was not stored. It shows below in place of the stored one." }
-            RunBody { status: result.status, gates: result.gates, duration_ms: None }
+            RunBody { status: result.status, gates: result.gates, duration_ms: None, run: None }
         } else {
-            RunBody { status, gates, duration_ms: Some(duration_ms) }
+            RunBody { status, gates, duration_ms: Some(duration_ms), run: Some(id.clone()) }
         }
     }
 }
@@ -244,7 +245,12 @@ fn Head(context: String, running: bool, onrun: EventHandler<MouseEvent>) -> Elem
 }
 
 #[component]
-fn RunBody(status: String, gates: Vec<Gate>, duration_ms: Option<u64>) -> Element {
+fn RunBody(
+    status: String,
+    gates: Vec<Gate>,
+    duration_ms: Option<u64>,
+    run: Option<String>,
+) -> Element {
     let failed = gates.iter().filter(|gate| !gate.ok).count();
     let passed = gates.len() - failed;
     let exit = i32::from(status != "passed");
@@ -289,7 +295,7 @@ fn RunBody(status: String, gates: Vec<Gate>, duration_ms: Option<u64>) -> Elemen
                         for finding in gate.findings.clone() {
                             TableRow { class: "hover:bg-transparent",
                                 TableCell { colspan: 4, class: "pt-0",
-                                    FindingBox { finding }
+                                    FindingBox { finding, gate: gate.name.clone(), run: run.clone() }
                                 }
                             }
                         }
@@ -300,10 +306,12 @@ fn RunBody(status: String, gates: Vec<Gate>, duration_ms: Option<u64>) -> Elemen
     }
 }
 
-/// A finding with what it points at, which opens as a tab.
+/// A finding with what it points at, which opens as a tab, and a question to the assistant
+/// about it.
 #[component]
-fn FindingBox(finding: Finding) -> Element {
+fn FindingBox(finding: Finding, gate: String, run: Option<String>) -> Element {
     let session = use_context::<Session>();
+    let assistant = use_context::<Assistant>();
     let project = use_context::<Project>();
     let artifact = finding
         .path
@@ -326,6 +334,7 @@ fn FindingBox(finding: Finding) -> Element {
         None => path.clone(),
     });
     let error = finding.level == "error";
+    let asked = artifact.clone();
     rsx! {
         div { class: if error { "border border-bad p-4 flex items-start gap-4" } else { "border border-warn p-4 flex items-start gap-4" },
             div { class: "flex-1 min-w-0 flex flex-col gap-1",
@@ -356,8 +365,28 @@ fn FindingBox(finding: Finding) -> Element {
             }
             Button {
                 variant: ButtonVariant::Outline,
-                disabled: true,
-                title: "The assistant is not connected yet",
+                title: "Put a question about this finding into the assistant's message",
+                onclick: {
+                    let code = finding.code.clone();
+                    let path = finding.path.clone();
+                    let artifact = asked;
+                    move |_| {
+                        let Some(ticket) = (session.ticket)() else {
+                            return;
+                        };
+                        if let Some(run) = run.clone() {
+                            assistant.add(&ticket, Chip::new(ChipKind::Run, run));
+                        }
+                        match (&artifact, &path) {
+                            (Some(id), _) => assistant.add(&ticket, Chip::new(ChipKind::Artifact, id.clone())),
+                            (None, Some(path)) => assistant.add(&ticket, Chip::new(ChipKind::Code, path.clone())),
+                            (None, None) => {}
+                        }
+                        assistant.draft(&ticket, format!("Why does the gate {gate} report {code}, and how do I fix it?"));
+                        let mut open = session.assistant_open;
+                        open.set(true);
+                    }
+                },
                 "Ask assistant"
             }
         }

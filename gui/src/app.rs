@@ -43,6 +43,8 @@ fn App() -> Element {
     let session = use_context_provider(|| Session::new(root));
     let project = Project::use_project(session);
     use_context_provider(|| project);
+    let assistant = features::assistant::Assistant::use_assistant();
+    use_context_provider(|| assistant);
     let screen = session.screen;
     rsx! {
         document::Style { {STYLE} }

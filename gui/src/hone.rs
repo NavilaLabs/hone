@@ -1201,6 +1201,59 @@ impl Hone {
         self.run(&arguments, &[0]).await
     }
 
+    /// `hone mcp` for this project, writing as `author` with `role`, as an MCP server an agent
+    /// starts: the canonical root, the packages directory, and the variables `HONE_…` of this
+    /// process and of this command line, apart from `HONE_AUTHOR`, `HONE_ROLE`, and `HONE_BIN`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`] `io-error` when the root cannot be canonicalized.
+    pub fn mcp_server(&self, author: &str, role: &str) -> Result<crate::acp::McpServer, Failure> {
+        let root = self.root.canonicalize().map_err(|error| Failure {
+            status: "io-error".into(),
+            message: format!("{}: {error}", self.root.display()),
+        })?;
+        let mut args = vec![
+            "mcp".to_owned(),
+            "--root".to_owned(),
+            root.display().to_string(),
+            "--author".to_owned(),
+            author.to_owned(),
+            "--role".to_owned(),
+            role.to_owned(),
+        ];
+        if let Some(packages) = &self.packages {
+            args.extend(["--packages".to_owned(), packages.display().to_string()]);
+        }
+        let mut env: BTreeMap<String, String> = std::env::vars()
+            .filter(|(name, _)| name.starts_with("HONE_"))
+            .collect();
+        for (name, value) in &self.environment {
+            env.insert(
+                name.to_string_lossy().into_owned(),
+                value.to_string_lossy().into_owned(),
+            );
+        }
+        for personal in ["HONE_AUTHOR", "HONE_ROLE", "HONE_BIN"] {
+            env.remove(personal);
+        }
+        // A relative path would be read against the agent's working directory; a bare name is
+        // looked up on the PATH.
+        let command = if self.binary.components().count() > 1 {
+            self.binary
+                .canonicalize()
+                .unwrap_or_else(|_| self.binary.clone())
+        } else {
+            self.binary.clone()
+        };
+        Ok(crate::acp::McpServer {
+            name: "hone".into(),
+            command,
+            args,
+            env: env.into_iter().collect(),
+        })
+    }
+
     /// Starts `hone serve --config <config>`.
     ///
     /// # Errors

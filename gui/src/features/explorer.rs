@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 
 use dioxus::prelude::*;
 
+use super::assistant::{Assistant, Chip, ChipKind};
 use super::journal::clock;
 use super::progress::step_gates;
 use super::{Project, Session, Tab};
@@ -107,6 +108,7 @@ pub(crate) fn Explorer() -> Element {
                             note: artifact.title.clone().unwrap_or_default(),
                             mark: artifact.effective.clone().unwrap_or_default(),
                             tab: Tab::Artifact(artifact.id.clone().unwrap_or_default()),
+                            chip: artifact.id.clone().map(|id| Chip::new(ChipKind::Artifact, id)),
                         }
                     }
                 }
@@ -118,6 +120,7 @@ pub(crate) fn Explorer() -> Element {
                                 label: module.id.clone().unwrap_or_else(|| module.path.clone()),
                                 note: module.title.clone().unwrap_or_default(),
                                 tab: Tab::Artifact(module.id.clone().unwrap_or_default()),
+                                chip: module.id.clone().map(|id| Chip::new(ChipKind::Artifact, id)),
                             }
                         }
                     }
@@ -136,6 +139,7 @@ pub(crate) fn Explorer() -> Element {
                             mark: if run.status == "passed" { "passed".to_owned() } else { "failed".to_owned() },
                             bad: run.status != "passed",
                             tab: Tab::Run(run.id.clone()),
+                            chip: Chip::new(ChipKind::Run, run.id.clone()),
                         }
                     } else {
                         Item { label: "Check run", tab: Tab::Check }
@@ -223,6 +227,7 @@ fn Item(
     #[props(into, optional)] mark: Option<String>,
     #[props(optional)] bad: bool,
     tab: Tab,
+    #[props(optional)] chip: Option<Chip>,
 ) -> Element {
     let session = use_context::<Session>();
     let active = session.ticket_tabs().active == tab;
@@ -237,7 +242,7 @@ fn Item(
         "font-mono text-[12px] text-ink-muted"
     };
     rsx! {
-        li {
+        li { class: "group relative",
             button { class, onclick: move |_| session.open_tab(tab.clone()),
                 span { class: "shrink-0", "{label}" }
                 if let Some(note) = note.filter(|note| !note.is_empty()) {
@@ -246,6 +251,9 @@ fn Item(
                 if let Some(mark) = mark.filter(|mark| !mark.is_empty()) {
                     span { class: "ml-auto {mark_class}", "{mark}" }
                 }
+            }
+            if let Some(chip) = chip {
+                AddToAssistant { chip }
             }
         }
     }
@@ -260,8 +268,9 @@ fn ThreadItem(ticket: String, thread: String, kind: String, blocking: bool) -> E
         _ => None,
     };
     let shown = thread.clone();
+    let chip = Chip::new(ChipKind::Thread, thread.clone());
     rsx! {
-        li {
+        li { class: "group relative",
             button {
                 class: "w-full min-h-10 px-5 flex items-baseline gap-2 text-left hover:bg-surface-2",
                 onclick: move |_| session.open_thread(ticket.clone(), thread.clone(), artifact.clone()),
@@ -271,6 +280,7 @@ fn ThreadItem(ticket: String, thread: String, kind: String, blocking: bool) -> E
                     span { class: "ml-auto shrink-0 font-mono text-[12px] text-signal", title: "blocking", "▲" }
                 }
             }
+            AddToAssistant { chip }
         }
     }
 }
@@ -306,7 +316,7 @@ fn Steps(summary: TicketSummary) -> Element {
                         _ => "",
                     };
                     rsx! {
-                        li { key: "{step.step}",
+                        li { key: "{step.step}", class: "group relative",
                             button {
                                 class: "w-full min-h-10 px-5 flex items-baseline gap-2 text-left hover:bg-surface-2",
                                 onclick: move |_| {
@@ -321,10 +331,35 @@ fn Steps(summary: TicketSummary) -> Element {
                                 }
                                 span { class: "ml-auto font-mono {class}", "aria-label": "{step.status}", "{glyph}" }
                             }
+                            AddToAssistant { chip: Chip::new(ChipKind::Step, step.step.clone()) }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+/// Adds `chip` to the open ticket's next message and shows the assistant. It shows while the
+/// row is hovered or holds the focus.
+#[component]
+fn AddToAssistant(chip: Chip) -> Element {
+    let session = use_context::<Session>();
+    let assistant = use_context::<Assistant>();
+    rsx! {
+        button {
+            class: "absolute right-1 top-1 h-8 w-8 bg-surface border border-line font-mono text-[13px] opacity-0 group-hover:opacity-100 focus:opacity-100",
+            title: "Add to assistant",
+            "aria-label": "Add {chip.label()} to the assistant",
+            onclick: move |_| {
+                let Some(ticket) = (session.ticket)() else {
+                    return;
+                };
+                assistant.add(&ticket, chip.clone());
+                let mut open = session.assistant_open;
+                open.set(true);
+            },
+            "+"
         }
     }
 }

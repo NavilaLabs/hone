@@ -1,7 +1,9 @@
-//! The settings of the GUI per project and checkout, in `gui.json` of the hone configuration
-//! directory (concept Section 12, "Desktop GUI"). This is tool behaviour: nothing lands in the
-//! project, and a setting made in one checkout does not apply in another.
+//! The settings of the GUI in `gui.json` of the hone configuration directory (concept Section
+//! 12, "Desktop GUI"): the assistant for every project, and the rest per project and checkout.
+//! This is tool behaviour: nothing lands in the project, and a setting made in one checkout does
+//! not apply in another.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -29,8 +31,45 @@ pub struct ProjectSettings {
     pub packages: Option<PathBuf>,
 }
 
+/// The agent behind the assistant, the same for every project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssistantSettings {
+    /// The program that starts the agent and its arguments.
+    pub argv: Vec<String>,
+    /// The environment variables the agent's program needs.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    /// The author the agent writes as through `hone mcp`.
+    #[serde(default = "default_author")]
+    pub author: String,
+    /// The role of that author.
+    #[serde(default = "default_role")]
+    pub role: String,
+}
+
+impl Default for AssistantSettings {
+    fn default() -> Self {
+        Self {
+            argv: Vec::new(),
+            env: BTreeMap::new(),
+            author: default_author(),
+            role: default_role(),
+        }
+    }
+}
+
+fn default_author() -> String {
+    "assistant".to_owned()
+}
+
+fn default_role() -> String {
+    "agent".to_owned()
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct File {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    assistant: Option<AssistantSettings>,
     #[serde(default)]
     projects: Vec<Binding>,
 }
@@ -117,6 +156,26 @@ impl Settings {
                 settings,
             }),
         }
+        self.write(&file)
+    }
+
+    /// The assistant's agent, `None` while none is set up.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the file exists but cannot be read.
+    pub fn assistant(&self) -> Result<Option<AssistantSettings>, String> {
+        Ok(self.read()?.assistant)
+    }
+
+    /// Sets up the assistant's agent, or removes it with `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the file cannot be read or written.
+    pub fn set_assistant(&self, assistant: Option<AssistantSettings>) -> Result<(), String> {
+        let mut file = self.read()?;
+        file.assistant = assistant;
         self.write(&file)
     }
 
@@ -237,6 +296,60 @@ mod tests {
             serde_json::from_slice(&std::fs::read(settings.path()).expect("readable"))
                 .expect("JSON");
         assert_eq!(written, json!({ "projects": [] }));
+        std::fs::remove_dir_all(&directory).expect("removable");
+    }
+
+    #[test]
+    fn the_assistant_applies_to_every_project_and_keeps_the_project_settings() {
+        let directory =
+            std::env::temp_dir().join(format!("hone-gui-assistant-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).expect("creatable");
+        let settings = Settings::at(directory.join("gui.json"));
+        assert_eq!(settings.assistant(), Ok(None));
+        settings
+            .update("prj-8m2k4d7q", &directory, |kept| kept.ide = Some(Ide::Zed))
+            .expect("written");
+        let assistant = AssistantSettings {
+            argv: vec!["uvx".into(), "fast-agent-acp==0.10.66".into(), "-x".into()],
+            env: BTreeMap::from([("FAST_AGENT_MODEL".into(), "codexplan".into())]),
+            ..AssistantSettings::default()
+        };
+        settings
+            .set_assistant(Some(assistant.clone()))
+            .expect("written");
+        assert_eq!(settings.assistant(), Ok(Some(assistant)));
+        let written: Value =
+            serde_json::from_slice(&std::fs::read(settings.path()).expect("readable"))
+                .expect("JSON");
+        assert_eq!(
+            written,
+            json!({
+                "assistant": {
+                    "argv": ["uvx", "fast-agent-acp==0.10.66", "-x"],
+                    "env": { "FAST_AGENT_MODEL": "codexplan" },
+                    "author": "assistant",
+                    "role": "agent"
+                },
+                "projects": [{
+                    "project": "prj-8m2k4d7q",
+                    "root": directory.canonicalize().expect("canonical"),
+                    "ide": { "kind": "zed" }
+                }]
+            })
+        );
+        std::fs::write(
+            settings.path(),
+            r#"{ "assistant": { "argv": ["gemini", "--acp"] } }"#,
+        )
+        .expect("writable");
+        assert_eq!(
+            settings.assistant(),
+            Ok(Some(AssistantSettings {
+                argv: vec!["gemini".into(), "--acp".into()],
+                ..AssistantSettings::default()
+            }))
+        );
         std::fs::remove_dir_all(&directory).expect("removable");
     }
 }

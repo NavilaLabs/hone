@@ -1,6 +1,7 @@
 //! The desktop GUI of hone (concept Section 12, "Desktop GUI"). It reaches hone only through
 //! the command line, in [`hone`].
 
+pub mod acp;
 mod app;
 mod artifact_text;
 mod features;
