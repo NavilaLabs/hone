@@ -47,7 +47,7 @@ fn App() -> Element {
     rsx! {
         document::Style { {STYLE} }
         document::Script { {features::editor::BUNDLE} }
-        div { class: "min-h-screen flex flex-col bg-bg text-ink",
+        div { class: "h-screen flex flex-col bg-bg text-ink",
             features::settings::Header {}
             features::search::SearchShortcut {}
             if (session.search_open)() {
@@ -59,139 +59,29 @@ fn App() -> Element {
             if (session.new_artifact)() {
                 features::new_artifact::NewArtifactDialog {}
             }
-            div { class: "flex flex-wrap flex-1",
-                Navigation {}
-                main { class: "flex-1 min-w-0 px-10 pt-8 pb-12 flex flex-col gap-8",
-                    match screen() {
-                        Screen::Tickets => rsx! { features::tickets::Tickets {} },
-                        Screen::Artifacts => match (session.artifact)() {
-                            Some(id) => rsx! { features::artifact::ArtifactDetail { key: "{id}", id } },
-                            None => rsx! { features::artifacts::Artifacts {} },
-                        },
-                        Screen::Graph => rsx! { features::graph::LinkGraph {} },
-                        Screen::Threads => rsx! { features::threads::Threads {} },
-                        Screen::Events => rsx! { features::events::EventLog {} },
-                        Screen::Check => rsx! { features::check::CheckRun {} },
-                        Screen::Sync => rsx! { features::sync::Sync {} },
-                        Screen::Server => rsx! { features::server::Server {} },
-                        Screen::Profiles => rsx! { features::configuration::Profiles {} },
-                        Screen::Plugins => rsx! { features::configuration::Plugins {} },
-                        Screen::Tracker => rsx! { features::tracker::TrackerScreen {} },
-                        Screen::Settings => rsx! { features::project_settings::ProjectSettingsScreen {} },
+            match screen() {
+                Screen::Ticket => rsx! { features::tabs::Workspace {} },
+                Screen::Tickets => rsx! { features::tickets::Tickets {} },
+                other => rsx! {
+                    main { class: "flex-1 min-h-0 overflow-y-auto px-10 pt-8 pb-12 flex flex-col gap-8",
+                        match other {
+                            Screen::Artifacts => match (session.artifact)() {
+                                Some(id) => rsx! { features::artifact::ArtifactDetail { key: "{id}", id } },
+                                None => rsx! { features::artifacts::Artifacts {} },
+                            },
+                            Screen::Profiles => rsx! { features::configuration::Profiles {} },
+                            Screen::Plugins => rsx! { features::configuration::Plugins {} },
+                            Screen::Sync => rsx! {
+                                features::sync::Sync {}
+                                features::server::Server {}
+                                features::events::EventLog {}
+                            },
+                            _ => rsx! { features::project_settings::ProjectSettingsScreen {} },
+                        }
                     }
-                }
+                },
             }
-        }
-    }
-}
-
-#[component]
-fn Navigation() -> Element {
-    let session = use_context::<Session>();
-    let project = use_context::<Project>();
-    let (tickets, artifacts) = match &*project.catalog.read() {
-        Some(Ok(catalog)) => (
-            Some(catalog.tickets().count()),
-            Some(
-                catalog
-                    .artifacts
-                    .iter()
-                    .filter(|entry| entry.kind != "ticket")
-                    .count(),
-            ),
-        ),
-        _ => (None, None),
-    };
-    let open_threads = match &*project.state.read() {
-        Some(Some(Ok(state))) => Some(
-            state
-                .threads
-                .iter()
-                .filter(|thread| thread.status == "open")
-                .count(),
-        ),
-        _ => None,
-    };
-    let failed = match &*session.last_check.read() {
-        Some(features::LastCheck {
-            outcome: Ok(run), ..
-        }) => Some(run.gates.iter().filter(|gate| !gate.ok).count()),
-        _ => None,
-    };
-    rsx! {
-        nav { class: "basis-[232px] grow-0 shrink-0 border-r border-line py-6 flex flex-col",
-            NavGroup { label: "Workspace",
-                NavItem { screen: Screen::Tickets, label: "Tickets", count: tickets.map(|count| count.to_string()) }
-                NavItem { screen: Screen::Artifacts, label: "Artifacts", count: artifacts.map(|count| count.to_string()) }
-                NavItem { screen: Screen::Graph, label: "Link graph" }
-                NavItem { screen: Screen::Threads, label: "Threads", count: open_threads.filter(|count| *count > 0).map(|count| format!("{count} open")) }
-                NavItem {
-                    screen: Screen::Check,
-                    label: "Checks",
-                    count: failed.filter(|count| *count > 0).map(|count| format!("{count} fail")),
-                    bad: true,
-                }
-                NavItem { screen: Screen::Events, label: "Event log" }
-            }
-            NavGroup { label: "Project",
-                NavItem { screen: Screen::Profiles, label: "Profiles" }
-                NavItem { screen: Screen::Plugins, label: "Plugins" }
-                NavItem { screen: Screen::Tracker, label: "Tracker" }
-                NavItem { screen: Screen::Sync, label: "Sync" }
-                NavItem { screen: Screen::Server, label: "Server" }
-                NavItem { screen: Screen::Settings, label: "Settings" }
-            }
-        }
-    }
-}
-
-#[component]
-fn NavGroup(label: String, children: Element) -> Element {
-    rsx! {
-        div { class: "flex flex-col pb-6",
-            span { class: "px-4 pb-2 font-mono text-[11px] leading-4 font-medium tracking-[0.08em] uppercase text-ink-muted",
-                "{label}"
-            }
-            {children}
-        }
-    }
-}
-
-#[component]
-fn NavItem(
-    screen: Screen,
-    label: String,
-    #[props(optional)] count: Option<String>,
-    #[props(optional)] bad: bool,
-) -> Element {
-    let session = use_context::<Session>();
-    let mut current = session.screen;
-    let mut artifact = session.artifact;
-    let active = current() == screen;
-    let class = if active {
-        "h-11 px-4 flex items-center justify-between gap-2 text-left bg-ink text-bg font-semibold"
-    } else {
-        "h-11 px-4 flex items-center justify-between gap-2 text-left hover:bg-surface-2"
-    };
-    let count_class = match (active, bad) {
-        (true, _) => "font-mono text-[12px]",
-        (false, true) => "font-mono text-[12px] text-bad",
-        (false, false) => "font-mono text-[12px] text-ink-muted",
-    };
-    rsx! {
-        button {
-            class,
-            "aria-current": if active { "page" } else { "false" },
-            onclick: move |_| {
-                if screen == Screen::Artifacts {
-                    artifact.set(None);
-                }
-                current.set(screen);
-            },
-            span { "{label}" }
-            if let Some(count) = count {
-                span { class: count_class, "{count}" }
-            }
+            features::status::StatusBar {}
         }
     }
 }

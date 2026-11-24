@@ -77,6 +77,8 @@ pub(crate) fn Sync() -> Element {
             let hone = (session.hone)();
             let result = hone.sync(&peer()).await;
             if result.is_ok() {
+                let mut last = session.last_sync;
+                last.set(Some(super::common::now_time()));
                 session.changed();
             }
             outcome.set(Some(result));

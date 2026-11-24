@@ -204,6 +204,7 @@ mod tests {
             gate: kind.into(),
             ok,
             findings: Vec::new(),
+            duration_ms: 0,
         }
     }
 
@@ -217,6 +218,7 @@ mod tests {
                 gate("c", "ids-unique", true),
                 gate("d", "public-api-has-decision", false),
             ],
+            run: None,
         };
         let names: Vec<String> = ordered(&run).into_iter().map(|gate| gate.name).collect();
         assert_eq!(names, ["b", "d", "a", "c"]);

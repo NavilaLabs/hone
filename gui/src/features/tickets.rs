@@ -1,128 +1,230 @@
+//! The Tickets view: every ticket with its steps and what it waits on, a preview, and the
+//! tracker's tickets.
+
 use dioxus::prelude::*;
 
-use super::attributes::{AttributeEditor, attribute_changes, parse_rows, rows_of, rule_keys};
-use super::common::{
-    Empty, FailureAlert, Loading, Mark, PageHeader, SectionLabel, StatusMark, Tag, short_hash,
-};
-use super::progress::{self, Stage, StepTrack};
-use super::{Project, Screen, Session};
-use crate::hone::{CatalogEntry, Failure, GateScope, StoreLog, TicketEvents, TicketOverview};
-use crate::ui::{
-    Badge, Button, ButtonVariant, Combobox, Table, TableBody, TableCell, TableHead, TableHeader,
-    TableRow, TableWrapper,
-};
+use super::common::{Empty, FailureAlert, Loading, PageHeader, Tag};
+use super::{Project, Session};
+use crate::hone::{TicketSummary, Waiting};
+use crate::ui::{Button, ButtonVariant};
 
-/// A row of the ticket list: a ticket record, or a ticket the store knows without one.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TicketRow {
-    ticket: String,
-    record: Option<CatalogEntry>,
-    events: usize,
-    last: Option<String>,
+/// The tabs of the ticket list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Filter {
+    /// Started by me, or with an event of mine.
+    Mine,
+    /// Not complete.
+    Open,
+    /// Waiting on my role.
+    NeedsMe,
+    Completed,
+    /// The tracker's tickets.
+    Tracker,
 }
 
-/// The ticket records in the order of their paths, then the tickets of the store without a
-/// record in the order their first event appears in the log, each with its event count and the
-/// type of its last event.
-fn ticket_rows(records: &[CatalogEntry], log: Option<&StoreLog>) -> Vec<TicketRow> {
-    let mut rows: Vec<TicketRow> = records
-        .iter()
-        .filter_map(|record| {
-            Some(TicketRow {
-                ticket: record.id.clone()?,
-                record: Some(record.clone()),
-                events: 0,
-                last: None,
-            })
-        })
-        .collect();
-    for event in log.map(|log| log.events.as_slice()).unwrap_or_default() {
-        let Some(ticket) = &event.ticket else {
-            continue;
-        };
-        match rows.iter_mut().find(|row| &row.ticket == ticket) {
-            Some(row) => {
-                row.events += 1;
-                row.last = Some(event.kind.clone());
-            }
-            None => rows.push(TicketRow {
-                ticket: ticket.clone(),
-                record: None,
-                events: 1,
-                last: Some(event.kind.clone()),
-            }),
-        }
+/// Whether `summary` belongs under `filter` for the author `me` (name and role).
+pub(crate) fn shows(summary: &TicketSummary, filter: Filter, me: Option<(&str, &str)>) -> bool {
+    match filter {
+        Filter::Mine => me.is_some_and(|(name, _)| {
+            summary
+                .started
+                .as_ref()
+                .is_some_and(|started| started.by.name == name)
+                || summary.authors.iter().any(|author| author == name)
+        }),
+        Filter::Open => summary.complete != Some(true),
+        Filter::NeedsMe => me.is_some_and(|(_, role)| {
+            !role.is_empty()
+                && summary.waiting.iter().any(|reason| match reason {
+                    Waiting::Approval { role: wanted, .. } | Waiting::Step { role: wanted, .. } => {
+                        wanted.as_deref() == Some(role)
+                    }
+                    _ => false,
+                })
+        }),
+        Filter::Completed => summary.complete == Some(true),
+        Filter::Tracker => false,
     }
-    rows
 }
 
-/// The tickets list, or the open ticket.
+/// How a "Waiting on" cell reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Tone {
+    Bad,
+    Me,
+    Plain,
+    Done,
+}
+
+/// The first reason `summary` waits, in words, with `role` as the reader's role.
+pub(crate) fn waiting_text(summary: &TicketSummary, role: Option<&str>) -> (String, Tone) {
+    if summary.complete == Some(true) {
+        return ("■ completed".into(), Tone::Done);
+    }
+    let plural = |count: usize, word: &str| {
+        if count == 1 {
+            format!("1 {word}")
+        } else {
+            format!("{count} {word}s")
+        }
+    };
+    match summary.waiting.first() {
+        Some(Waiting::Gates { gates }) => (
+            format!("× {} failing", plural(gates.len(), "gate")),
+            Tone::Bad,
+        ),
+        Some(Waiting::Threads { threads }) => (
+            format!("▲ {} open", plural(threads.len(), "blocking thread")),
+            Tone::Bad,
+        ),
+        Some(Waiting::Approval { role: wanted, .. })
+            if wanted.as_deref() == role && role.is_some() =>
+        {
+            ("▲ your approval".into(), Tone::Me)
+        }
+        Some(Waiting::Approval { role: wanted, .. }) => (
+            format!("{} approval", wanted.as_deref().unwrap_or("an")),
+            Tone::Plain,
+        ),
+        Some(Waiting::Step { step, role: wanted })
+            if wanted.as_deref() == role && role.is_some() =>
+        {
+            (format!("▲ you · {step}"), Tone::Me)
+        }
+        Some(Waiting::Step { step, role: wanted }) => (
+            format!("{} · {step}", wanted.as_deref().unwrap_or("anyone")),
+            Tone::Plain,
+        ),
+        None if summary.problem.is_some() => ("× record unreadable".into(), Tone::Bad),
+        None if !summary.record => ("no record in this checkout".into(), Tone::Plain),
+        None => (String::new(), Tone::Plain),
+    }
+}
+
+/// How long ago the UUIDv7 `id` was written, from `now` in milliseconds since the Unix epoch.
+pub(crate) fn ago(id: &str, now: u64) -> Option<String> {
+    let hex: String = id
+        .split_once('-')?
+        .1
+        .chars()
+        .filter(|c| *c != '-')
+        .take(12)
+        .collect();
+    let then = u64::from_str_radix(&hex, 16).ok()?;
+    let minutes = now.saturating_sub(then) / 60_000;
+    Some(match minutes {
+        0 => "now".into(),
+        1..60 => format!("{minutes} min"),
+        60..1440 => format!("{} h", minutes / 60),
+        1440..2880 => "yesterday".into(),
+        _ => format!("{} d", minutes / 1440),
+    })
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
+/// The Tickets view.
 #[component]
 pub(crate) fn Tickets() -> Element {
     let session = use_context::<Session>();
-    match (session.ticket)() {
-        Some(ticket) => rsx! { TicketDetail { key: "{ticket}", ticket } },
-        None => rsx! { TicketList {} },
-    }
-}
-
-#[component]
-fn TicketList() -> Element {
-    let mut session = use_context::<Session>();
     let project = use_context::<Project>();
-    let tracker = project.tracker();
+    let mut filter = use_signal(|| Filter::Open);
+    let selected = use_signal(|| None::<String>);
+    let me = project.me(&session.writer.read());
+    let me_ref = me
+        .as_ref()
+        .map(|(name, role)| (name.as_str(), role.as_str()));
+    let list = match &*project.tickets.read() {
+        Some(Ok(list)) => Ok(list.tickets.clone()),
+        Some(Err(failure)) => Err(Some(failure.clone())),
+        None => Err(None),
+    };
+    let project_id = project.project_id().unwrap_or_default();
+    let count = |wanted: Filter| match &list {
+        Ok(tickets) => tickets
+            .iter()
+            .filter(|summary| shows(summary, wanted, me_ref))
+            .count(),
+        Err(_) => 0,
+    };
+    let tabs = [
+        (Filter::Mine, "Mine", Some(count(Filter::Mine))),
+        (Filter::Open, "Open", Some(count(Filter::Open))),
+        (Filter::NeedsMe, "Needs me", Some(count(Filter::NeedsMe))),
+        (Filter::Completed, "Completed", None),
+        (Filter::Tracker, "Tracker", None),
+    ];
+    let preview = match (&list, selected()) {
+        (Ok(tickets), Some(ticket)) => tickets
+            .iter()
+            .find(|summary| summary.ticket == ticket)
+            .cloned(),
+        _ => None,
+    };
     rsx! {
-        PageHeader {
-            context: project.project_id().unwrap_or_default(),
-            title: "Tickets",
-            actions: rsx! {
-                Button {
-                    onclick: move |_| session.new_ticket.set(Some(super::new_ticket::Seed::default())),
-                    "New ticket"
+        div { class: "flex-1 min-h-0 flex",
+            main { class: "flex-1 min-w-0 overflow-y-auto px-10 pt-8 pb-12 flex flex-col gap-6",
+                PageHeader {
+                    context: format!("{project_id} · {} open", count(Filter::Open)),
+                    title: "Pick a ticket",
+                    actions: rsx! {
+                        Button { variant: ButtonVariant::Outline,
+                            onclick: move |_| {
+                                let mut dialog = session.new_ticket;
+                                dialog.set(Some(super::new_ticket::Seed::default()));
+                            },
+                            "New ticket"
+                        }
+                    },
                 }
-                Button {
-                    variant: ButtonVariant::Outline,
-                    onclick: move |_| session.screen.set(Screen::Tracker),
-                    if let Some(tracker) = &tracker { "Browse {tracker.describe()}" } else { "Set up a tracker" }
+                div { class: "flex gap-2 border-b border-line", role: "tablist",
+                    for (value , label , number) in tabs {
+                        button {
+                            role: "tab",
+                            "aria-selected": "{filter() == value}",
+                            class: if filter() == value { "h-11 px-4 font-semibold shadow-[inset_0_-2px_0_var(--hone-ink)]" } else { "h-11 px-4 text-ink-muted hover:text-ink" },
+                            onclick: move |_| filter.set(value),
+                            "{label}"
+                            if let Some(number) = number {
+                                span { class: "ml-2 font-mono text-[12px]", "{number}" }
+                            }
+                        }
+                    }
                 }
-            },
-        }
-        div { class: "flex flex-col gap-1 max-w-xl",
-            span { class: "text-[13px] text-ink-muted", "Open a ticket" }
-            Combobox {
-                value: "",
-                choices: project.ticket_choices(),
-                placeholder: "Search by ID, external key, or profile",
-                label: "Open a ticket",
-                empty: "No ticket matches.",
-                onselect: move |ticket: String| session.open_ticket(ticket),
-            }
-        }
-        match (&*project.catalog.read(), &*project.log.read()) {
-            (None, _) | (_, None) => rsx! { Loading {} },
-            (Some(Err(failure)), _) => rsx! { FailureAlert { failure: failure.clone() } },
-            (Some(Ok(catalog)), Some(log)) => {
-                let records: Vec<CatalogEntry> = catalog.tickets().cloned().collect();
-                let log = log.as_ref().ok();
-                let rows = ticket_rows(&records, log);
-                if rows.is_empty() {
-                    rsx! { Empty { text: "No ticket yet. A ticket appears here once its record exists under the ticket path of the configuration." } }
+                if filter() == Filter::Tracker {
+                    super::tracker::TrackerScreen {}
                 } else {
-                    rsx! {
-                        TableWrapper {
-                            Table {
-                                TableHeader { class: "bg-surface",
-                                    TableRow {
-                                        TableHead { "Ticket" }
-                                        TableHead { "External" }
-                                        TableHead { "Profile" }
-                                        TableHead { class: "w-[260px]", "Progress" }
-                                        TableHead { "Last event" }
-                                    }
-                                }
-                                TableBody {
-                                    for row in rows {
-                                        TicketListRow { key: "{row.ticket}", row }
+                    match list {
+                        Err(None) => rsx! { Loading {} },
+                        Err(Some(failure)) => rsx! { FailureAlert { failure } },
+                        Ok(tickets) => {
+                            let shown: Vec<TicketSummary> = tickets.into_iter().filter(|summary| shows(summary, filter(), me_ref)).collect();
+                            if shown.is_empty() {
+                                rsx! { Empty { text: "No ticket here." } }
+                            } else {
+                                let role = me.as_ref().map(|(_, role)| role.clone()).filter(|role| !role.is_empty());
+                                rsx! {
+                                    table { class: "w-full border border-line border-collapse",
+                                        thead {
+                                            tr { class: "text-left text-ink-muted text-[14px] border-b border-line",
+                                                th { class: "px-5 h-12 font-normal", "Ticket" }
+                                                th { class: "px-5 font-normal", "Profile" }
+                                                th { class: "px-5 font-normal", "Steps" }
+                                                th { class: "px-5 font-normal", "Waiting on" }
+                                                th { class: "px-5 font-normal text-right", "Updated" }
+                                            }
+                                        }
+                                        tbody {
+                                            for summary in shown {
+                                                Row { key: "{summary.ticket}", summary, role: role.clone(), selected }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -130,582 +232,241 @@ fn TicketList() -> Element {
                     }
                 }
             }
+            if let Some(summary) = preview {
+                Preview { summary }
+            }
         }
     }
 }
 
 #[component]
-fn TicketListRow(row: TicketRow) -> Element {
+fn Row(summary: TicketSummary, role: Option<String>, selected: Signal<Option<String>>) -> Element {
     let session = use_context::<Session>();
-    let ticket = row.ticket.clone();
-    let shown = ticket.clone();
-    let has_record = row.record.is_some();
-    let progress = use_resource(move || {
-        let ticket = shown.clone();
-        async move {
-            let _ = (session.revision)();
-            if !has_record {
-                return None;
-            }
-            let hone = (session.hone)();
-            let overview = hone.ticket(&ticket).await.ok()?;
-            let state = hone.events(&ticket).await.ok();
-            Some(progress::progress(&overview, state.as_ref(), None))
-        }
-    });
-    let external = row
-        .record
-        .as_ref()
-        .map(|record| {
-            record
-                .external
-                .iter()
-                .map(|external| format!("{} {}", external.system, external.key))
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
+    let (waiting, tone) = waiting_text(&summary, role.as_deref());
+    let tone = match tone {
+        Tone::Bad => "text-bad",
+        Tone::Me => "text-signal",
+        Tone::Done => "text-ok",
+        Tone::Plain => "text-ink-muted",
+    };
+    let is_selected = selected().as_deref() == Some(summary.ticket.as_str());
+    let external = summary
+        .external
+        .iter()
+        .map(|external| external.key.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let ticket = summary.ticket.clone();
+    let opened = summary.ticket.clone();
+    let updated = summary
+        .last_event
+        .as_deref()
+        .and_then(|id| ago(id, now_ms()))
         .unwrap_or_default();
     rsx! {
-        TableRow { class: "cursor-pointer", onclick: move |_| session.open_ticket(ticket.clone()),
-            TableCell {
-                button { class: "font-mono underline text-left", "{row.ticket}" }
-            }
-            TableCell { class: "font-mono text-[12.5px] text-ink-muted", "{external}" }
-            TableCell { class: "font-mono text-[12.5px]",
-                match row.record.as_ref().and_then(|record| record.profile.clone()) {
-                    Some(profile) => rsx! { "{profile}" },
-                    None => rsx! { span { class: "text-ink-muted", "no record" } },
+        tr {
+            class: if is_selected { "border-b border-line bg-surface-2 cursor-pointer" } else { "border-b border-line hover:bg-surface cursor-pointer" },
+            onclick: move |_| selected.set(Some(ticket.clone())),
+            ondoubleclick: move |_| session.open_ticket(opened.clone()),
+            td { class: "px-5 py-3",
+                div { class: "font-semibold", {summary.title.clone().unwrap_or_else(|| summary.ticket.clone())} }
+                div { class: "font-mono text-[13px] text-ink-muted",
+                    "{summary.ticket}"
+                    if !external.is_empty() { " · {external}" }
                 }
             }
-            TableCell {
-                match &*progress.read() {
-                    Some(Some(steps)) => rsx! { MiniTrack { steps: steps.clone() } },
-                    Some(None) => rsx! { span { class: "text-ink-muted text-[13px]", "—" } },
-                    None => rsx! { span { class: "text-ink-muted text-[13px]", "…" } },
-                }
-            }
-            TableCell { class: "font-mono text-[12.5px] text-ink-muted",
-                {row.last.clone().map_or_else(|| "no events".to_owned(), |last| format!("{last} · {} event{}", row.events, if row.events == 1 { "" } else { "s" }))}
-            }
+            td { class: "px-5 font-mono text-[14px]", {summary.profile.clone().unwrap_or_default()} }
+            td { class: "px-5", Squares { summary: summary.clone() } }
+            td { class: "px-5 font-mono text-[14px] {tone}", "{waiting}" }
+            td { class: "px-5 text-right text-ink-muted", "{updated}" }
         }
     }
 }
 
-/// The steps as small segments, for a table row: filled when done, dashed when skipped, accent
-/// for the current step, empty when open.
+/// One square per step: filled done, dashed skipped, accent current, empty open.
 #[component]
-fn MiniTrack(steps: Vec<progress::StepProgress>) -> Element {
-    let finished = steps
-        .iter()
-        .filter(|step| matches!(step.stage, Stage::Done | Stage::Skipped))
-        .count();
-    let names: Vec<String> = steps
-        .iter()
-        .map(|step| {
-            let state = match step.stage {
-                Stage::Done => "done",
-                Stage::Skipped => "skipped",
-                Stage::Ready => "open",
-                Stage::Blocked => "waiting",
-            };
-            format!("{} {state}", step.step)
-        })
-        .collect();
+fn Squares(summary: TicketSummary) -> Element {
     rsx! {
-        div { class: "flex items-center gap-3", title: "{names.join(\", \")}",
-            div { class: "flex gap-[3px] flex-1",
-                for step in steps.iter() {
-                    span {
-                        class: match (step.stage, step.current) {
-                            (Stage::Done, _) => "h-2 flex-1 bg-ink",
-                            (Stage::Skipped, _) => "h-2 flex-1 border border-dashed border-ink-muted",
-                            (_, true) => "h-2 flex-1 bg-signal",
-                            _ => "h-2 flex-1 bg-surface-2",
-                        },
-                    }
+        span { class: "inline-flex gap-1", "aria-label": "steps",
+            for step in summary.steps.iter() {
+                {
+                    let current = summary.current.as_deref() == Some(step.step.as_str());
+                    let class = match step.status.as_str() {
+                        "done" => "bg-ink border-ink",
+                        "skipped" => "border-dashed border-ink-muted",
+                        _ if current => "bg-signal border-signal",
+                        _ => "border-ink-muted",
+                    };
+                    rsx! { span { key: "{step.step}", class: "size-4 border {class}", title: "{step.step}: {step.status}" } }
                 }
             }
-            span { class: "font-mono text-[12.5px] whitespace-nowrap", "{finished}/{steps.len()}" }
         }
     }
 }
 
 #[component]
-fn TicketDetail(ticket: String) -> Element {
-    let mut session = use_context::<Session>();
-    let project = use_context::<Project>();
-    let shown = ticket.clone();
-    let check = use_resource(move || {
-        let ticket = shown.clone();
-        async move {
-            let _ = (session.revision)();
-            let hone = (session.hone)();
-            hone.check(Some(&ticket), GateScope::Pure).await
-        }
-    });
-    let check_ticket = ticket.clone();
-    let state: Option<TicketEvents> = match &*project.state.read() {
-        Some(Some(Ok(state))) => Some(state.clone()),
-        _ => None,
-    };
-    let state_failure = match &*project.state.read() {
-        Some(Some(Err(failure))) if failure.status != "unavailable" => Some(failure.clone()),
-        _ => None,
-    };
-    let tracker = project.tracker();
-    // The title lives in the tracker: the ticket record has none.
-    let linked = use_resource(move || async move {
-        let tracker = project.tracker()?;
-        let key = match &*project.overview.read() {
-            Some(Some(Ok(overview))) => overview
-                .external
-                .iter()
-                .find(|external| external.system.eq_ignore_ascii_case(tracker.system()))?
-                .key
-                .clone(),
-            _ => return None,
-        };
-        tracker.issue(&key).await.ok().flatten()
-    });
-    let linked_issue = linked.read().clone().flatten();
-    rsx! {
-        match &*project.overview.read() {
-            Some(Some(Ok(overview))) => {
-                let external: Vec<String> = overview
-                    .external
-                    .iter()
-                    .map(|external| format!("{} {}", external.system, external.key))
-                    .collect();
-                let context = std::iter::once(ticket.clone()).chain(external).collect::<Vec<_>>().join(" · ");
-                rsx! {
-                    PageHeader {
-                        context,
-                        title: linked_issue.as_ref().map_or_else(|| ticket.clone(), |issue| issue.title.clone()),
-                        actions: rsx! {
-                            Button { variant: ButtonVariant::Outline, onclick: move |_| session.ticket.set(None), "All tickets" }
-                            Button {
-                                variant: ButtonVariant::Outline,
-                                title: "Every gate, exec gates included, on the Checks screen",
-                                onclick: move |_| {
-                                    session.ticket.set(Some(check_ticket.clone()));
-                                    session.screen.set(Screen::Check);
-                                },
-                                "Run full hone check"
-                            }
-                        },
-                    }
-                    div { class: "flex flex-wrap gap-2 -mt-5",
-                        for (name , value) in overview.attributes.iter() {
-                            Tag {
-                                bad: name == "risk" && value.as_str() == Some("high"),
-                                "{name}: {value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string())}"
-                            }
-                        }
-                        Tag { inverted: true, "profile: {overview.profile}" }
-                        Tag { muted: true, "config {short_hash(&overview.config)}" }
-                        for external in overview.external.iter() {
-                            if let Some(url) = external.url.clone().or_else(|| tracker.as_ref().filter(|tracker| tracker.system() == external.system).map(|tracker| tracker.issue_url(&external.key))) {
-                                ExternalLink { label: format!("{} {}", external.system, external.key), url }
-                            }
-                        }
-                    }
-                    if overview.selected.as_ref() != Some(&overview.profile) {
-                        div { class: "border-2 border-warn px-5 py-4 flex flex-col gap-1 -mt-3", role: "status",
-                            span { class: "font-semibold",
-                                span { class: "text-warn", "aria-hidden": "true", "⚠ " }
-                                "profile-not-selected: this ticket uses {overview.profile}, but select gives "
-                                span { class: "font-mono", {overview.selected.clone().unwrap_or_else(|| "no profile".to_owned())} }
-                                " for its attributes."
-                            }
-                            span { class: "text-[13px] text-ink-muted", "The profile was chosen by hand, or the attributes changed after the start. steps-complete reports it as a warning; a new ticket gets the selected profile." }
-                        }
-                    }
-                    TicketSettings { ticket: ticket.clone(), overview: overview.clone() }
-                    StepTrack {
-                        ticket: ticket.clone(),
-                        overview: overview.clone(),
-                        state: state.clone(),
-                        run: check.read().clone(),
-                        checking: check.read().is_none(),
-                    }
-                }
-            }
-            Some(Some(Err(failure))) => rsx! {
-                PageHeader {
-                    context: "ticket",
-                    title: ticket.clone(),
-                    actions: rsx! {
-                        Button { variant: ButtonVariant::Outline, onclick: move |_| session.ticket.set(None), "All tickets" }
-                    },
-                }
-                FailureAlert { failure: failure.clone() }
-            },
-            _ => rsx! {
-                PageHeader { context: "ticket", title: ticket.clone() }
-                Loading {}
-            },
-        }
-        if let Some(failure) = state_failure {
-            FailureAlert { failure }
-        }
-        div { class: "grid grid-cols-[repeat(auto-fit,minmax(380px,1fr))] gap-8 items-start",
-            TicketArtifacts { ticket: ticket.clone() }
-            ThreadTable { ticket: ticket.clone(), state: state.clone() }
-        }
-        if let Some(state) = state.filter(|state| !state.invalid.is_empty()) {
-            super::events::InvalidPanel { invalid: state.invalid.clone() }
-        }
-    }
-}
-
-/// The ticket's attributes to edit, and the switch to the current rules.
-#[component]
-fn TicketSettings(ticket: String, overview: TicketOverview) -> Element {
+fn Preview(summary: TicketSummary) -> Element {
     let session = use_context::<Session>();
-    let project = use_context::<Project>();
-    let mut editing = use_signal(|| false);
-    let mut rows = use_signal(|| rows_of(&overview.attributes));
-    let mut outcome = use_signal(|| None::<Result<String, Failure>>);
-    let mut busy = use_signal(|| false);
-    let selection = use_resource(move || async move { (session.hone)().select(&[]).await.ok() });
-    let keys = match &*selection.read() {
-        Some(Some(selection)) => rule_keys(&selection.rules),
-        _ => Vec::new(),
-    };
-    let original = overview.attributes.clone();
-    let save_ticket = ticket.clone();
-    let save = move |_| {
-        let Some(wanted) = parse_rows(&rows()) else {
-            return;
-        };
-        let (set, unset) = attribute_changes(&original, &wanted);
-        if set.is_empty() && unset.is_empty() {
-            outcome.set(Some(Ok("Nothing changed.".to_owned())));
-            editing.set(false);
-            return;
-        }
-        let ticket = save_ticket.clone();
-        busy.set(true);
-        spawn(async move {
-            let result = (session.hone)()
-                .set_attributes(&(session.writer)(), &ticket, &set, &unset)
-                .await
-                .map(|written| {
-                    outcome_text(
-                        "Attributes saved",
-                        &written.profile,
-                        written.selected.as_deref(),
-                    )
-                });
-            if result.is_ok() {
-                editing.set(false);
-                session.changed();
-            }
-            outcome.set(Some(result));
-            busy.set(false);
-        });
-    };
-    let switch_ticket = ticket.clone();
-    let switch = move |_| {
-        let ticket = switch_ticket.clone();
-        busy.set(true);
-        spawn(async move {
-            let result = project
-                .resolving((session.hone)())
-                .switch_config(&(session.writer)(), &ticket)
-                .await
-                .map(|written| {
-                    outcome_text(
-                        &format!(
-                            "Switched to the current rules ({})",
-                            short_hash(&written.config)
-                        ),
-                        &written.profile,
-                        written.selected.as_deref(),
-                    )
-                });
-            if result.is_ok() {
-                session.changed();
-            }
-            outcome.set(Some(result));
-            busy.set(false);
-        });
-    };
-    let reset_rows = overview.attributes.clone();
+    let ticket = summary.ticket.clone();
     rsx! {
-        div { class: "flex flex-col gap-3 -mt-3",
+        aside { class: "w-[400px] shrink-0 border-l border-line overflow-y-auto px-8 pt-8 pb-12 flex flex-col gap-5",
+            span { class: "font-mono text-[12px] tracking-[0.08em] uppercase text-ink-muted", "Preview · {summary.ticket}" }
+            h2 { class: "m-0 text-[24px] leading-[30px] font-bold", {summary.title.clone().unwrap_or_else(|| summary.ticket.clone())} }
             div { class: "flex flex-wrap gap-2",
-                Button {
-                    variant: ButtonVariant::Outline,
-                    disabled: busy(),
-                    onclick: move |_| {
-                        rows.set(rows_of(&reset_rows));
-                        editing.toggle();
-                    },
-                    if editing() { "Close the attributes" } else { "Edit attributes" }
+                if let Some(profile) = &summary.profile {
+                    Tag { inverted: true, "{profile}" }
                 }
-                Button {
-                    variant: ButtonVariant::Outline,
-                    disabled: busy(),
-                    title: "Freeze the current resolved configuration for this ticket (ticket.config_changed); the profile stays",
-                    onclick: switch,
-                    "Switch to current rules"
+                for external in summary.external.iter() {
+                    Tag { "{external.system} {external.key}" }
                 }
             }
-            if editing() {
-                div { class: "border border-line p-5 flex flex-col gap-4",
-                    AttributeEditor { rows, keys }
-                    div { class: "flex flex-wrap items-center gap-2",
-                        span { class: "mr-auto text-[13px] text-ink-muted", "Writes the record and ticket.attributes_changed. The profile stays, even if select now gives another one." }
-                        Button { disabled: busy() || parse_rows(&rows()).is_none(), onclick: save, "Save attributes" }
+            if let Some(problem) = &summary.problem {
+                p { class: "m-0 text-bad text-[14px]", "{problem}" }
+            }
+            ul { class: "m-0 p-0 list-none border border-line",
+                for step in summary.steps.iter() {
+                    li { key: "{step.step}", class: "h-11 px-4 flex items-center border-b border-line last:border-b-0 font-mono text-[14px]",
+                        span { class: if step.status == "skipped" { "line-through text-ink-muted" } else if summary.current.as_deref() == Some(step.step.as_str()) { "text-signal" } else { "" }, "{step.step}" }
+                        span { class: "ml-auto text-ink-muted", "{step.status}" }
                     }
                 }
             }
-            match outcome() {
-                Some(Ok(text)) => rsx! { p { class: "m-0 text-[13px] text-ok", role: "status", "■ {text}" } },
-                Some(Err(failure)) => rsx! {
-                    FailureAlert { failure: failure.clone() }
-                    if failure.message.contains("run hone resolve") {
-                        super::new_ticket::ResolveNow {}
-                    }
-                },
-                None => rsx! {},
-            }
-        }
-    }
-}
-
-/// What a ticket command did, with the profile and what `select` gives now.
-fn outcome_text(done: &str, profile: &str, selected: Option<&str>) -> String {
-    match selected {
-        Some(selected) if selected == profile => {
-            format!("{done}. The profile {profile} is what select gives.")
-        }
-        Some(selected) => {
-            format!("{done}. The profile stays {profile}; select now gives {selected}.")
-        }
-        None => format!("{done}. The profile stays {profile}; select gives no profile."),
-    }
-}
-
-#[component]
-fn ExternalLink(label: String, url: String) -> Element {
-    rsx! {
-        button {
-            class: "h-7 px-2 border border-line font-mono text-[12.5px] underline hover:bg-surface-2",
-            title: "Open {url} in the browser",
-            onclick: move |_| super::common::open_in_browser(&url),
-            "{label} ↗"
-        }
-    }
-}
-
-#[component]
-fn TicketArtifacts(ticket: String) -> Element {
-    let session = use_context::<Session>();
-    let project = use_context::<Project>();
-    let artifacts: Vec<CatalogEntry> = match &*project.catalog.read() {
-        Some(Ok(catalog)) => catalog
-            .artifacts
-            .iter()
-            .filter(|entry| entry.ticket.as_deref() == Some(ticket.as_str()))
-            .cloned()
-            .collect(),
-        _ => Vec::new(),
-    };
-    rsx! {
-        section {
-            SectionLabel { label: "Artifacts", aside: format!("{} of this ticket", artifacts.len()) }
-            if artifacts.is_empty() {
-                Empty { text: "No artifact names this ticket yet. Artifacts appear here once their file is written." }
-            } else {
-                TableWrapper {
-                    Table {
-                        TableHeader { class: "bg-surface",
-                            TableRow {
-                                TableHead { "ID" }
-                                TableHead { "Kind" }
-                                TableHead { "Status" }
-                            }
-                        }
-                        TableBody {
-                            for artifact in artifacts {
-                                TableRow {
-                                    TableCell { class: "font-mono",
-                                        button {
-                                            class: "font-mono underline text-left",
-                                            title: "{artifact.path}",
-                                            onclick: {
-                                                let id = artifact.id.clone().unwrap_or_default();
-                                                move |_| session.open_artifact(id.clone())
-                                            },
-                                            {artifact.id.clone().unwrap_or_default()}
-                                        }
-                                        if let Some(title) = artifact.title.clone() {
-                                            span { class: "block font-sans text-[13px] text-ink-muted", "{title}" }
-                                        }
-                                    }
-                                    TableCell { class: "font-mono text-[12.5px] text-ink-muted", "{artifact.kind}" }
-                                    TableCell { super::artifacts::EffectiveStatus { entry: artifact.clone() } }
-                                }
-                            }
-                        }
+            dl { class: "m-0 grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-[14px]",
+                dt { class: "text-ink-muted", "Threads" }
+                dd { class: "m-0", "{summary.threads.open} open · {summary.threads.blocking} blocking" }
+                dt { class: "text-ink-muted", "Last check" }
+                dd { class: "m-0",
+                    match &summary.last_run {
+                        Some(run) if run.failed.is_empty() => rsx! { span { class: "text-ok", "passed · {super::journal::clock(&run.id)}" } },
+                        Some(run) => rsx! { span { class: "text-bad", {format!("{} failed · {}", run.failed.len(), super::journal::clock(&run.id))} } },
+                        None => rsx! { span { class: "text-ink-muted", "none stored" } },
                     }
                 }
             }
-        }
-    }
-}
-
-#[component]
-fn ThreadTable(ticket: String, state: Option<TicketEvents>) -> Element {
-    let mut session = use_context::<Session>();
-    let threads = state.map(|state| state.threads).unwrap_or_default();
-    let open = threads
-        .iter()
-        .filter(|thread| thread.status == "open")
-        .count();
-    let open_ticket = ticket.clone();
-    rsx! {
-        section {
-            SectionLabel { label: "Threads", aside: format!("{open} open of {}", threads.len()) }
-            if threads.is_empty() {
-                div { class: "flex flex-col gap-3 items-start",
-                    Empty { text: "No threads yet. Open one to ask, object, or note something on this ticket." }
-                    Button {
-                        variant: ButtonVariant::Outline,
-                        onclick: move |_| {
-                            session.ticket.set(Some(open_ticket.clone()));
-                            session.screen.set(Screen::Threads);
-                        },
-                        "Open a thread"
-                    }
-                }
-            } else {
-                TableWrapper {
-                    Table {
-                        TableHeader { class: "bg-surface",
-                            TableRow {
-                                TableHead { "Kind" }
-                                TableHead { "Status" }
-                                TableHead { "Opened by" }
-                            }
-                        }
-                        TableBody {
-                            for thread in threads {
-                                TableRow {
-                                    class: "cursor-pointer",
-                                    onclick: {
-                                        let ticket = ticket.clone();
-                                        let id = thread.thread.clone();
-                                        move |_| session.open_thread(ticket.clone(), id.clone())
-                                    },
-                                    TableCell {
-                                        span { class: "font-mono underline", "{thread.kind}" }
-                                        if thread.blocking {
-                                            Badge { class: "ml-2 font-mono", "BLOCKING" }
-                                        }
-                                    }
-                                    TableCell {
-                                        StatusMark {
-                                            mark: if thread.status == "open" { Mark::Open } else { Mark::Done },
-                                            word: if thread.answered || thread.status != "open" { thread.status.clone() } else { format!("{} · unanswered", thread.status) },
-                                        }
-                                    }
-                                    TableCell { class: "font-mono text-[12.5px]", "{thread.opened_by.name} · {thread.opened_by.role}" }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            Button { class: "h-12", onclick: move |_| session.open_ticket(ticket.clone()), "Open ticket" }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
-    use serde_json::json;
-
     use super::*;
-    use crate::hone::Event;
+    use crate::hone::{Author, Started, ThreadCounts, TicketStep};
 
-    fn event(id: &str, kind: &str, ticket: &str) -> Event {
-        Event {
-            id: id.into(),
-            device: "dev-3k9a5h2t".into(),
-            seq: 1,
-            kind: kind.into(),
-            ticket: Some(ticket.into()),
-            author: None,
-            payload: json!({}),
-            raw: json!({}),
-        }
-    }
-
-    fn record(id: &str) -> CatalogEntry {
-        CatalogEntry {
-            id: Some(id.into()),
-            kind: "ticket".into(),
-            path: format!("design/tickets/{id}/ticket.yaml"),
-            ticket: None,
+    fn summary(waiting: Vec<Waiting>, complete: Option<bool>) -> TicketSummary {
+        TicketSummary {
+            ticket: "tk-9f2x4a8m".into(),
+            record: true,
             title: None,
-            status: None,
-            effective: None,
-            profile: Some("standard".into()),
             external: Vec::new(),
-            links: std::collections::BTreeMap::new(),
+            profile: Some("full".into()),
+            started: Some(Started {
+                by: Author {
+                    name: "alice".into(),
+                    role: "architect".into(),
+                },
+                event: "ev-1".into(),
+            }),
+            authors: vec!["alice".into(), "bob".into()],
+            steps: vec![TicketStep {
+                step: "decision".into(),
+                requirement: Some("required".into()),
+                status: "open".into(),
+                reason: None,
+            }],
+            current: Some("decision".into()),
+            complete,
+            threads: ThreadCounts {
+                open: 0,
+                blocking: 0,
+            },
+            last_event: None,
+            last_run: None,
+            waiting,
+            problem: None,
         }
     }
 
     #[test]
-    fn records_come_first_then_tickets_known_only_to_the_store() {
-        let log = StoreLog {
-            cursor: BTreeMap::new(),
-            events: vec![
-                event("ev-1", "thread.opened", "tk-b"),
-                event("ev-2", "step.changed", "tk-a"),
-                event("ev-3", "thread.message", "tk-b"),
+    fn needs_me_follows_the_role_and_mine_the_name() {
+        let ticket = summary(
+            vec![Waiting::Step {
+                step: "decision".into(),
+                role: Some("architect".into()),
+            }],
+            Some(false),
+        );
+        assert!(shows(
+            &ticket,
+            Filter::NeedsMe,
+            Some(("carol", "architect"))
+        ));
+        assert!(!shows(&ticket, Filter::NeedsMe, Some(("alice", "human"))));
+        assert!(shows(&ticket, Filter::Mine, Some(("bob", "human"))));
+        assert!(!shows(&ticket, Filter::Mine, Some(("carol", "architect"))));
+        assert!(shows(&ticket, Filter::Open, None));
+        assert!(!shows(&ticket, Filter::Completed, None));
+    }
+
+    #[test]
+    fn waiting_reads_the_first_reason_and_names_the_reader() {
+        let approval = summary(
+            vec![Waiting::Approval {
+                role: Some("architect".into()),
+                gate: "decision/approved".into(),
+            }],
+            Some(false),
+        );
+        assert_eq!(
+            waiting_text(&approval, Some("architect")),
+            ("▲ your approval".into(), Tone::Me)
+        );
+        assert_eq!(
+            waiting_text(&approval, Some("human")),
+            ("architect approval".into(), Tone::Plain)
+        );
+        let gates = summary(
+            vec![
+                Waiting::Gates {
+                    gates: vec!["a/b".into()],
+                },
+                Waiting::Step {
+                    step: "decision".into(),
+                    role: None,
+                },
             ],
-        };
-        let rows = ticket_rows(&[record("tk-a"), record("tk-c")], Some(&log));
-        let summary: Vec<(&str, bool, usize, Option<&str>)> = rows
-            .iter()
-            .map(|row| {
-                (
-                    row.ticket.as_str(),
-                    row.record.is_some(),
-                    row.events,
-                    row.last.as_deref(),
-                )
-            })
-            .collect();
+            Some(false),
+        );
         assert_eq!(
-            summary,
-            [
-                ("tk-a", true, 1, Some("step.changed")),
-                ("tk-c", true, 0, None),
-                ("tk-b", false, 2, Some("thread.message")),
-            ]
+            waiting_text(&gates, None),
+            ("× 1 gate failing".into(), Tone::Bad)
+        );
+        assert_eq!(
+            waiting_text(&summary(Vec::new(), Some(true)), None),
+            ("■ completed".into(), Tone::Done)
         );
     }
 
     #[test]
-    fn an_outcome_says_whether_select_agrees_with_the_profile() {
+    fn ages_count_from_the_uuid_v7_time() {
+        // 0x019a9da53000 = 1763581440000 ms.
+        let id = "ev-019a9da5-3000-7000-8000-000000000000";
+        assert_eq!(ago(id, 1_763_581_440_000 + 59_999).as_deref(), Some("now"));
         assert_eq!(
-            outcome_text("Attributes saved", "standard", Some("standard")),
-            "Attributes saved. The profile standard is what select gives."
+            ago(id, 1_763_581_440_000 + 120_000).as_deref(),
+            Some("2 min")
         );
         assert_eq!(
-            outcome_text("Attributes saved", "standard", Some("full")),
-            "Attributes saved. The profile stays standard; select now gives full."
+            ago(id, 1_763_581_440_000 + 3 * 3_600_000).as_deref(),
+            Some("3 h")
         );
-    }
-
-    #[test]
-    fn a_hash_is_shortened_to_eight_digits() {
-        assert_eq!(short_hash("sha256:4c076d82c93f2647"), "sha256:4c076d82…");
+        assert_eq!(
+            ago(id, 1_763_581_440_000 + 30 * 3_600_000).as_deref(),
+            Some("yesterday")
+        );
+        assert_eq!(
+            ago(id, 1_763_581_440_000 + 5 * 86_400_000).as_deref(),
+            Some("5 d")
+        );
     }
 }

@@ -166,6 +166,8 @@ pub struct StoreLog {
     pub cursor: BTreeMap<String, u64>,
     /// Every valid event, in the order of `read`.
     pub events: Vec<Event>,
+    /// This device's ID in the store, `None` while it has written nothing.
+    pub device: Option<String>,
 }
 
 /// The result of `hone events`.
@@ -213,6 +215,109 @@ pub struct CheckRun {
     /// `passed` or `failed`.
     pub status: String,
     pub gates: Vec<Gate>,
+    /// The ID of the stored run, `None` when the project has no store yet.
+    #[serde(default)]
+    pub run: Option<String>,
+}
+
+/// A check run stored in the process store, from `hone runs`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Run {
+    /// The run ID, whose UUIDv7 carries the time.
+    pub id: String,
+    /// Who ran it, for example `gui`, `cli`, or `pre-push`.
+    pub source: String,
+    pub device: String,
+    /// `step`, `changed`, `class`, `base`, and `lock` as the run was called.
+    pub arguments: Value,
+    /// `passed` or `failed`.
+    pub status: String,
+    pub duration_ms: u64,
+    pub gates: Vec<Gate>,
+}
+
+/// The result of `hone ticket list`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TicketList {
+    /// The tickets, the one with the newest event first.
+    pub tickets: Vec<TicketSummary>,
+}
+
+/// A ticket with its progress, from `hone ticket list`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TicketSummary {
+    pub ticket: String,
+    /// Whether this checkout holds the ticket's record.
+    pub record: bool,
+    pub title: Option<String>,
+    pub external: Vec<ExternalTicket>,
+    pub profile: Option<String>,
+    pub started: Option<Started>,
+    /// Every name that wrote an event of the ticket.
+    pub authors: Vec<String>,
+    pub steps: Vec<TicketStep>,
+    /// The first open step.
+    pub current: Option<String>,
+    /// Whether every required step is done or skipped; `None` without a readable record.
+    pub complete: Option<bool>,
+    pub threads: ThreadCounts,
+    /// The ID of the newest event.
+    pub last_event: Option<String>,
+    pub last_run: Option<LastRun>,
+    /// Why the ticket waits, most pressing first.
+    pub waiting: Vec<Waiting>,
+    /// Why the record or its snapshot cannot be read.
+    pub problem: Option<String>,
+}
+
+/// Who started a ticket.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Started {
+    pub by: Author,
+    /// The ID of `ticket.started`.
+    pub event: String,
+}
+
+/// A step of a [`TicketSummary`].
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct TicketStep {
+    pub step: String,
+    /// `required` or `optional`; `None` without a record.
+    pub requirement: Option<String>,
+    /// `done`, `skipped`, `waiting`, or `open`.
+    pub status: String,
+    pub reason: Option<String>,
+}
+
+/// The open threads of a ticket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct ThreadCounts {
+    pub open: usize,
+    pub blocking: usize,
+}
+
+/// The newest stored check run of a ticket.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct LastRun {
+    pub id: String,
+    /// `passed` or `failed`.
+    pub status: String,
+    /// The names of the failed gates.
+    pub failed: Vec<String>,
+}
+
+/// A reason a ticket waits.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Waiting {
+    /// Gates of the last run failed.
+    Gates { gates: Vec<String> },
+    /// Blocking threads are open.
+    Threads { threads: Vec<String> },
+    /// An approval of `role` is missing.
+    Approval { role: Option<String>, gate: String },
+    /// The current step waits for its work, decided by `role`.
+    Step { step: String, role: Option<String> },
 }
 
 /// The result of one gate.
@@ -224,6 +329,9 @@ pub struct Gate {
     pub gate: String,
     pub ok: bool,
     pub findings: Vec<Finding>,
+    /// How long the gate ran.
+    #[serde(default)]
+    pub duration_ms: u64,
 }
 
 /// A finding of a gate.
@@ -619,9 +727,11 @@ impl Hone {
         struct Output {
             cursor: BTreeMap<String, u64>,
             events: Vec<Value>,
+            device: Option<String>,
         }
         let output: Output = self.run(&["log"], &[0]).await?;
         Ok(StoreLog {
+            device: output.device,
             cursor: output.cursor,
             events: events(output.events)?,
         })
@@ -656,6 +766,29 @@ impl Hone {
     /// Returns a [`Failure`] when the check could not run (exit code 2).
     pub async fn check(&self, ticket: Option<&str>, scope: GateScope) -> Result<CheckRun, Failure> {
         self.run(&check_arguments(ticket, scope), &[0, 1]).await
+    }
+
+    /// `hone ticket list`: every ticket with its progress.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`] `error` when the configuration or the store cannot be read.
+    pub async fn ticket_list(&self) -> Result<TicketList, Failure> {
+        self.run(&["ticket", "list"], &[0]).await
+    }
+
+    /// `hone runs --ticket <ticket>`: the stored check runs of a ticket, newest first.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`], `invalid` for a malformed ticket ID.
+    pub async fn runs(&self, ticket: &str) -> Result<Vec<Run>, Failure> {
+        #[derive(Deserialize)]
+        struct Output {
+            runs: Vec<Run>,
+        }
+        let output: Output = self.run(&["runs", "--ticket", ticket], &[0]).await?;
+        Ok(output.runs)
     }
 
     /// `hone artifacts`: the artifacts of the checked directory.
@@ -1146,7 +1279,7 @@ fn attribute_arguments(attributes: &[(String, AttributeValue)]) -> Vec<String> {
 }
 
 fn check_arguments(ticket: Option<&str>, scope: GateScope) -> Vec<&str> {
-    let mut arguments = vec!["check"];
+    let mut arguments = vec!["check", "--source", "gui"];
     if let Some(ticket) = ticket {
         arguments.extend(["--ticket", ticket]);
     }
@@ -1300,8 +1433,19 @@ mod tests {
     fn a_pure_check_asks_for_the_pure_class_only() {
         assert_eq!(
             check_arguments(Some("tk-9f2x4a8m"), GateScope::Pure),
-            ["check", "--ticket", "tk-9f2x4a8m", "--class", "pure"]
+            [
+                "check",
+                "--source",
+                "gui",
+                "--ticket",
+                "tk-9f2x4a8m",
+                "--class",
+                "pure"
+            ]
         );
-        assert_eq!(check_arguments(None, GateScope::All), ["check"]);
+        assert_eq!(
+            check_arguments(None, GateScope::All),
+            ["check", "--source", "gui"]
+        );
     }
 }

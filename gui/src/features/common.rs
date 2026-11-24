@@ -251,19 +251,30 @@ pub(crate) fn Field(#[props(into)] label: String, children: Element) -> Element 
     }
 }
 
-/// The UTC time an event was written, `YYYY-MM-DD HH:MM`, from its ID: the ID of an event is
-/// `ev-` plus a UUIDv7, whose first 48 bits are milliseconds since the Unix epoch.
+/// The UTC time an event or a check run was written, `YYYY-MM-DD HH:MM`, from its ID: `ev-` or
+/// `run-` plus a UUIDv7, whose first 48 bits are milliseconds since the Unix epoch.
 pub(crate) fn event_time(id: &str) -> Option<String> {
-    let hex: String = id
-        .strip_prefix("ev-")?
-        .chars()
-        .filter(|c| *c != '-')
-        .take(12)
-        .collect();
-    if hex.len() < 12 || id.chars().nth(17) != Some('7') {
+    let uuid = id.strip_prefix("ev-").or_else(|| id.strip_prefix("run-"))?;
+    let hex: String = uuid.chars().filter(|c| *c != '-').take(12).collect();
+    if hex.len() < 12 || uuid.chars().nth(14) != Some('7') {
         return None;
     }
-    let seconds = i64::try_from(u64::from_str_radix(&hex, 16).ok()? / 1000).ok()?;
+    utc_time(u64::from_str_radix(&hex, 16).ok()?)
+}
+
+/// The current UTC time, `YYYY-MM-DD HH:MM`.
+pub(crate) fn now_time() -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        });
+    utc_time(millis).unwrap_or_default()
+}
+
+// `YYYY-MM-DD HH:MM` UTC of `millis` since the Unix epoch.
+fn utc_time(millis: u64) -> Option<String> {
+    let seconds = i64::try_from(millis / 1000).ok()?;
     let (days, rest) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
     // Howard Hinnant's days_from_civil, inverted.
     let z = days + 719_468;

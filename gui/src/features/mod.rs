@@ -4,6 +4,7 @@
 pub(crate) mod artifact;
 mod artifact_form;
 pub(crate) mod artifacts;
+pub(crate) mod assistant;
 mod attributes;
 pub(crate) mod check;
 pub(crate) mod code;
@@ -11,16 +12,22 @@ mod common;
 pub(crate) mod configuration;
 pub(crate) mod editor;
 pub(crate) mod events;
+pub(crate) mod explorer;
 pub(crate) mod graph;
+mod journal;
 pub(crate) mod new_artifact;
 pub(crate) mod new_ticket;
+pub(crate) mod overview;
 mod progress;
 pub(crate) mod project_settings;
 pub(crate) mod search;
 pub(crate) mod server;
 pub(crate) mod settings;
+pub(crate) mod status;
 pub(crate) mod sync;
+pub(crate) mod tabs;
 pub(crate) mod threads;
+mod ticket_settings;
 pub(crate) mod tickets;
 pub(crate) mod tracker;
 
@@ -29,28 +36,92 @@ use std::path::PathBuf;
 use dioxus::prelude::*;
 
 use crate::hone::{
-    Catalog, CheckRun, ContextAuthor, Failure, Hone, StoreLog, TicketEvents, TicketOverview, Writer,
+    Catalog, CheckRun, ContextAuthor, Failure, GateScope, Hone, Run, StoreLog, TicketEvents,
+    TicketList, TicketOverview, TicketSummary, Writer,
 };
 use crate::ide::Ide;
 use crate::settings::{ProjectSettings, Settings};
 use crate::tracker::Tracker;
 use crate::ui::Choice;
 
-/// The screens of the navigation.
+/// What the centre shows: a view outside a ticket, or the open ticket's workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Screen {
     Tickets,
     Artifacts,
-    Graph,
-    Threads,
-    Events,
-    Check,
-    Sync,
-    Server,
     Profiles,
     Plugins,
-    Tracker,
+    Sync,
     Settings,
+    /// The workspace of the open ticket: explorer, tabs, and assistant.
+    Ticket,
+}
+
+/// A tab of a ticket's workspace.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Tab {
+    Overview,
+    Journal,
+    Artifact(String),
+    Check,
+    Graph,
+    Events,
+    Threads,
+}
+
+impl Tab {
+    /// The label of the tab.
+    pub(crate) fn title(&self) -> String {
+        match self {
+            Self::Overview => "Overview".into(),
+            Self::Journal => "Journal".into(),
+            Self::Artifact(id) => id.clone(),
+            Self::Check => "Check run".into(),
+            Self::Graph => "Link graph".into(),
+            Self::Events => "Event log".into(),
+            Self::Threads => "Threads".into(),
+        }
+    }
+}
+
+/// The open tabs of one ticket. The Overview is always open and first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TicketTabs {
+    pub(crate) open: Vec<Tab>,
+    pub(crate) active: Tab,
+}
+
+impl Default for TicketTabs {
+    fn default() -> Self {
+        Self {
+            open: vec![Tab::Overview],
+            active: Tab::Overview,
+        }
+    }
+}
+
+impl TicketTabs {
+    /// Opens `tab`, or shows it when it is open already.
+    pub(crate) fn show(&mut self, tab: Tab) {
+        if !self.open.contains(&tab) {
+            self.open.push(tab.clone());
+        }
+        self.active = tab;
+    }
+
+    /// Closes `tab`; the Overview stays. Closing the active tab shows its left neighbour.
+    pub(crate) fn close(&mut self, tab: &Tab) {
+        if *tab == Tab::Overview {
+            return;
+        }
+        let Some(index) = self.open.iter().position(|open| open == tab) else {
+            return;
+        };
+        self.open.remove(index);
+        if self.active == *tab {
+            self.active = self.open[index - 1].clone();
+        }
+    }
 }
 
 /// The state every screen shares: the project, the writer, the open screen and ticket, and a
@@ -70,6 +141,12 @@ pub(crate) struct Session {
     /// The node the link graph highlights.
     pub(crate) graph_focus: Signal<Option<String>>,
     pub(crate) search_open: Signal<bool>,
+    /// The tabs of every ticket opened in this window.
+    pub(crate) tabs: Signal<std::collections::BTreeMap<String, TicketTabs>>,
+    pub(crate) explorer_open: Signal<bool>,
+    pub(crate) assistant_open: Signal<bool>,
+    /// When this window last synced, `HH:MM` UTC.
+    pub(crate) last_sync: Signal<Option<String>>,
     /// The ticket the New ticket dialog starts, `None` while it is closed.
     pub(crate) new_ticket: Signal<Option<new_ticket::Seed>>,
     /// Whether the New artifact dialog is open.
@@ -100,6 +177,10 @@ impl Session {
             artifact: Signal::new(None),
             graph_focus: Signal::new(None),
             search_open: Signal::new(false),
+            tabs: Signal::new(std::collections::BTreeMap::new()),
+            explorer_open: Signal::new(true),
+            assistant_open: Signal::new(true),
+            last_sync: Signal::new(None),
             new_ticket: Signal::new(None),
             new_artifact: Signal::new(false),
         }
@@ -109,23 +190,46 @@ impl Session {
         self.revision += 1;
     }
 
+    /// Opens the workspace of `ticket` with the tabs it had.
     pub(crate) fn open_ticket(mut self, ticket: String) {
         if (self.ticket)().as_deref() != Some(ticket.as_str()) {
             self.thread.set(None);
         }
+        self.tabs.write().entry(ticket.clone()).or_default();
         self.ticket.set(Some(ticket));
-        self.screen.set(Screen::Tickets);
+        self.screen.set(Screen::Ticket);
     }
 
+    /// Shows `tab` in the open ticket's workspace.
+    pub(crate) fn open_tab(mut self, tab: Tab) {
+        let Some(ticket) = (self.ticket)() else {
+            return;
+        };
+        self.tabs.write().entry(ticket).or_default().show(tab);
+        self.screen.set(Screen::Ticket);
+    }
+
+    /// The tabs of the open ticket.
+    pub(crate) fn ticket_tabs(&self) -> TicketTabs {
+        (self.ticket)()
+            .and_then(|ticket| self.tabs.read().get(&ticket).cloned())
+            .unwrap_or_default()
+    }
+
+    /// Opens an artifact: as a tab while a ticket is open, otherwise on the Artifacts view.
     pub(crate) fn open_artifact(mut self, id: String) {
-        self.artifact.set(Some(id));
-        self.screen.set(Screen::Artifacts);
+        if (self.ticket)().is_some() {
+            self.open_tab(Tab::Artifact(id));
+        } else {
+            self.artifact.set(Some(id));
+            self.screen.set(Screen::Artifacts);
+        }
     }
 
     pub(crate) fn open_thread(mut self, ticket: String, thread: String) {
-        self.ticket.set(Some(ticket));
+        self.open_ticket(ticket);
         self.thread.set(Some(thread));
-        self.screen.set(Screen::Threads);
+        self.open_tab(Tab::Threads);
     }
 }
 
@@ -142,6 +246,13 @@ pub(crate) struct Project {
     pub(crate) overview: Resource<Option<Result<TicketOverview, Failure>>>,
     /// The process state of the open ticket, `None` without an open ticket.
     pub(crate) state: Resource<Option<Result<TicketEvents, Failure>>>,
+    /// Every ticket with its progress, read again after the open ticket's check.
+    pub(crate) tickets: Resource<Result<TicketList, Failure>>,
+    /// The pure gates of the open ticket, run when it opens and after every write; the run is
+    /// stored with the source `gui`.
+    pub(crate) check: Resource<Option<Result<CheckRun, Failure>>>,
+    /// The stored runs of the open ticket, newest first.
+    pub(crate) runs: Resource<Option<Result<Vec<Run>, Failure>>>,
     /// Bumped when a setting changes.
     pub(crate) settings_revision: Signal<u64>,
 }
@@ -171,6 +282,23 @@ impl Project {
             let ticket = (session.ticket)()?;
             Some((session.hone)().events(&ticket).await)
         });
+        let check = use_resource(move || async move {
+            let _ = (session.revision)();
+            let ticket = (session.ticket)()?;
+            Some((session.hone)().check(Some(&ticket), GateScope::Pure).await)
+        });
+        let tickets = use_resource(move || async move {
+            let _ = (session.revision)();
+            // After the check, so that its stored run shows.
+            let _ = check.read().is_some();
+            (session.hone)().ticket_list().await
+        });
+        let runs = use_resource(move || async move {
+            let _ = (session.revision)();
+            let _ = check.read().is_some();
+            let ticket = (session.ticket)()?;
+            Some((session.hone)().runs(&ticket).await)
+        });
         let settings_revision = use_signal(|| 0u64);
         let settings = use_resource(move || async move {
             let _ = settings_revision();
@@ -190,7 +318,36 @@ impl Project {
             settings,
             overview,
             state,
+            tickets,
+            check,
+            runs,
             settings_revision,
+        }
+    }
+
+    /// The open ticket as `hone ticket list` gives it.
+    pub(crate) fn summary(&self, ticket: &str) -> Option<TicketSummary> {
+        match &*self.tickets.read() {
+            Some(Ok(list)) => list
+                .tickets
+                .iter()
+                .find(|summary| summary.ticket == ticket)
+                .cloned(),
+            _ => None,
+        }
+    }
+
+    /// Who the window writes as: the chosen author, otherwise the context's.
+    pub(crate) fn me(&self, writer: &Writer) -> Option<(String, String)> {
+        if !writer.author.is_empty() {
+            return Some((writer.author.clone(), writer.role.clone()));
+        }
+        match &*self.context.read() {
+            Some(Ok(context)) => context
+                .author
+                .as_ref()
+                .map(|author| (author.name.clone(), author.role.clone())),
+            _ => None,
         }
     }
 
@@ -350,9 +507,26 @@ mod tests {
     }
 
     #[test]
+    fn tabs_keep_the_overview_and_show_the_left_neighbour_after_a_close() {
+        let mut tabs = TicketTabs::default();
+        tabs.show(Tab::Artifact("dec-1".into()));
+        tabs.show(Tab::Check);
+        tabs.show(Tab::Artifact("dec-1".into()));
+        assert_eq!(
+            tabs.open,
+            [Tab::Overview, Tab::Artifact("dec-1".into()), Tab::Check]
+        );
+        tabs.close(&Tab::Artifact("dec-1".into()));
+        assert_eq!(tabs.active, Tab::Overview);
+        tabs.close(&Tab::Overview);
+        assert_eq!(tabs.open, [Tab::Overview, Tab::Check]);
+    }
+
+    #[test]
     fn authors_keep_their_first_appearance_and_collect_their_roles() {
         let log = StoreLog {
             cursor: BTreeMap::new(),
+            device: None,
             events: vec![
                 event("bob", "human"),
                 event("alice", "architect"),

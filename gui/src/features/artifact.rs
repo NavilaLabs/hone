@@ -9,7 +9,7 @@ use super::common::{
     Empty, FailureAlert, Field, Loading, Mark, PageHeader, ProblemAlert, SectionLabel, StatusMark,
     Tag, open_file,
 };
-use super::{Project, Screen, Session};
+use super::{Project, Session, Tab};
 use crate::hone::{ArtifactSource, CatalogEntry, Event, Failure, ReviewState, Write};
 use crate::markdown::preview;
 use crate::ui::{Button, ButtonVariant, Card, CardContent, CardHeader, CardTitle, Input};
@@ -140,14 +140,17 @@ pub(crate) fn ArtifactDetail(id: String) -> Element {
             context: entry.path.clone(),
             title: entry.title.clone().unwrap_or_else(|| id.clone()),
             actions: rsx! {
-                Button { variant: ButtonVariant::Outline, onclick: move |_| session.artifact.set(None), "All artifacts" }
-                Button {
-                    variant: ButtonVariant::Outline,
-                    onclick: move |_| {
-                        session.graph_focus.set(Some(id.clone()));
-                        session.screen.set(Screen::Graph);
-                    },
-                    "Show in the link graph"
+                if (session.ticket)().is_none() {
+                    Button { variant: ButtonVariant::Outline, onclick: move |_| session.artifact.set(None), "All artifacts" }
+                } else {
+                    Button {
+                        variant: ButtonVariant::Outline,
+                        onclick: move |_| {
+                            session.graph_focus.set(Some(id.clone()));
+                            session.open_tab(Tab::Graph);
+                        },
+                        "Show in the link graph"
+                    }
                 }
                 Button { variant: ButtonVariant::Outline, onclick: move |_| open_file(&root, &path), "Open the file" }
             },
