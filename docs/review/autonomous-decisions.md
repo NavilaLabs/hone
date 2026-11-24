@@ -328,3 +328,7 @@ The maintainer decided with this slice that a click selects a node for the inspe
 234. **Focus mode** remembers whether the explorer and the assistant were open and restores that when it is left; it is offered only in a ticket, because only there are the panels.
 235. **Nodes** grow to 220 × 78 px to hold kind, ID, title, and status; `accepted` is marked ■ in `ok`, `superseded` struck through, any other status □. A node without a title shows none; the mockup's "living" and "bound" are left out, because the catalog names neither the lifecycle nor a binding per node.
 236. **Not covered by tests:** the view (checked against `examples/payments`). The layout, the scope filter, and the status of a node are unit-tested.
+
+## Confirmations (maintainer, 2026-11-24, review inline and link graph)
+
+237. **Confirmed as built:** items 220 to 236. Item 221 keeps `status` in the result of `check_artifact` although the findings imply it (`failed` exactly when a finding is an `error`): every MCP tool carries `status`, and a result marked `isError` needs it to tell `error` from `io-error`, so an agent reads one field everywhere. The JSON of `hone artifact check --json` stays without it, because the exit code gives it.
