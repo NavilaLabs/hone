@@ -297,3 +297,7 @@ The maintainer decided with this slice that `hone artifact check` checks an unsa
 216. **A finding's place** is its path and pointer; it opens the artifact when the catalog has that path, otherwise the file as a code tab. Ask assistant is shown disabled until the assistant.
 217. **Item 197 as built:** `waiting` reads the error findings of the stored run; `last_run` is unchanged.
 218. **Not covered by tests:** the views of the artifact tab and the Check run tab (checked by running the app against `examples/payments`). Their data is unit-tested: problems with their lines, Propose, the tab replace, the command line and the call of Run again, and the times; `hone artifact check` and Run again run against the real binary.
+
+## Confirmations (maintainer, 2026-11-24, artifact editor and check run)
+
+219. **Confirmed as built:** items 205 and 207 to 218. Decided: item 206. The MCP tool `check_artifact` returns the findings of `hone artifact check`, `links-resolve` for this file against the checked directory included, so that an agent sees a link to a missing artifact before it writes the draft; no second tool, so the command line and the MCP server cannot drift apart.
