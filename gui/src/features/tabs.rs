@@ -182,7 +182,7 @@ fn TabContent(ticket: String, tab: Tab) -> Element {
         Tab::Check => rsx! { super::check::NoRun { ticket } },
         Tab::Run(id) => rsx! { super::check::RunView { ticket, id } },
         Tab::Graph => rsx! { super::graph::LinkGraph { ticket } },
-        Tab::Events => rsx! { super::events::EventLog {} },
+        Tab::Events => rsx! { super::events::EventLog { ticket } },
         Tab::Threads => rsx! { super::threads::Threads {} },
     }
 }
