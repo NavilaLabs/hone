@@ -245,7 +245,8 @@ fn a_check_stores_its_run_and_the_list_reads_it() {
     assert_eq!(
         ticket["waiting"],
         json!([
-            { "kind": "gates", "gates": failed },
+            // Without changed paths, a failed binding or interface gate is unchecked.
+            { "kind": "gates", "gates": ["decision/no-blockers"] },
             { "kind": "threads", "threads": [thread] },
             { "kind": "step", "step": "decision", "role": null },
         ])

@@ -95,6 +95,8 @@ pub struct LastRun {
     pub status: String,
     /// The names of the gates that failed.
     pub failed: Vec<String>,
+    #[serde(skip)]
+    changed_paths_missing: BTreeSet<String>,
 }
 
 /// A reason a ticket waits.
@@ -224,17 +226,31 @@ fn summary(
     } else {
         None
     };
-    let last_run = stored.map(|run| LastRun {
-        id: run["id"].as_str().unwrap_or_default().to_owned(),
-        status: run["status"].as_str().unwrap_or_default().to_owned(),
-        failed: run["gates"]
+    let last_run = stored.map(|run| {
+        let failed: Vec<&Value> = run["gates"]
             .as_array()
             .into_iter()
             .flatten()
             .filter(|gate| gate["ok"] == false)
-            .filter_map(|gate| gate["name"].as_str())
-            .map(str::to_owned)
-            .collect(),
+            .collect();
+        let names = |gates: &[&Value]| -> Vec<String> {
+            gates
+                .iter()
+                .filter_map(|gate| gate["name"].as_str())
+                .map(str::to_owned)
+                .collect()
+        };
+        let unchecked: Vec<&Value> = failed
+            .iter()
+            .copied()
+            .filter(|gate| needs_changed_paths(gate))
+            .collect();
+        LastRun {
+            id: run["id"].as_str().unwrap_or_default().to_owned(),
+            status: run["status"].as_str().unwrap_or_default().to_owned(),
+            failed: names(&failed),
+            changed_paths_missing: names(&unchecked).into_iter().collect(),
+        }
     });
     Ok(TicketSummary {
         ticket: ticket.to_owned(),
@@ -312,12 +328,27 @@ fn progress(
     }
 }
 
+fn needs_changed_paths(gate: &Value) -> bool {
+    let mut errors = gate["findings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|finding| finding["level"] == "error")
+        .peekable();
+    errors.peek().is_some() && errors.all(|finding| finding["code"] == "changed-paths-missing")
+}
+
 fn waiting(summary: &TicketSummary, config: &Value, process: &TicketEvents) -> Vec<Waiting> {
-    let failed = summary
+    let failed: Vec<String> = summary
         .last_run
-        .as_ref()
-        .map(|run| run.failed.as_slice())
-        .unwrap_or_default();
+        .iter()
+        .flat_map(|run| {
+            run.failed
+                .iter()
+                .filter(|name| !run.changed_paths_missing.contains(*name))
+        })
+        .cloned()
+        .collect();
     let entry = |name: &str| {
         let (step, label) = name.split_once('/')?;
         Some(&config["steps"][step]["gates"][label])
@@ -412,6 +443,24 @@ mod tests {
     }
 
     #[test]
+    fn a_gate_is_unchecked_only_when_every_error_is_changed_paths_missing() {
+        let finding = |level: &str, code: &str| json!({ "level": level, "code": code });
+        let gate = |findings: Vec<Value>| json!({ "ok": false, "findings": findings });
+        assert!(needs_changed_paths(&gate(vec![
+            finding("error", "changed-paths-missing"),
+            finding("warning", "path-mismatch"),
+        ])));
+        assert!(!needs_changed_paths(&gate(vec![
+            finding("error", "changed-paths-missing"),
+            finding("error", "path-mismatch"),
+        ])));
+        assert!(!needs_changed_paths(&gate(vec![finding(
+            "warning",
+            "changed-paths-missing"
+        )])));
+    }
+
+    #[test]
     fn waiting_names_gates_threads_approvals_and_the_deciding_role_in_order() {
         let config = json!({ "steps": {
             "decision": {
@@ -447,7 +496,12 @@ mod tests {
             last_run: Some(LastRun {
                 id: "run-1".into(),
                 status: "failed".into(),
-                failed: vec!["decision/approved".into(), "decision/accepted".into()],
+                failed: vec![
+                    "decision/approved".into(),
+                    "decision/accepted".into(),
+                    "decision/bound".into(),
+                ],
+                changed_paths_missing: BTreeSet::from(["decision/bound".into()]),
             }),
             waiting: Vec::new(),
             problem: None,
