@@ -644,6 +644,13 @@ pub struct ArtifactWritten {
     pub findings: Vec<Finding>,
 }
 
+/// The result of `hone artifact check`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ArtifactChecked {
+    pub path: String,
+    pub findings: Vec<Finding>,
+}
+
 /// What `hone artifact new` creates.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ArtifactNew {
@@ -1065,6 +1072,22 @@ impl Hone {
     pub async fn save_artifact(&self, path: &str, text: &str) -> Result<ArtifactWritten, Failure> {
         self.run_with_input(
             &["artifact", "save", "--path", path],
+            &[0, 1],
+            text.as_bytes(),
+        )
+        .await
+    }
+
+    /// `hone artifact check --path <path>` with `text` on standard input: the findings of a save
+    /// and of `links-resolve`, without writing.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`] `error` when the check could not run, for example for a path
+    /// outside the artifact patterns.
+    pub async fn check_artifact(&self, path: &str, text: &str) -> Result<ArtifactChecked, Failure> {
+        self.run_with_input(
+            &["artifact", "check", "--path", path],
             &[0, 1],
             text.as_bytes(),
         )

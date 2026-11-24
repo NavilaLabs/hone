@@ -4,13 +4,13 @@ use dioxus::prelude::*;
 
 use super::common::{FailureAlert, Loading, ProblemAlert, WarningNote};
 use super::editor::{CodeEditor, language_of};
-use super::{Project, Screen, Session};
+use super::{Project, Screen, Session, Tab};
 use crate::hone::{Hone, SourceFile};
 use crate::ide::Ide;
 use crate::ui::{Button, ButtonVariant};
 
 /// A file below the project root and, optionally, a symbol in it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct CodeTarget {
     pub(crate) path: String,
     pub(crate) symbol: Option<String>,
@@ -36,13 +36,13 @@ impl CodeTarget {
 }
 
 /// Opens `target` in the project's editor at the symbol's line when `in_ide` and an editor is
-/// set, otherwise in `panel`.
+/// set, otherwise as a tab of the open ticket, or in `panel` outside a ticket.
 pub(crate) fn open_code(
     session: Session,
     project: Project,
     target: CodeTarget,
     in_ide: bool,
-    mut panel: Signal<Option<CodeTarget>>,
+    panel: Signal<Option<CodeTarget>>,
 ) {
     match project.ide().filter(|_| in_ide) {
         Some(ide) => {
@@ -50,12 +50,20 @@ pub(crate) fn open_code(
                 let hone = (session.hone)();
                 let line = line_of(&hone, &target).await;
                 if ide.open(hone.root(), &target.path, line).is_err() {
-                    // The panel offers the IDE again, and its button shows why it did not start.
-                    panel.set(Some(target));
+                    // The view offers the IDE again, and its button shows why it did not start.
+                    show(session, target, panel);
                 }
             });
         }
-        None => panel.set(Some(target)),
+        None => show(session, target, panel),
+    }
+}
+
+fn show(session: Session, target: CodeTarget, mut panel: Signal<Option<CodeTarget>>) {
+    if (session.ticket)().is_some() && (session.screen)() == Screen::Ticket {
+        session.open_tab(Tab::Code(target));
+    } else {
+        panel.set(Some(target));
     }
 }
 
@@ -91,6 +99,25 @@ fn unresolved(file: &SourceFile) -> Option<String> {
 /// page below keeps its unsaved edits.
 #[component]
 pub(crate) fn CodePanel(target: CodeTarget, mut panel: Signal<Option<CodeTarget>>) -> Element {
+    rsx! {
+        aside {
+            class: "fixed top-0 right-0 bottom-0 z-40 w-[min(820px,92vw)] bg-bg border-l border-line flex flex-col gap-4 p-6 overflow-y-auto",
+            role: "dialog",
+            "aria-label": "Code",
+            onkeydown: move |event| {
+                if event.key() == Key::Escape {
+                    panel.set(None);
+                }
+            },
+            CodeView { target, onclose: move |()| panel.set(None) }
+        }
+    }
+}
+
+/// The file of `target`, read-only, at the line of its symbol, with Open in IDE. With `onclose`,
+/// a Close button.
+#[component]
+pub(crate) fn CodeView(target: CodeTarget, onclose: Option<EventHandler<()>>) -> Element {
     let mut session = use_context::<Session>();
     let project = use_context::<Project>();
     let mut opened = use_signal(|| None::<Result<(), String>>);
@@ -118,15 +145,6 @@ pub(crate) fn CodePanel(target: CodeTarget, mut panel: Signal<Option<CodeTarget>
         None => target.path.clone(),
     };
     rsx! {
-        aside {
-            class: "fixed top-0 right-0 bottom-0 z-40 w-[min(820px,92vw)] bg-bg border-l border-line flex flex-col gap-4 p-6 overflow-y-auto",
-            role: "dialog",
-            "aria-label": "Code",
-            onkeydown: move |event| {
-                if event.key() == Key::Escape {
-                    panel.set(None);
-                }
-            },
             div { class: "flex flex-wrap items-center gap-2",
                 span { class: "font-mono text-[13px] break-all mr-auto", "{title}" }
                 match ide {
@@ -146,7 +164,9 @@ pub(crate) fn CodePanel(target: CodeTarget, mut panel: Signal<Option<CodeTarget>
                         }
                     },
                 }
-                Button { variant: ButtonVariant::Outline, onclick: move |_| panel.set(None), "Close" }
+                if let Some(onclose) = onclose {
+                    Button { variant: ButtonVariant::Outline, onclick: move |_| onclose.call(()), "Close" }
+                }
             }
             if let Some(Err(message)) = opened() {
                 ProblemAlert { title: "The IDE did not open", message }
@@ -167,7 +187,6 @@ pub(crate) fn CodePanel(target: CodeTarget, mut panel: Signal<Option<CodeTarget>
                     }
                 },
             }
-        }
     }
 }
 

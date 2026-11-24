@@ -1,60 +1,20 @@
-//! The Edit tab of an artifact: the front matter as fields, the Markdown body in a source
-//! editor beside its preview, and the whole file as source. Every save goes through
-//! `hone artifact save`, which checks the file and writes it only without an error.
+//! The Fields mode of an artifact: the front matter as fields and the Markdown body in a
+//! source editor. A changed field is written into the text in the strict YAML profile.
 
 use dioxus::prelude::*;
 use serde_json::{Map, Value};
 
 use super::code::{CodeTarget, open_code};
-use super::common::{Empty, FailureAlert, Field, FindingList, Loading, SectionLabel, WarningNote};
+use super::common::{Empty, Field, SectionLabel};
 use super::editor::CodeEditor;
 use super::{Project, Session};
 use crate::artifact_text::ArtifactText;
-use crate::hone::{ArtifactSource, ArtifactWritten, Failure};
-use crate::markdown::preview;
+use crate::hone::ArtifactSource;
 use crate::ui::{Button, ButtonVariant, Checkbox, Choice, Combobox, Input, Textarea};
 
 /// Fields that the path fixes or that only `hone review condense` writes.
 const FIXED: [&str; 4] = ["id", "type", "ticket", "review"];
 const ANCHOR_KINDS: [&str; 3] = ["path", "glob", "symbol"];
-
-/// What a save left to show: its result, kept across the reload that follows it.
-type Saved = Option<Result<ArtifactWritten, Failure>>;
-
-/// The Edit tab of the artifact `id`. `code` is the panel that shows a file.
-#[component]
-pub(crate) fn ArtifactEditor(id: String, code: Signal<Option<CodeTarget>>) -> Element {
-    let session = use_context::<Session>();
-    let generation = use_signal(|| 0u64);
-    let saved = use_signal(|| None);
-    let source = use_resource(move || {
-        let id = id.clone();
-        async move {
-            let loaded = generation();
-            (loaded, (session.hone)().artifact(&id).await)
-        }
-    });
-    match &*source.read() {
-        None => rsx! { Loading {} },
-        Some((_, Err(failure))) => rsx! { FailureAlert { failure: failure.clone() } },
-        Some((loaded, Ok(source))) => rsx! {
-            EditorBody { key: "{loaded}", source: source.clone(), generation, saved, code }
-        },
-    }
-}
-
-/// The pointers of the error findings of the last refused save.
-fn error_pointers(saved: &Saved) -> Vec<String> {
-    match saved {
-        Some(Ok(written)) if !written.saved => written
-            .findings
-            .iter()
-            .filter(|finding| finding.level == "error")
-            .filter_map(|finding| finding.pointer.clone())
-            .collect(),
-        _ => Vec::new(),
-    }
-}
 
 /// Whether one of `pointers` points into the field `pointer`.
 fn hits(pointers: &[String], pointer: &str) -> bool {
@@ -93,156 +53,45 @@ fn field_order(keys: &[String], source: &ArtifactSource) -> Vec<String> {
     order
 }
 
+/// The front matter of `source` as fields over `data`, and a Markdown body in a source editor.
+/// `errors` are the pointers of the error findings, which mark the fields they point into.
 #[component]
-fn EditorBody(
+pub(crate) fn FieldsForm(
     source: ArtifactSource,
-    generation: Signal<u64>,
-    saved: Signal<Saved>,
+    data: Map<String, Value>,
+    body: String,
+    errors: Vec<String>,
+    set_field: Callback<(String, Option<Value>)>,
+    set_body: Callback<String>,
     code: Signal<Option<CodeTarget>>,
 ) -> Element {
-    let session = use_context::<Session>();
     let markdown = source.body.is_some();
-    let original = source.text.clone();
-    let mut text = use_signal(|| source.text.clone());
-    let mut data = use_signal(|| source.data.clone());
-    let mut body = use_signal(|| source.body.clone().unwrap_or_default());
-    let mut mode = use_signal(|| "form");
-    let mut source_edited = use_signal(|| false);
-    let mut busy = use_signal(|| false);
     let order = ArtifactText::parse(&source.text, markdown)
         .map(|file| field_order(&file.keys(), &source))
         .unwrap_or_default();
-    let set_field = use_callback(move |(key, value): (String, Option<Value>)| {
-        data.with_mut(|data| match &value {
-            Some(value) => {
-                data.insert(key.clone(), value.clone());
-            }
-            None => {
-                data.remove(&key);
-            }
-        });
-        let current = text.peek().clone();
-        if let Ok(mut file) = ArtifactText::parse(&current, markdown) {
-            match &value {
-                Some(value) => file.set(&key, value),
-                None => file.remove(&key),
-            }
-            text.set(file.text());
-        }
-    });
-    let set_body = move |new: String| {
-        let current = text.peek().clone();
-        if let Ok(mut file) = ArtifactText::parse(&current, markdown) {
-            file.set_body(&new);
-            text.set(file.text());
-        }
-        body.set(new);
-    };
-    let path = source.path.clone();
-    let save = move |_| {
-        let path = path.clone();
-        busy.set(true);
-        spawn(async move {
-            let result = (session.hone)().save_artifact(&path, &text.peek()).await;
-            let written = matches!(&result, Ok(written) if written.saved);
-            saved.set(Some(result));
-            busy.set(false);
-            if written {
-                session.changed();
-                generation += 1;
-            }
-        });
-    };
-    let changed = text() != original;
-    let errors = error_pointers(&saved());
     rsx! {
-        div { class: "flex flex-col gap-6",
-            div { class: "flex flex-wrap items-center gap-2",
-                div { class: "flex gap-0 border border-line w-fit", role: "tablist",
-                    for (value , label) in [("form", "Fields and body"), ("source", "Source")] {
-                        button {
-                            role: "tab",
-                            "aria-selected": if mode() == value { "true" } else { "false" },
-                            class: if mode() == value { "h-10 px-4 bg-ink text-bg font-semibold" } else { "h-10 px-4 hover:bg-surface-2" },
-                            onclick: move |_| mode.set(value),
-                            "{label}"
-                        }
-                    }
-                }
-                span { class: "font-mono text-[12.5px] text-ink-muted ml-2", "{source.path}" }
-                div { class: "ml-auto flex gap-2",
-                    Button {
-                        variant: ButtonVariant::Outline,
-                        disabled: busy() || !changed,
-                        onclick: move |_| {
-                            saved.set(None);
-                            generation += 1;
-                        },
-                        "Discard changes"
-                    }
-                    Button { disabled: busy() || !changed, onclick: save, "Save" }
+        section { class: "flex flex-col gap-4",
+            SectionLabel { label: "Front matter", aside: "id, type, ticket, and review are fixed here" }
+            for key in order {
+                FormField {
+                    key: "{key}",
+                    name: key.clone(),
+                    value: data.get(&key).cloned(),
+                    source: source.clone(),
+                    invalid: hits(&errors, &format!("/{key}")),
+                    set_field,
+                    code,
                 }
             }
-            match saved() {
-                Some(Err(failure)) => rsx! { FailureAlert { failure } },
-                Some(Ok(written)) => rsx! {
-                    if written.saved {
-                        p { class: "m-0 text-[13px] text-ok", role: "status", "■ Saved {written.path}." }
-                    } else {
-                        p { class: "m-0 text-[13px] text-bad font-semibold", role: "alert", "✕ Not saved: hone artifact save found errors." }
-                    }
-                    if !written.findings.is_empty() {
-                        FindingList { findings: written.findings.clone() }
-                    }
-                },
-                None => rsx! {},
-            }
-            if mode() == "source" {
-                p { class: "m-0 text-[13px] text-ink-muted",
-                    "The whole file. Saving checks it like schema-valid: the YAML profile, the path against the content, the kind, the status, and the schema."
-                }
+        }
+        if markdown {
+            section { class: "flex flex-col gap-3",
+                SectionLabel { label: "Body", aside: "Markdown; Split shows the preview" }
                 CodeEditor {
-                    doc: text(),
-                    language: if markdown { "markdown" } else { "yaml" },
-                    onchange: move |new: String| {
-                        text.set(new);
-                        source_edited.set(true);
-                    },
-                    class: "h-[65vh]",
-                }
-            } else if source_edited() {
-                WarningNote { text: "The source has changes the fields cannot show. Save them, or discard them, to edit the fields again." }
-            } else {
-                section { class: "flex flex-col gap-4",
-                    SectionLabel { label: "Front matter", aside: "id, type, ticket, and review are fixed here" }
-                    for key in order {
-                        FormField {
-                            key: "{key}",
-                            name: key.clone(),
-                            value: data.read().get(&key).cloned(),
-                            source: source.clone(),
-                            invalid: hits(&errors, &format!("/{key}")),
-                            set_field,
-                            code,
-                        }
-                    }
-                }
-                if markdown {
-                    section { class: "flex flex-col gap-3",
-                        SectionLabel { label: "Body", aside: "Markdown, with a live preview" }
-                        div { class: "grid grid-cols-[repeat(auto-fit,minmax(360px,1fr))] gap-4 items-stretch",
-                            CodeEditor {
-                                doc: body.peek().clone(),
-                                language: "markdown",
-                                onchange: set_body,
-                                class: "h-[60vh]",
-                            }
-                            div {
-                                class: "hone-prose border border-line p-5 h-[60vh] overflow-y-auto",
-                                dangerous_inner_html: preview(&body()),
-                            }
-                        }
-                    }
+                    doc: body,
+                    language: "markdown",
+                    onchange: move |new: String| set_body.call(new),
+                    class: "h-[50vh]",
                 }
             }
         }

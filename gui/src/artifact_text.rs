@@ -55,6 +55,43 @@ impl ArtifactText {
             .collect()
     }
 
+    /// The Markdown body; empty for a YAML file.
+    #[must_use]
+    pub fn body(&self) -> &str {
+        &self.body
+    }
+
+    /// The line, from 1, that a JSON Pointer into the data model points at: the line of its
+    /// top-level key, or of the key one level below when a line of that field starts with it.
+    /// `None` for the root and for a key the file does not have.
+    #[must_use]
+    pub fn line_of(&self, pointer: &str) -> Option<usize> {
+        let mut segments = pointer
+            .strip_prefix('/')?
+            .split('/')
+            .map(|segment| segment.replace("~1", "/").replace("~0", "~"));
+        let top = segments.next()?;
+        let mut line = usize::from(self.delimiters.is_some()) + 1;
+        for block in &self.blocks {
+            line += block.prefix.matches('\n').count();
+            if block.key.as_deref() == Some(top.as_str()) {
+                let inner = segments
+                    .next()
+                    .filter(|segment| segment.parse::<usize>().is_err())
+                    .and_then(|key| {
+                        block.text.lines().skip(1).position(|text| {
+                            let text = text.trim_start().trim_start_matches("- ");
+                            text.strip_prefix(key.as_str())
+                                .is_some_and(|rest| rest.starts_with(':'))
+                        })
+                    });
+                return Some(line + inner.map_or(0, |offset| offset + 1));
+            }
+            line += block.text.matches('\n').count();
+        }
+        None
+    }
+
     /// Replaces the body. A YAML file has none, so the call does nothing there.
     pub fn set_body(&mut self, body: &str) {
         if self.delimiters.is_some() {
@@ -378,6 +415,21 @@ mod tests {
             text.text(),
             "title: \"c\"\nurl: \"https://example.org/x\"\n"
         );
+    }
+
+    #[test]
+    fn a_pointer_finds_the_line_of_its_key() {
+        let text = ArtifactText::parse(DECISION, true).expect("front matter");
+        assert_eq!(text.line_of("/id"), Some(3));
+        assert_eq!(text.line_of("/status"), Some(5));
+        assert_eq!(text.line_of("/links/affects/0"), Some(7));
+        assert_eq!(text.line_of("/links/supersedes/0"), Some(6));
+        assert_eq!(text.line_of("/authors/0"), Some(10));
+        assert_eq!(text.line_of("/review"), None);
+        assert_eq!(text.line_of(""), None);
+        let yaml = ArtifactText::parse("id: \"a\"\nname: \"b\"\n", false).expect("yaml");
+        assert_eq!(yaml.line_of("/name"), Some(2));
+        assert_eq!(text.body(), "# Fees\n\nText.\n");
     }
 
     #[test]

@@ -1,17 +1,16 @@
-//! One artifact: its facts, its body, its anchors, its links both ways, the threads on it, and
-//! its review; and its Edit tab.
+//! One artifact on the Artifacts view, and what the catalog and the log know about it: its
+//! anchors, its links both ways, the threads on it, and its review.
 
 use dioxus::prelude::*;
 
-use super::artifact_form::ArtifactEditor;
+use super::artifact_tab::ArtifactTab;
 use super::code::{CodePanel, CodeTarget, open_code};
 use super::common::{
     Empty, FailureAlert, Field, Loading, Mark, PageHeader, ProblemAlert, SectionLabel, StatusMark,
-    Tag, open_file,
+    open_file,
 };
 use super::{Project, Session, Tab};
 use crate::hone::{ArtifactSource, CatalogEntry, Event, Failure, ReviewState, Write};
-use crate::markdown::preview;
 use crate::ui::{Button, ButtonVariant, Card, CardContent, CardHeader, CardTitle, Input};
 
 /// A link between two artifacts, as the detail lists it.
@@ -94,7 +93,7 @@ fn anchored_threads(events: &[Event], id: &str) -> Vec<(String, String, String)>
         .collect()
 }
 
-/// The artifact `id` of the catalog.
+/// The artifact `id` on the Artifacts view: its head and its tab.
 #[component]
 pub(crate) fn ArtifactDetail(id: String) -> Element {
     let mut session = use_context::<Session>();
@@ -114,15 +113,48 @@ pub(crate) fn ArtifactDetail(id: String) -> Element {
             ProblemAlert { title: "No such artifact", message: format!("`{id}` is not in the checked directory any more.") }
         };
     };
+    let root = session.hone.read().root().to_path_buf();
+    let path = entry.path.clone();
+    let code = use_signal(|| None::<CodeTarget>);
+    rsx! {
+        if let Some(target) = code() {
+            CodePanel { key: "{target.path}#{target.symbol:?}", target, panel: code }
+        }
+        PageHeader {
+            context: entry.kind.clone(),
+            title: entry.title.clone().unwrap_or_else(|| id.clone()),
+            actions: rsx! {
+                Button { variant: ButtonVariant::Outline, onclick: move |_| session.artifact.set(None), "All artifacts" }
+                Button { variant: ButtonVariant::Outline, onclick: move |_| open_file(&root, &path), "Open the file" }
+            },
+        }
+        ArtifactTab { id, code }
+    }
+}
+
+/// What the catalog and the log know about the artifact `id`: its anchors and code references,
+/// its links both ways, the threads on it, and its review in its ticket.
+#[component]
+pub(crate) fn ArtifactFacts(id: String, code: Signal<Option<CodeTarget>>) -> Element {
+    let mut session = use_context::<Session>();
+    let project = use_context::<Project>();
+    let catalog = project.catalog.read().clone();
+    let Some(Ok(catalog)) = catalog else {
+        return rsx! { Loading {} };
+    };
+    let Some(entry) = catalog
+        .artifacts
+        .iter()
+        .find(|entry| entry.id.as_deref() == Some(id.as_str()))
+        .cloned()
+    else {
+        return rsx! {};
+    };
     let (stored, computed) = links_of(&entry, &catalog.artifacts);
     let threads = match &*project.log.read() {
         Some(Ok(log)) => anchored_threads(&log.events, &id),
         _ => Vec::new(),
     };
-    let root = session.hone.read().root().to_path_buf();
-    let path = entry.path.clone();
-    let mut tab = use_signal(|| "overview");
-    let code = use_signal(|| None::<CodeTarget>);
     let source_id = id.clone();
     let source = use_resource(move || {
         let id = source_id.clone();
@@ -131,61 +163,8 @@ pub(crate) fn ArtifactDetail(id: String) -> Element {
             (session.hone)().artifact(&id).await
         }
     });
-    let editor_id = id.clone();
     rsx! {
-        if let Some(target) = code() {
-            CodePanel { key: "{target.path}#{target.symbol:?}", target, panel: code }
-        }
-        PageHeader {
-            context: entry.path.clone(),
-            title: entry.title.clone().unwrap_or_else(|| id.clone()),
-            actions: rsx! {
-                if (session.ticket)().is_none() {
-                    Button { variant: ButtonVariant::Outline, onclick: move |_| session.artifact.set(None), "All artifacts" }
-                } else {
-                    Button {
-                        variant: ButtonVariant::Outline,
-                        onclick: move |_| {
-                            session.graph_focus.set(Some(id.clone()));
-                            session.open_tab(Tab::Graph);
-                        },
-                        "Show in the link graph"
-                    }
-                }
-                Button { variant: ButtonVariant::Outline, onclick: move |_| open_file(&root, &path), "Open the file" }
-            },
-        }
-        div { class: "flex flex-wrap gap-2 -mt-5",
-            Tag { muted: true, "{entry.id.clone().unwrap_or_default()}" }
-            Tag { "{entry.kind}" }
-            match entry.effective.as_deref() {
-                Some("superseded") => rsx! { Tag { muted: true, "superseded" } },
-                Some(status) => rsx! { Tag { inverted: true, "{status}" } },
-                None => rsx! { Tag { muted: true, "living" } },
-            }
-            if let Some(ticket) = entry.ticket.clone() {
-                button {
-                    class: "h-7 px-2 border border-line font-mono text-[12.5px] underline hover:bg-surface-2",
-                    onclick: move |_| session.open_ticket(ticket.clone()),
-                    "{ticket}"
-                }
-            }
-        }
-        div { class: "flex gap-0 border-b border-line", role: "tablist",
-            for (value , label) in [("overview", "Overview"), ("edit", "Edit")] {
-                button {
-                    role: "tab",
-                    "aria-selected": if tab() == value { "true" } else { "false" },
-                    class: if tab() == value { "h-11 px-4 -mb-px border-b-[3px] border-signal font-semibold" } else { "h-11 px-4 -mb-px border-b-[3px] border-transparent text-ink-muted hover:text-ink" },
-                    onclick: move |_| tab.set(value),
-                    "{label}"
-                }
-            }
-        }
-        if tab() == "edit" {
-            ArtifactEditor { id: editor_id, code }
-        } else {
-        div { class: "grid grid-cols-[repeat(auto-fit,minmax(340px,1fr))] gap-8 items-start",
+        div { class: "grid grid-cols-[repeat(auto-fit,minmax(340px,1fr))] gap-8 items-start pt-4",
             div { class: "flex flex-col gap-8 min-w-0",
                 match &*source.read() {
                     Some(Ok(source)) => rsx! { SourcePanel { source: source.clone(), code } },
@@ -202,6 +181,18 @@ pub(crate) fn ArtifactDetail(id: String) -> Element {
                 }
             }
             div { class: "flex flex-col gap-8 min-w-0",
+                if (session.ticket)().is_some() {
+                    div {
+                        Button {
+                            variant: ButtonVariant::Outline,
+                            onclick: move |_| {
+                                session.graph_focus.set(Some(id.clone()));
+                                session.open_tab(Tab::Graph);
+                            },
+                            "Show in the link graph"
+                        }
+                    }
+                }
                 LinksPanel { stored, computed }
                 section {
                     SectionLabel { label: "Threads on it", aside: format!("{}", threads.len()) }
@@ -225,7 +216,6 @@ pub(crate) fn ArtifactDetail(id: String) -> Element {
                     }
                 }
             }
-        }
         }
     }
 }
@@ -256,8 +246,7 @@ fn references_of(data: &serde_json::Map<String, serde_json::Value>) -> Vec<(Stri
     anchors.chain(code).collect()
 }
 
-/// The anchors and code references of an artifact, each opening its code, and its rendered
-/// body.
+/// The anchors and code references of an artifact, each opening its code.
 #[component]
 fn SourcePanel(source: ArtifactSource, code: Signal<Option<CodeTarget>>) -> Element {
     let session = use_context::<Session>();
@@ -289,12 +278,6 @@ fn SourcePanel(source: ArtifactSource, code: Signal<Option<CodeTarget>>) -> Elem
                         }
                     }
                 }
-            }
-        }
-        if let Some(body) = source.body.clone().filter(|body| !body.trim().is_empty()) {
-            section {
-                SectionLabel { label: "Body" }
-                div { class: "hone-prose border border-line p-5", dangerous_inner_html: preview(&body) }
             }
         }
     }

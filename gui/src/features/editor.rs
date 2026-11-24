@@ -36,6 +36,9 @@ pub(crate) fn CodeEditor(
     /// The line to show and mark, from 1.
     #[props(optional)]
     line: Option<usize>,
+    /// A line to show and mark whenever it is set, from 1.
+    #[props(optional)]
+    jump: Option<Signal<Option<usize>>>,
     #[props(optional)] onchange: Option<EventHandler<String>>,
     #[props(into, optional)] class: Option<String>,
 ) -> Element {
@@ -70,6 +73,15 @@ pub(crate) fn CodeEditor(
                 }
             }
         });
+    });
+    let jump_id = id.clone();
+    use_effect(move || {
+        if let Some(line) = jump.and_then(|jump| jump()) {
+            document::eval(&format!(
+                "window.honeEditor && window.honeEditor.gotoLine({}, {line})",
+                json!(jump_id)
+            ));
+        }
     });
     let destroy_id = id.clone();
     use_drop(move || {

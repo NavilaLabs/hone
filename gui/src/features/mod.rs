@@ -3,6 +3,7 @@
 
 pub(crate) mod artifact;
 mod artifact_form;
+mod artifact_tab;
 pub(crate) mod artifacts;
 pub(crate) mod assistant;
 mod attributes;
@@ -63,6 +64,8 @@ pub(crate) enum Tab {
     Overview,
     Journal,
     Artifact(String),
+    /// A source file, read-only.
+    Code(code::CodeTarget),
     Check,
     Graph,
     Events,
@@ -76,6 +79,13 @@ impl Tab {
             Self::Overview => "Overview".into(),
             Self::Journal => "Journal".into(),
             Self::Artifact(id) => id.clone(),
+            Self::Code(target) => {
+                let file = target.path.rsplit('/').next().unwrap_or(&target.path);
+                match &target.symbol {
+                    Some(symbol) => format!("{file} # {symbol}"),
+                    None => file.to_owned(),
+                }
+            }
             Self::Check => "Check run".into(),
             Self::Graph => "Link graph".into(),
             Self::Events => "Event log".into(),
@@ -124,6 +134,16 @@ impl TicketTabs {
     }
 }
 
+/// The unsaved text of one artifact, kept while its tab is not shown.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Draft {
+    pub(crate) path: String,
+    pub(crate) text: String,
+    /// The fields as the form set them; `None` after an edit of the source, which the GUI
+    /// cannot read back into fields without parsing YAML.
+    pub(crate) data: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
 /// The state every screen shares: the project, the writer, the open screen and ticket, and a
 /// counter that a write bumps, so that every screen reads the store again.
 #[derive(Clone, Copy)]
@@ -151,6 +171,10 @@ pub(crate) struct Session {
     pub(crate) new_ticket: Signal<Option<new_ticket::Seed>>,
     /// Whether the New artifact dialog is open.
     pub(crate) new_artifact: Signal<bool>,
+    /// The unsaved artifacts of this window, by ID.
+    pub(crate) drafts: Signal<std::collections::BTreeMap<String, Draft>>,
+    /// The tab with unsaved changes that asks before it closes.
+    pub(crate) closing: Signal<Option<Tab>>,
 }
 
 /// A full `hone check` and the ticket it ran for.
@@ -183,6 +207,8 @@ impl Session {
             last_sync: Signal::new(None),
             new_ticket: Signal::new(None),
             new_artifact: Signal::new(false),
+            drafts: Signal::new(std::collections::BTreeMap::new()),
+            closing: Signal::new(None),
         }
     }
 
