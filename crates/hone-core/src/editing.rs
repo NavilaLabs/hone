@@ -117,6 +117,8 @@ pub struct ArtifactNew {
     pub author: Option<String>,
     /// Anchors as `(kind, ref)`, for example `("path", "src/payments")`.
     pub anchors: Vec<(String, String)>,
+    /// The IDs it supersedes, written as `links.supersedes` in this order.
+    pub supersedes: Vec<String>,
 }
 
 /// A source file, and the line of a symbol in it.
@@ -308,6 +310,7 @@ pub fn new_artifact(project_root: &Path, new: &ArtifactNew) -> Result<ArtifactWr
             "the title `{title}` gives no slug: use letters or digits"
         )));
     }
+    let directory = Directory::scan(project_root, config);
     let ticket =
         match (lifecycle, new.ticket.as_deref()) {
             ("decided", None) => {
@@ -317,7 +320,6 @@ pub fn new_artifact(project_root: &Path, new: &ArtifactNew) -> Result<ArtifactWr
                 )));
             }
             ("decided", Some(ticket)) => {
-                let directory = Directory::scan(project_root, config);
                 if !directory.artifacts.iter().any(|artifact| {
                     artifact.place == Place::Ticket && artifact.id() == Some(ticket)
                 }) {
@@ -333,6 +335,15 @@ pub fn new_artifact(project_root: &Path, new: &ArtifactNew) -> Result<ArtifactWr
             }
             (_, None) => None,
         };
+    if let Some(missing) = new.supersedes.iter().find(|superseded| {
+        !directory.artifacts.iter().any(|artifact| {
+            artifact.place != Place::Ticket && artifact.id() == Some(superseded.as_str())
+        })
+    }) {
+        return Err(error(format!(
+            "`{missing}` is no artifact of the project to supersede"
+        )));
+    }
     let author = match (lifecycle, new.author.as_deref()) {
         ("decided", None | Some("")) => {
             return Err(error(
@@ -372,6 +383,10 @@ pub fn new_artifact(project_root: &Path, new: &ArtifactNew) -> Result<ArtifactWr
     };
     if requires("name") {
         fields.push(("name", quoted(title)));
+    }
+    if !new.supersedes.is_empty() {
+        let ids: Vec<String> = new.supersedes.iter().map(|id| quoted(id)).collect();
+        fields.push(("links", format!("{{ supersedes: [{}] }}", ids.join(", "))));
     }
     let markdown = path.ends_with(".md");
     let mut front = String::new();

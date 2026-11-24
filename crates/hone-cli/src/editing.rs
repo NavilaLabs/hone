@@ -78,6 +78,9 @@ pub(crate) enum Artifact {
         /// An anchor as `<kind>:<ref>`, for example `path:src/payments`.
         #[arg(long = "anchor", value_name = "KIND:REF")]
         anchors: Vec<String>,
+        /// The ID of an artifact the new one supersedes, written to `links.supersedes`.
+        #[arg(long = "supersedes", value_name = "ID")]
+        supersedes: Vec<String>,
         /// The author's handle for `authors`. Without it and `HONE_AUTHOR`, the author of the
         /// project's context.
         #[arg(long, env = "HONE_AUTHOR")]
@@ -127,6 +130,7 @@ pub(crate) fn run_artifact(command: Artifact) -> ExitCode {
             title,
             ticket,
             anchors,
+            supersedes,
             author,
         } => {
             let outcome = anchors
@@ -147,6 +151,7 @@ pub(crate) fn run_artifact(command: Artifact) -> ExitCode {
                         title,
                         author: author.or_else(|| context_author(&target.root)),
                         anchors,
+                        supersedes,
                     };
                     hone_core::new_artifact(&target.root, &new)
                 });
