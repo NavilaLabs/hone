@@ -17,6 +17,11 @@ publish = false
 name = "hone-gui"
 path = "src/main.rs"
 
+# The agent the assistant's tests talk to; `cargo test` builds it.
+[[example]]
+name = "acp-test-agent"
+path = "tests/agent/acp_agent.rs"
+
 [dependencies]
 dioxus = { version = "0.7.10", default-features = false, features = ["desktop", "launch", "macro", "html", "signals", "hooks", "document"] }
 keyring = "4.2.0"
