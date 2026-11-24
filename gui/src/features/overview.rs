@@ -236,6 +236,7 @@ pub(crate) fn Overview(ticket: String) -> Element {
 #[component]
 fn NextCard(next: Next, checking: bool) -> Element {
     let session = use_context::<Session>();
+    let project = use_context::<Project>();
     let heading = match &next.step {
         Some((position, step)) => format!("Next · step {position:02} {step}"),
         None => "Next".to_owned(),
@@ -253,7 +254,7 @@ fn NextCard(next: Next, checking: bool) -> Element {
                 div { class: "flex flex-wrap gap-3 pt-2",
                     if next.finding.is_some() {
                         Button { variant: ButtonVariant::Outline, class: "h-12 px-6",
-                            onclick: move |_| session.open_tab(Tab::Check),
+                            onclick: move |_| session.open_tab(project.newest_run()),
                             "Open finding"
                         }
                     }

@@ -220,6 +220,17 @@ pub struct CheckRun {
     pub run: Option<String>,
 }
 
+/// A `hone check` of a ticket with the arguments of a stored run.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CheckCall {
+    pub ticket: String,
+    pub step: Option<String>,
+    /// `None` passes no changed paths; an empty list passes an explicitly empty change.
+    pub changed: Option<Vec<String>>,
+    /// `pure` or `exec`; `None` runs every gate.
+    pub class: Option<String>,
+}
+
 /// A check run stored in the process store, from `hone runs`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Run {
@@ -773,6 +784,31 @@ impl Hone {
     /// Returns a [`Failure`] when the check could not run (exit code 2).
     pub async fn check(&self, ticket: Option<&str>, scope: GateScope) -> Result<CheckRun, Failure> {
         self.run(&check_arguments(ticket, scope), &[0, 1]).await
+    }
+
+    /// `hone check` as `call` says, stored with the source `gui`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`] when the check could not run.
+    pub async fn check_call(&self, call: &CheckCall) -> Result<CheckRun, Failure> {
+        let mut arguments = vec!["check", "--source", "gui", "--ticket", call.ticket.as_str()];
+        if let Some(step) = &call.step {
+            arguments.extend(["--step", step]);
+        }
+        if let Some(class) = &call.class {
+            arguments.extend(["--class", class]);
+        }
+        match &call.changed {
+            Some(changed) if changed.is_empty() => arguments.extend(["--changed-from", "-"]),
+            Some(changed) => {
+                for path in changed {
+                    arguments.extend(["--changed", path]);
+                }
+            }
+            None => {}
+        }
+        self.run(&arguments, &[0, 1]).await
     }
 
     /// `hone ticket list`: every ticket with its progress.

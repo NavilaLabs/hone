@@ -66,7 +66,10 @@ pub(crate) enum Tab {
     Artifact(String),
     /// A source file, read-only.
     Code(code::CodeTarget),
+    /// The ticket's check run while the store holds none.
     Check,
+    /// A stored check run, by its ID.
+    Run(String),
     Graph,
     Events,
     Threads,
@@ -87,6 +90,7 @@ impl Tab {
                 }
             }
             Self::Check => "Check run".into(),
+            Self::Run(id) => format!("Check run {}", journal::clock(id)),
             Self::Graph => "Link graph".into(),
             Self::Events => "Event log".into(),
             Self::Threads => "Threads".into(),
@@ -117,6 +121,17 @@ impl TicketTabs {
             self.open.push(tab.clone());
         }
         self.active = tab;
+    }
+
+    /// Shows `new` in the place of `old`, or only shows `new` when `old` is not open.
+    pub(crate) fn replace(&mut self, old: &Tab, new: Tab) {
+        match self.open.iter().position(|open| open == old) {
+            Some(index) if !self.open.contains(&new) => {
+                self.open[index] = new.clone();
+                self.active = new;
+            }
+            _ => self.show(new),
+        }
     }
 
     /// Closes `tab`; the Overview stays. Closing the active tab shows its left neighbour.
@@ -154,8 +169,6 @@ pub(crate) struct Session {
     pub(crate) ticket: Signal<Option<String>>,
     pub(crate) thread: Signal<Option<String>>,
     pub(crate) revision: Signal<u64>,
-    /// The last full `hone check` of the Checks screen, kept across screens.
-    pub(crate) last_check: Signal<Option<LastCheck>>,
     /// The artifact open on the Artifacts screen.
     pub(crate) artifact: Signal<Option<String>>,
     /// The node the link graph highlights.
@@ -177,13 +190,6 @@ pub(crate) struct Session {
     pub(crate) closing: Signal<Option<Tab>>,
 }
 
-/// A full `hone check` and the ticket it ran for.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct LastCheck {
-    pub(crate) ticket: Option<String>,
-    pub(crate) outcome: Result<CheckRun, Failure>,
-}
-
 impl Session {
     pub(crate) fn new(root: PathBuf) -> Self {
         let writer = Writer {
@@ -197,7 +203,6 @@ impl Session {
             ticket: Signal::new(None),
             thread: Signal::new(None),
             revision: Signal::new(0),
-            last_check: Signal::new(None),
             artifact: Signal::new(None),
             graph_focus: Signal::new(None),
             search_open: Signal::new(false),
@@ -352,6 +357,15 @@ impl Project {
     }
 
     /// The open ticket as `hone ticket list` gives it.
+    /// The tab of the open ticket's newest stored run, or the Check run tab while there is
+    /// none.
+    pub(crate) fn newest_run(&self) -> Tab {
+        match &*self.runs.read() {
+            Some(Some(Ok(runs))) if !runs.is_empty() => Tab::Run(runs[0].id.clone()),
+            _ => Tab::Check,
+        }
+    }
+
     pub(crate) fn summary(&self, ticket: &str) -> Option<TicketSummary> {
         match &*self.tickets.read() {
             Some(Ok(list)) => list
@@ -546,6 +560,20 @@ mod tests {
         assert_eq!(tabs.active, Tab::Overview);
         tabs.close(&Tab::Overview);
         assert_eq!(tabs.open, [Tab::Overview, Tab::Check]);
+        tabs.replace(&Tab::Check, Tab::Run("run-2".into()));
+        assert_eq!(tabs.open, [Tab::Overview, Tab::Run("run-2".into())]);
+        assert_eq!(tabs.active, Tab::Run("run-2".into()));
+        tabs.show(Tab::Run("run-1".into()));
+        tabs.replace(&Tab::Run("run-1".into()), Tab::Run("run-2".into()));
+        assert_eq!(
+            tabs.open,
+            [
+                Tab::Overview,
+                Tab::Run("run-2".into()),
+                Tab::Run("run-1".into())
+            ]
+        );
+        assert_eq!(tabs.active, Tab::Run("run-2".into()));
     }
 
     #[test]

@@ -135,7 +135,7 @@ pub(crate) fn Explorer() -> Element {
                             note: clock(&run.id),
                             mark: if run.status == "passed" { "passed".to_owned() } else { "failed".to_owned() },
                             bad: run.status != "passed",
-                            tab: Tab::Check,
+                            tab: Tab::Run(run.id.clone()),
                         }
                     } else {
                         Item { label: "Check run", tab: Tab::Check }
@@ -164,12 +164,13 @@ pub(crate) fn Explorer() -> Element {
 #[component]
 fn Rail() -> Element {
     let session = use_context::<Session>();
+    let project = use_context::<Project>();
     let mut open = session.explorer_open;
     let entries = [
         ("OV", "Overview", Tab::Overview),
         ("JR", "Journal", Tab::Journal),
         ("RV", "Threads", Tab::Threads),
-        ("CK", "Check run", Tab::Check),
+        ("CK", "Check run", project.newest_run()),
         ("GR", "Link graph", Tab::Graph),
         ("EV", "Event log", Tab::Events),
     ];
