@@ -317,3 +317,14 @@ The maintainer decided with this slice that review inline replaces the Preview m
 228. **Opening an artifact's review inside a workspace** keeps the open ticket; only on the Artifacts view does opening an artifact make its ticket the open ticket (before, it switched the workspace to the artifact's ticket).
 229. **The line over the text** shows ID, kind, and `reach`; the mockup's "approved by" is left out, because the approvals stand in the column beside it.
 230. **Not covered by tests:** the view of the review (checked by running the app against `examples/payments`). Its data is unit-tested: quote marking, the threads of an artifact with their state and numbers, the open thread, and Supersede and `--supersedes` run against the real binary.
+
+## GUI v2: link graph (build-time rules)
+
+The maintainer decided with this slice that a click selects a node for the inspector and a double click opens it, that the Artifacts view shows the graph of the whole project beside its list while the ticket's tab starts on the ticket and switches to the whole project, and that a focus mode collapses the panels while gate findings stay off the nodes. These rules came up while building and are reported for confirmation.
+
+231. **Scope** "this ticket" is the former ticket filter: the ticket's record, its artifacts, and their direct neighbours over the links shown. The scope starts on "this ticket" each time the tab is created; the ticket combobox is gone.
+232. **Selection** is the session's graph focus, so "Show in the link graph" of an artifact selects its node, and the selection carries over between the tab and the Artifacts view. Enter on a focused node opens it.
+233. **The inspector** counts `out` as the links the node stores, its ticket included, and `in` as the computed links other artifacts store towards it. Center here scrolls the canvas so the node is in the middle; Open says "Open ticket" for a ticket record.
+234. **Focus mode** remembers whether the explorer and the assistant were open and restores that when it is left; it is offered only in a ticket, because only there are the panels.
+235. **Nodes** grow to 220 × 78 px to hold kind, ID, title, and status; `accepted` is marked ■ in `ok`, `superseded` struck through, any other status □. A node without a title shows none; the mockup's "living" and "bound" are left out, because the catalog names neither the lifecycle nor a binding per node.
+236. **Not covered by tests:** the view (checked against `examples/payments`). The layout, the scope filter, and the status of a node are unit-tested.
