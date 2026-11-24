@@ -14,7 +14,7 @@ use crate::below;
 use crate::check::CheckError;
 use crate::directory::{Directory, Place};
 use crate::finding::{Finding, Level};
-use crate::gates::{ID_LINKS, language_of, languages};
+use crate::gates::{ID_LINKS, Scope, language_of, languages};
 use crate::host::{Host, LanguageCall};
 use crate::manifest::{Lock, read_lock_file};
 use crate::schema_valid::check_file;
@@ -88,6 +88,18 @@ pub struct ArtifactWritten {
     /// Whether the file was written: only when no finding is an error.
     pub saved: bool,
     /// The findings of the check, sorted; warnings do not stop the write.
+    pub findings: Vec<Finding>,
+}
+
+/// The result of checking an artifact file's text without writing it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ArtifactChecked {
+    /// The artifact's ID, if the text names one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// The path relative to the project root.
+    pub path: String,
+    /// The findings of the check, sorted.
     pub findings: Vec<Finding>,
 }
 
@@ -229,6 +241,44 @@ pub fn save_artifact(
         result.map_err(|io| error(format!("{path}: {io}")))?;
     }
     Ok(written)
+}
+
+/// Checks `bytes` as the artifact file `path` (relative to `project_root`) without writing it:
+/// the findings [`save_artifact`] gives, and the findings of `links-resolve` for this file
+/// against the checked directory with this text in place of the file.
+///
+/// # Errors
+///
+/// Returns a [`CheckError`] if the configuration cannot be read, or the path is not relative,
+/// leaves the root, names a ticket record, or matches no artifact pattern.
+pub fn check_unsaved_artifact(
+    project_root: &Path,
+    path: &str,
+    bytes: &[u8],
+) -> Result<ArtifactChecked, CheckError> {
+    let current = Resolved::load(project_root)?;
+    check_relative(path)?;
+    let config = current.document();
+    let mut findings = check_text(config, path, bytes)?;
+    if let Some(Ok(artifact)) = Directory::single(config, path, bytes) {
+        let mut directory = Directory::scan(project_root, config);
+        directory.artifacts.retain(|other| other.path != path);
+        directory.unreadable.retain(|other| other.path != path);
+        directory.artifacts.push(artifact);
+        findings.extend(
+            Scope::new(config, &directory)
+                .directory_gate("links-resolve")
+                .into_iter()
+                .filter(|finding| finding.path.as_deref() == Some(path)),
+        );
+        findings.sort();
+    }
+    let written = written(path, bytes, findings);
+    Ok(ArtifactChecked {
+        id: written.id,
+        path: written.path,
+        findings: written.findings,
+    })
 }
 
 /// Creates an artifact of `new.kind` at the kind's path pattern with an unused ID and the

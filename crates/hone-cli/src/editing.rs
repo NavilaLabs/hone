@@ -4,13 +4,15 @@ use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
 use hone_core::{
-    ArtifactNew, ArtifactSource, ArtifactWritten, CheckError, Contexts, KindInfo, ProcessStore,
-    SourceFile,
+    ArtifactChecked, ArtifactNew, ArtifactSource, ArtifactWritten, CheckError, Contexts, KindInfo,
+    Level, ProcessStore, SourceFile,
 };
+
+use crate::process::printable;
 use serde::Serialize;
 use serde_json::json;
 
-const NOT_SAVED: u8 = 1;
+const ERROR_FINDING: u8 = 1;
 const COULD_NOT_RUN: u8 = 2;
 
 #[derive(Args)]
@@ -43,6 +45,16 @@ pub(crate) enum Artifact {
     /// finding is an error. Exits with 0 when written, 1 when an error stopped it, and 2 when
     /// it could not run.
     Save {
+        #[command(flatten)]
+        target: Root,
+        /// The path relative to the project root.
+        #[arg(long)]
+        path: String,
+    },
+    /// Check the text on standard input as the artifact file at a path, like `save` and with
+    /// `links-resolve` for this file, without writing it. Exits with 0 without an error finding,
+    /// 1 with one, and 2 when it could not run.
+    Check {
         #[command(flatten)]
         target: Root,
         /// The path relative to the project root.
@@ -100,14 +112,14 @@ pub(crate) fn run_artifact(command: Artifact) -> ExitCode {
             print_source,
         ),
         Artifact::Save { target, path } => {
-            let mut bytes = Vec::new();
-            let outcome = std::io::stdin()
-                .read_to_end(&mut bytes)
-                .map_err(|io| CheckError {
-                    message: format!("standard input: {io}"),
-                })
-                .and_then(|_| hone_core::save_artifact(&target.root, &path, &bytes));
+            let outcome = read_stdin()
+                .and_then(|bytes| hone_core::save_artifact(&target.root, &path, &bytes));
             written(target.json, outcome)
+        }
+        Artifact::Check { target, path } => {
+            let outcome = read_stdin()
+                .and_then(|bytes| hone_core::check_unsaved_artifact(&target.root, &path, &bytes));
+            checked(target.json, outcome)
         }
         Artifact::New {
             target,
@@ -202,7 +214,42 @@ fn written(as_json: bool, outcome: Result<ArtifactWritten, CheckError>) -> ExitC
             if written.saved {
                 ExitCode::SUCCESS
             } else {
-                ExitCode::from(NOT_SAVED)
+                ExitCode::from(ERROR_FINDING)
+            }
+        }
+        Err(error) => could_not_run(as_json, &error, ExitCode::from(COULD_NOT_RUN)),
+    }
+}
+
+fn read_stdin() -> Result<Vec<u8>, CheckError> {
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .read_to_end(&mut bytes)
+        .map_err(|io| CheckError {
+            message: format!("standard input: {io}"),
+        })?;
+    Ok(bytes)
+}
+
+fn checked(as_json: bool, outcome: Result<ArtifactChecked, CheckError>) -> ExitCode {
+    match outcome {
+        Ok(checked) => {
+            if as_json {
+                println!("{}", to_json(&checked));
+            } else {
+                println!("checked {}", printable(&checked.path));
+                for finding in &checked.findings {
+                    println!("  {}", printable(&finding.to_string()));
+                }
+            }
+            if checked
+                .findings
+                .iter()
+                .any(|finding| finding.level == Level::Error)
+            {
+                ExitCode::from(ERROR_FINDING)
+            } else {
+                ExitCode::SUCCESS
             }
         }
         Err(error) => could_not_run(as_json, &error, ExitCode::from(COULD_NOT_RUN)),
