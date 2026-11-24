@@ -278,3 +278,22 @@ The decisions of Question 49 were taken with the maintainer; these rules came up
 ## Confirmations (maintainer, 2026-11-24, GUI v2)
 
 204. **Confirmed as built:** items 189 to 196 and 198 to 203. Decided: item 197, in a narrower form than its recommendation. `waiting` leaves out a failed gate whose only error is `changed-paths-missing`; `last_run` keeps naming it in `failed`, because `last_run` reports the stored run as it is, and a `status` of `failed` beside an empty `failed` would misreport it.
+
+## GUI v2: the artifact editor and the check run (build-time rules)
+
+The maintainer decided with this slice that `hone artifact check` checks an unsaved text with `links-resolve`, and that Fields stays as a fourth mode beside Source, Split, and Preview. These rules came up while building and are reported for confirmation.
+
+205. **`hone artifact check` output.** `path`, `id` (when the text names one), and `findings`; no `status` or `ok`, because the exit code gives it. `links-resolve` runs for this file only (its ID links, its `ticket`, and `context.observed`); `ids-unique` does not run. The text form prints `checked <path>` and one line per finding, through `printable`.
+206. **Open: MCP.** No MCP tool offers `hone artifact check` yet. `check_artifact` (Question 30) checks content alone; extending it to the path and `links-resolve`, or adding a tool, is to decide.
+207. **The live check** runs 400 ms after the text last changed; a newer change cancels a pending check, and the last problems stay shown meanwhile.
+208. **The line of a problem** is the line of the top-level key its pointer names, or of the key one level below when a line of that field starts with it (`/links/affects/1` gives the line of `affects:`). A list index is not resolved to its item. A finding without a pointer, or for a key the text does not have (a missing required field), has no line.
+209. **Modes.** The tab opens in Split. Fields shows the body editor without a preview. Preview shows the rendered artifact and what the Overview of an artifact showed before: anchors and code, links both ways, threads, and review (until the Review inline screen). The Artifacts view outside a ticket uses the same editor, with the code panel.
+210. **Unsaved text** is kept per artifact ID for the window. After an edit of the source the fields wait, as before, and the status tag is hidden, because the GUI parses no YAML. Closing a tab with unsaved text asks Save, Discard, or Cancel; a refused save keeps the tab open. Closing the window does not ask yet.
+211. **Propose** is offered while the status is `draft` and the kind has `proposed`; it saves the current text, unsaved changes included, with `status: "proposed"` through `hone artifact save`.
+212. **The code tab** replaces item 158: one tab per path and symbol, titled with the file name and the symbol. Outside a ticket the panel stays.
+213. **The Check run tab** is one tab per stored run, titled `Check run HH:MM`, looked up in `hone runs`; a run pruned from the store says so. While the store holds no run, the tab runs every gate on demand. Open finding and the explorer open the newest run.
+214. **Run again** repeats `step`, `changed` (`null` passes nothing, `[]` passes `--changed-from -` with empty input), and `class`, with `--source gui`. It leaves out `base` and `lock`, because they name paths of the caller that may be gone. The new run takes the place of the old tab; a run that was not stored shows in the tab without being kept.
+215. **The command line** of a run is built from its arguments without `--source` (the head names the source); an empty change reads `--changed-from <empty>`.
+216. **A finding's place** is its path and pointer; it opens the artifact when the catalog has that path, otherwise the file as a code tab. Ask assistant is shown disabled until the assistant.
+217. **Item 197 as built:** `waiting` reads the error findings of the stored run; `last_run` is unchanged.
+218. **Not covered by tests:** the views of the artifact tab and the Check run tab (checked by running the app against `examples/payments`). Their data is unit-tested: problems with their lines, Propose, the tab replace, the command line and the call of Run again, and the times; `hone artifact check` and Run again run against the real binary.
