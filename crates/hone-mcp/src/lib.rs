@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use hone_core::{
     Author, Change, CheckReport, CheckRequest, GateClass, NoPackages, PackageDirectory,
-    PackageSource, Peer, ProcessError, ProcessStore, Resolved, StepStatus, ThreadAnchor,
+    PackageSource, Peer, ProcessError, ProcessStore, StepStatus, ThreadAnchor,
 };
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -348,20 +348,22 @@ impl Server {
     }
 
     #[tool(
-        description = "Check the content of one artifact file, for example a draft before it is written: YAML profile, kind, prefix, status, schema, and unknown fields. Returns `status` (`passed`, `failed`) and `findings`."
+        description = "Check the text of one artifact file without writing it, for example a draft, like `hone artifact check --json`: YAML profile, path against content, kind, prefix, status, schema, unknown fields, and `links-resolve` for this file against the checked directory with the text in place of the file. Returns `status` (`passed`, `failed`), `path`, `id` when the text names one, and `findings`."
     )]
     fn check_artifact(&self, Parameters(input): Parameters<ArtifactInput>) -> CallToolResult {
-        match Resolved::load(&self.project.root) {
-            Ok(config) => {
-                let findings =
-                    hone_core::check_artifact(&config, &input.path, input.content.as_bytes());
-                let failed = findings
+        match hone_core::check_unsaved_artifact(
+            &self.project.root,
+            &input.path,
+            input.content.as_bytes(),
+        ) {
+            Ok(checked) => {
+                let failed = checked
+                    .findings
                     .iter()
                     .any(|finding| finding.level == hone_core::Level::Error);
-                CallToolResult::structured(json!({
-                    "status": if failed { "failed" } else { "passed" },
-                    "findings": findings,
-                }))
+                let mut content = to_value(&checked);
+                content["status"] = json!(if failed { "failed" } else { "passed" });
+                CallToolResult::structured(content)
             }
             Err(error) => could_not_run(&error.message),
         }
