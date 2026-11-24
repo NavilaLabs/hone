@@ -55,11 +55,23 @@ pub(crate) fn Artifacts() -> Element {
     let mut kind = use_signal(|| None::<String>);
     let mut status = use_signal(String::new);
     let mut text = use_signal(String::new);
+    let mut graph = use_signal(|| false);
     rsx! {
         PageHeader {
             context: session.hone.read().root().display().to_string(),
             title: "Artifacts",
             actions: rsx! {
+                div { class: "flex border border-line", role: "radiogroup", "aria-label": "View",
+                    for (label , on) in [("List", false), ("Graph", true)] {
+                        button {
+                            role: "radio",
+                            "aria-checked": if graph() == on { "true" } else { "false" },
+                            class: if graph() == on { "h-10 px-4 bg-ink text-bg font-semibold" } else { "h-10 px-4 hover:bg-surface-2" },
+                            onclick: move |_| graph.set(on),
+                            "{label}"
+                        }
+                    }
+                }
                 Button {
                     onclick: move |_| {
                         let mut open = session.new_artifact;
@@ -69,6 +81,9 @@ pub(crate) fn Artifacts() -> Element {
                 }
             },
         }
+        if graph() {
+            super::graph::LinkGraph {}
+        } else {
         match &*project.catalog.read() {
             None => rsx! { Loading {} },
             Some(Err(failure)) => rsx! { FailureAlert { failure: failure.clone() } },
@@ -161,6 +176,7 @@ pub(crate) fn Artifacts() -> Element {
                     }
                 }
             }
+        }
         }
     }
 }

@@ -4,13 +4,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use dioxus::prelude::*;
 
-use super::common::{Empty, FailureAlert, Loading, PageHeader};
+use super::artifact::links_of;
+use super::artifacts::EffectiveStatus;
+use super::common::{Empty, FailureAlert, Loading};
 use super::{Project, Session};
 use crate::hone::CatalogEntry;
-use crate::ui::{Choice, Combobox};
+use crate::ui::{Button, ButtonVariant};
 
-const NODE_WIDTH: f64 = 190.0;
-const NODE_HEIGHT: f64 = 46.0;
+const NODE_WIDTH: f64 = 220.0;
+const NODE_HEIGHT: f64 = 78.0;
 const COLUMN_GAP: f64 = 110.0;
 const ROW_GAP: f64 = 18.0;
 const MARGIN: f64 = 32.0;
@@ -35,6 +37,8 @@ pub(crate) struct Node {
     pub(crate) kind: String,
     pub(crate) title: Option<String>,
     pub(crate) superseded: bool,
+    /// The effective status, otherwise the declared one.
+    pub(crate) status: Option<String>,
     pub(crate) x: f64,
     pub(crate) y: f64,
 }
@@ -220,6 +224,7 @@ pub(crate) fn layout(entries: &[CatalogEntry], filter: &Filter) -> Layout {
                 kind: entry.kind.clone(),
                 title: entry.title.clone(),
                 superseded: entry.effective.as_deref() == Some("superseded"),
+                status: entry.effective.clone().or_else(|| entry.status.clone()),
                 x,
                 y: MARGIN + HEADER + row as f64 * (NODE_HEIGHT + ROW_GAP),
             });
@@ -291,30 +296,36 @@ fn shorten(text: &str, length: usize) -> String {
 }
 
 /// The link graph of the checked directory, filterable by kind, link type, and ticket.
+/// The link graph of the whole project, or, with `ticket`, of that ticket's artifacts and their
+/// direct neighbours, with a switch to the whole project.
 #[component]
-pub(crate) fn LinkGraph() -> Element {
+pub(crate) fn LinkGraph(#[props(optional)] ticket: Option<String>) -> Element {
     let mut session = use_context::<Session>();
     let project = use_context::<Project>();
     // Ticket records and their links fill the graph with one line per artifact; they start
-    // hidden, and the ticket filter shows one ticket's artifacts.
+    // hidden.
     let mut filter = use_signal(|| Filter {
         hidden_kinds: BTreeSet::from(["ticket".to_owned()]),
         hidden_links: BTreeSet::from(["ticket".to_owned()]),
         ticket: None,
     });
+    let mut whole = use_signal(|| false);
     let mut hovered = use_signal(|| None::<String>);
-    let focus = (session.graph_focus)();
+    let mut panels = use_signal(|| None::<(bool, bool)>);
+    let selected = (session.graph_focus)();
     let catalog = project.catalog.read().clone();
     let Some(catalog) = catalog else {
-        return rsx! { PageHeader { title: "Link graph" } Loading {} };
+        return rsx! { Loading {} };
     };
     let catalog = match catalog {
         Ok(catalog) => catalog,
-        Err(failure) => {
-            return rsx! { PageHeader { title: "Link graph" } FailureAlert { failure } };
-        }
+        Err(failure) => return rsx! { FailureAlert { failure } },
     };
-    let placed = layout(&catalog.artifacts, &filter());
+    let scoped = Filter {
+        ticket: ticket.clone().filter(|_| !whole()),
+        ..filter()
+    };
+    let placed = layout(&catalog.artifacts, &scoped);
     let mut kinds: Vec<String> = catalog
         .artifacts
         .iter()
@@ -322,10 +333,7 @@ pub(crate) fn LinkGraph() -> Element {
         .collect();
     kinds.sort_by_key(|kind| (kind != "ticket", kind.clone()));
     kinds.dedup();
-    let ticket_choices: Vec<Choice> = std::iter::once(Choice::plain("").label("every ticket"))
-        .chain(project.ticket_choices())
-        .collect();
-    let active = hovered().or(focus.clone());
+    let active = hovered().or(selected.clone());
     let few_edges = placed.edges.len() <= 12;
     let nodes: BTreeMap<String, Node> = placed
         .nodes
@@ -342,29 +350,40 @@ pub(crate) fn LinkGraph() -> Element {
                 .flat_map(|edge| [edge.from.clone(), edge.to.clone()])
         })
         .collect();
+    let inspected = selected.as_ref().and_then(|id| {
+        catalog
+            .artifacts
+            .iter()
+            .find(|entry| entry.id.as_ref() == Some(id))
+            .cloned()
+    });
+    let inspected_node = selected.as_ref().and_then(|id| nodes.get(id).cloned());
+    let focused = panels().is_some();
     rsx! {
-        PageHeader {
-            context: format!("{} nodes · {} links · only forward links are stored, the arrows point from the artifact that stores them", placed.nodes.len(), placed.edges.len()),
-            title: "Link graph",
-        }
-        div { class: "flex flex-wrap items-end gap-x-8 gap-y-4",
-            fieldset { class: "m-0 p-0 border-0 flex flex-col gap-1",
-                legend { class: "text-[13px] text-ink-muted pb-1", "Kinds" }
-                div { class: "flex flex-wrap gap-x-4 gap-y-1",
-                    for kind in kinds {
-                        FilterBox {
-                            label: kind.clone(),
-                            checked: !filter.read().hidden_kinds.contains(&kind),
-                            ontoggle: move |on: bool| filter.with_mut(|filter| {
-                                if on { filter.hidden_kinds.remove(&kind); } else { filter.hidden_kinds.insert(kind.clone()); }
-                            }),
+        div { class: "flex flex-col gap-4",
+            div { class: "flex flex-wrap items-center gap-x-6 gap-y-3",
+                if let Some(ticket) = ticket.clone() {
+                    div { class: "flex items-center gap-0 border border-line", role: "radiogroup", "aria-label": "Scope",
+                        span { class: "px-3 font-mono text-[12.5px] text-ink-muted", "scope" }
+                        button {
+                            role: "radio",
+                            "aria-checked": if whole() { "false" } else { "true" },
+                            class: if whole() { "h-9 px-3 font-mono text-[12.5px] hover:bg-surface-2" } else { "h-9 px-3 font-mono text-[12.5px] bg-ink text-bg" },
+                            title: "{ticket}, its artifacts, and their direct neighbours",
+                            onclick: move |_| whole.set(false),
+                            "this ticket"
+                        }
+                        button {
+                            role: "radio",
+                            "aria-checked": if whole() { "true" } else { "false" },
+                            class: if whole() { "h-9 px-3 font-mono text-[12.5px] bg-ink text-bg" } else { "h-9 px-3 font-mono text-[12.5px] hover:bg-surface-2" },
+                            onclick: move |_| whole.set(true),
+                            "whole project"
                         }
                     }
                 }
-            }
-            fieldset { class: "m-0 p-0 border-0 flex flex-col gap-1",
-                legend { class: "text-[13px] text-ink-muted pb-1", "Links" }
-                div { class: "flex flex-wrap gap-x-4 gap-y-1",
+                fieldset { class: "m-0 p-0 border-0 flex flex-wrap items-center gap-x-4 gap-y-1",
+                    legend { class: "sr-only", "Links" }
                     for link in LINK_TYPES {
                         FilterBox {
                             label: link.to_owned(),
@@ -375,102 +394,211 @@ pub(crate) fn LinkGraph() -> Element {
                         }
                     }
                 }
-            }
-            div { class: "flex flex-col gap-1 w-80",
-                span { class: "text-[13px] text-ink-muted", "Ticket" }
-                Combobox {
-                    value: filter.read().ticket.clone().unwrap_or_default(),
-                    choices: ticket_choices,
-                    placeholder: "every ticket",
-                    label: "Ticket",
-                    onselect: move |ticket: String| filter.with_mut(|filter| filter.ticket = Some(ticket).filter(|ticket| !ticket.is_empty())),
+                fieldset { class: "m-0 p-0 border-0 flex flex-wrap items-center gap-x-4 gap-y-1",
+                    legend { class: "sr-only", "Kinds" }
+                    span { class: "font-mono text-[12.5px] text-ink-muted", "kinds" }
+                    for kind in kinds {
+                        FilterBox {
+                            label: kind.clone(),
+                            checked: !filter.read().hidden_kinds.contains(&kind),
+                            ontoggle: move |on: bool| filter.with_mut(|filter| {
+                                if on { filter.hidden_kinds.remove(&kind); } else { filter.hidden_kinds.insert(kind.clone()); }
+                            }),
+                        }
+                    }
+                }
+                if ticket.is_some() {
+                    button {
+                        class: "ml-auto h-9 px-3 border border-line font-mono text-[12.5px] hover:bg-surface-2",
+                        "aria-pressed": if focused { "true" } else { "false" },
+                        title: "Collapse the explorer and the assistant, or bring them back",
+                        onclick: move |_| {
+                            let mut explorer = session.explorer_open;
+                            let mut assistant = session.assistant_open;
+                            match panels() {
+                                Some((was_explorer, was_assistant)) => {
+                                    explorer.set(was_explorer);
+                                    assistant.set(was_assistant);
+                                    panels.set(None);
+                                }
+                                None => {
+                                    panels.set(Some((explorer(), assistant())));
+                                    explorer.set(false);
+                                    assistant.set(false);
+                                }
+                            }
+                        },
+                        if focused { "leave focus mode" } else { "focus mode" }
+                    }
                 }
             }
-        }
-        if placed.nodes.is_empty() {
-            Empty { text: "Nothing to show. Artifacts appear here once their file exists; check the filters." }
-        } else {
-            div { class: "border border-line bg-surface overflow-auto max-h-[70vh]",
-                svg {
-                    width: "{placed.width}",
-                    height: "{placed.height}",
-                    view_box: "0 0 {placed.width} {placed.height}",
-                    role: "img",
-                    "aria-label": "Link graph",
-                    defs {
-                        pattern { id: "hone-dots", width: "24", height: "24", "patternUnits": "userSpaceOnUse",
-                            circle { cx: "1", cy: "1", r: "1", fill: "var(--hone-line)" }
-                        }
-                        marker { id: "hone-arrow", view_box: "0 0 10 10", "refX": "10", "refY": "5", "markerWidth": "7", "markerHeight": "7", orient: "auto-start-reverse",
-                            path { d: "M0,0 L10,5 L0,10 z", fill: "var(--hone-ink-muted)" }
-                        }
-                        marker { id: "hone-arrow-active", view_box: "0 0 10 10", "refX": "10", "refY": "5", "markerWidth": "7", "markerHeight": "7", orient: "auto-start-reverse",
-                            path { d: "M0,0 L10,5 L0,10 z", fill: "var(--hone-accent)" }
-                        }
-                    }
-                    rect { width: "100%", height: "100%", fill: "url(#hone-dots)" }
-                    for (kind , x) in placed.columns.iter() {
-                        text { x: "{x}", y: "{MARGIN + 12.0}", fill: "var(--hone-ink-muted)", font_family: "var(--font-mono)", font_size: "11", letter_spacing: "0.08em",
-                            {kind.to_uppercase()}
-                        }
-                    }
-                    for edge in placed.edges.iter() {
-                        if let (Some(from), Some(to)) = (nodes.get(&edge.from), nodes.get(&edge.to)) {
-                            {
-                                let (path, label_x, label_y) = route(from, to);
-                                let lit = active.as_ref().is_some_and(|id| &edge.from == id || &edge.to == id);
-                                let dim = active.is_some() && !lit;
-                                rsx! {
-                                    g { opacity: if dim { "0.2" } else if lit { "1" } else { "0.6" },
-                                        path {
-                                            d: "{path}",
-                                            fill: "none",
-                                            stroke: if lit { "var(--hone-accent)" } else { "var(--hone-ink-muted)" },
-                                            stroke_width: "2",
-                                            stroke_dasharray: if edge.kind == "ticket" { "4 4" } else { "none" },
-                                            marker_end: if lit { "url(#hone-arrow-active)" } else { "url(#hone-arrow)" },
-                                        }
-                                        if lit || (few_edges && edge.kind != "ticket") {
-                                            text {
-                                                x: "{label_x}",
-                                                y: "{label_y - 4.0}",
-                                                text_anchor: "middle",
-                                                fill: if lit { "var(--hone-accent)" } else { "var(--hone-ink-muted)" },
-                                                font_family: "var(--font-mono)",
-                                                font_size: "11",
-                                                paint_order: "stroke",
-                                                stroke: "var(--hone-surface)",
-                                                stroke_width: "4",
-                                                "{edge.kind}"
+            span { class: "font-mono text-[12px] text-ink-muted",
+                {format!("{} nodes · {} links · arrows point from the artifact that stores the link", placed.nodes.len(), placed.edges.len())}
+            }
+            div { class: "grid grid-cols-[minmax(0,1fr)_280px] gap-6 items-start",
+                if placed.nodes.is_empty() {
+                    Empty { text: "Nothing to show. Artifacts appear here once their file exists; check the filters." }
+                } else {
+                    div { id: CANVAS, class: "border border-line bg-surface overflow-auto max-h-[72vh]",
+                        svg {
+                            width: "{placed.width}",
+                            height: "{placed.height}",
+                            view_box: "0 0 {placed.width} {placed.height}",
+                            role: "img",
+                            "aria-label": "Link graph",
+                            defs {
+                                pattern { id: "hone-dots", width: "24", height: "24", "patternUnits": "userSpaceOnUse",
+                                    circle { cx: "1", cy: "1", r: "1", fill: "var(--hone-line)" }
+                                }
+                                marker { id: "hone-arrow", view_box: "0 0 10 10", "refX": "10", "refY": "5", "markerWidth": "7", "markerHeight": "7", orient: "auto-start-reverse",
+                                    path { d: "M0,0 L10,5 L0,10 z", fill: "var(--hone-ink-muted)" }
+                                }
+                                marker { id: "hone-arrow-active", view_box: "0 0 10 10", "refX": "10", "refY": "5", "markerWidth": "7", "markerHeight": "7", orient: "auto-start-reverse",
+                                    path { d: "M0,0 L10,5 L0,10 z", fill: "var(--hone-accent)" }
+                                }
+                            }
+                            rect { width: "100%", height: "100%", fill: "url(#hone-dots)" }
+                            for (kind , x) in placed.columns.iter() {
+                                text { x: "{x}", y: "{MARGIN + 12.0}", fill: "var(--hone-ink-muted)", font_family: "var(--font-mono)", font_size: "11", letter_spacing: "0.08em",
+                                    {kind.to_uppercase()}
+                                }
+                            }
+                            for edge in placed.edges.iter() {
+                                if let (Some(from), Some(to)) = (nodes.get(&edge.from), nodes.get(&edge.to)) {
+                                    {
+                                        let (path, label_x, label_y) = route(from, to);
+                                        let lit = active.as_ref().is_some_and(|id| &edge.from == id || &edge.to == id);
+                                        let dim = active.is_some() && !lit;
+                                        rsx! {
+                                            g { opacity: if dim { "0.2" } else if lit { "1" } else { "0.6" },
+                                                path {
+                                                    d: "{path}",
+                                                    fill: "none",
+                                                    stroke: if lit { "var(--hone-accent)" } else { "var(--hone-ink-muted)" },
+                                                    stroke_width: "2",
+                                                    stroke_dasharray: if edge.kind == "ticket" { "4 4" } else { "none" },
+                                                    marker_end: if lit { "url(#hone-arrow-active)" } else { "url(#hone-arrow)" },
+                                                }
+                                                if lit || (few_edges && edge.kind != "ticket") {
+                                                    text {
+                                                        x: "{label_x}",
+                                                        y: "{label_y - 4.0}",
+                                                        text_anchor: "middle",
+                                                        fill: if lit { "var(--hone-accent)" } else { "var(--hone-ink-muted)" },
+                                                        font_family: "var(--font-mono)",
+                                                        font_size: "11",
+                                                        paint_order: "stroke",
+                                                        stroke: "var(--hone-surface)",
+                                                        stroke_width: "4",
+                                                        "{edge.kind}"
+                                                    }
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
-                        }
-                    }
-                    for node in placed.nodes.iter().cloned() {
-                        GraphNode {
-                            key: "{node.id}",
-                            selected: focus.as_deref() == Some(node.id.as_str()),
-                            dim: active.is_some() && !neighbours.contains(&node.id) && active.as_deref() != Some(node.id.as_str()),
-                            onhover: move |id: Option<String>| hovered.set(id),
-                            onopen: move |id: String| {
-                                session.graph_focus.set(Some(id.clone()));
-                                if id.starts_with("tk-") {
-                                    session.open_ticket(id);
-                                } else {
-                                    session.open_artifact(id);
+                            for node in placed.nodes.iter().cloned() {
+                                GraphNode {
+                                    key: "{node.id}",
+                                    selected: selected.as_deref() == Some(node.id.as_str()),
+                                    dim: active.is_some() && !neighbours.contains(&node.id) && active.as_deref() != Some(node.id.as_str()),
+                                    onhover: move |id: Option<String>| hovered.set(id),
+                                    onselect: move |id: String| session.graph_focus.set(Some(id)),
+                                    onopen: move |id: String| open_node(session, id),
+                                    node,
                                 }
-                            },
-                            node,
+                            }
                         }
                     }
                 }
+                Inspector { entry: inspected, node: inspected_node }
             }
             p { class: "m-0 text-[13px] text-ink-muted",
-                "Hover or focus a node to follow its links and read their types; click or press Enter to open it. Dashed nodes are superseded, dashed lines link an artifact to its ticket."
+                "Click a node to inspect it; double-click or press Enter to open it. Hovering or focusing a node follows its links. Dashed nodes are superseded, dashed lines link an artifact to its ticket."
             }
+        }
+    }
+}
+
+/// The element that scrolls the graph.
+const CANVAS: &str = "hone-graph-canvas";
+
+fn open_node(session: Session, id: String) {
+    if id.starts_with("tk-") {
+        session.open_ticket(id);
+    } else {
+        session.open_artifact(id);
+    }
+}
+
+/// The selected node: its statuses, how many links it stores and receives, Open, and Center.
+#[component]
+fn Inspector(entry: Option<CatalogEntry>, node: Option<Node>) -> Element {
+    let session = use_context::<Session>();
+    let project = use_context::<Project>();
+    let Some(entry) = entry else {
+        return rsx! {
+            aside { class: "border border-line p-4 flex flex-col gap-3",
+                span { class: "font-mono text-[11px] tracking-[0.08em] uppercase", "Inspector" }
+                p { class: "m-0 text-[13px] text-ink-muted", "Click a node to see its statuses and links." }
+            }
+        };
+    };
+    let (stored, computed) = match &*project.catalog.read() {
+        Some(Ok(catalog)) => links_of(&entry, &catalog.artifacts),
+        _ => (Vec::new(), Vec::new()),
+    };
+    let id = entry.id.clone().unwrap_or_default();
+    let row = |label: &'static str, value: String| {
+        rsx! {
+            div { class: "grid grid-cols-[6rem_1fr] gap-2 items-baseline",
+                span { class: "font-mono text-[12.5px] text-ink-muted", "{label}" }
+                span { class: "font-mono text-[12.5px] break-words", "{value}" }
+            }
+        }
+    };
+    rsx! {
+        aside { class: "border border-line p-4 flex flex-col gap-3",
+            span { class: "font-mono text-[11px] tracking-[0.08em] uppercase", "Inspector" }
+            div { class: "flex flex-col gap-1",
+                span { class: "font-mono text-[14px] font-semibold break-all", "{id}" }
+                if let Some(title) = entry.title.clone() {
+                    span { class: "text-[15px] break-words", "{title}" }
+                }
+            }
+            div { class: "flex flex-col gap-1",
+                {row("kind", entry.kind.clone())}
+                {row("declared", entry.status.clone().unwrap_or_else(|| "–".into()))}
+                div { class: "grid grid-cols-[6rem_1fr] gap-2 items-baseline",
+                    span { class: "font-mono text-[12.5px] text-ink-muted", "effective" }
+                    EffectiveStatus { entry: entry.clone() }
+                }
+                {row("out", format!("{} link{}", stored.len(), if stored.len() == 1 { "" } else { "s" }))}
+                {row("in", format!("{} (computed)", computed.len()))}
+            }
+            Button {
+                onclick: {
+                    let id = id.clone();
+                    move |_| open_node(session, id.clone())
+                },
+                if entry.kind == "ticket" { "Open ticket" } else { "Open artifact" }
+            }
+            if let Some(node) = node {
+                Button {
+                    variant: ButtonVariant::Outline,
+                    onclick: move |_| {
+                        let x = node.x + NODE_WIDTH / 2.0;
+                        let y = node.y + NODE_HEIGHT / 2.0;
+                        document::eval(&format!(
+                            "const canvas = document.getElementById({}); if (canvas) canvas.scrollTo({{ left: {x} - canvas.clientWidth / 2, top: {y} - canvas.clientHeight / 2, behavior: 'smooth' }});",
+                            serde_json::json!(CANVAS)
+                        ));
+                    },
+                    "Center here"
+                }
+            }
+            p { class: "m-0 text-[13px] text-ink-muted", "Only forward links are stored. Incoming links are computed from the checked directory." }
         }
     }
 }
@@ -496,6 +624,7 @@ fn GraphNode(
     selected: bool,
     dim: bool,
     onhover: EventHandler<Option<String>>,
+    onselect: EventHandler<String>,
     onopen: EventHandler<String>,
 ) -> Element {
     let (fill, text, stroke, stroke_width) = if selected {
@@ -509,19 +638,32 @@ fn GraphNode(
         ("var(--hone-bg)", "var(--hone-ink)", "var(--hone-line)", "1")
     };
     let enter = node.id.clone();
+    let select = node.id.clone();
     let open = node.id.clone();
     let key_open = node.id.clone();
     let title = node
         .title
         .as_deref()
-        .map(|title| shorten(title, 25))
-        .unwrap_or_else(|| node.kind.clone());
+        .map(|title| shorten(title, 28))
+        .unwrap_or_default();
+    let head = if selected {
+        format!("{} · selected", node.kind.to_uppercase())
+    } else {
+        node.kind.to_uppercase()
+    };
+    let (mark, status_color) = match node.status.as_deref() {
+        Some("superseded") => ("", "var(--hone-ink-muted)"),
+        Some("accepted") => ("■ ", "var(--hone-ok)"),
+        Some(_) => ("□ ", text),
+        None => ("", text),
+    };
     rsx! {
         g {
             class: "cursor-pointer outline-none",
             tabindex: "0",
-            role: "link",
-            "aria-label": "Open {node.id}",
+            role: "button",
+            "aria-label": "{node.id}: click to inspect, Enter to open",
+            "aria-pressed": if selected { "true" } else { "false" },
             opacity: if dim { "0.35" } else { "1" },
             onmouseenter: move |_| onhover.call(Some(enter.clone())),
             onmouseleave: move |_| onhover.call(None),
@@ -530,7 +672,8 @@ fn GraphNode(
                 move |_| onhover.call(Some(id.clone()))
             },
             onblur: move |_| onhover.call(None),
-            onclick: move |_| onopen.call(open.clone()),
+            onclick: move |_| onselect.call(select.clone()),
+            ondoubleclick: move |_| onopen.call(open.clone()),
             onkeydown: move |event| {
                 if event.key() == Key::Enter {
                     onopen.call(key_open.clone());
@@ -547,11 +690,15 @@ fn GraphNode(
                 stroke_width,
                 stroke_dasharray: if node.superseded { "5 4" } else { "none" },
             }
-            text { x: "{node.x + 12.0}", y: "{node.y + 19.0}", fill: text, font_family: "var(--font-mono)", font_size: "12.5",
-                text_decoration: if node.superseded { "line-through" } else { "none" },
-                "{node.id}"
+            text { x: "{node.x + 12.0}", y: "{node.y + 17.0}", fill: if selected { "var(--hone-accent)" } else { "var(--hone-ink-muted)" }, font_family: "var(--font-mono)", font_size: "10.5", letter_spacing: "0.08em", "{head}" }
+            text { x: "{node.x + 12.0}", y: "{node.y + 34.0}", fill: text, font_family: "var(--font-mono)", font_size: "12.5", font_weight: "600", "{node.id}" }
+            text { x: "{node.x + 12.0}", y: "{node.y + 51.0}", fill: text, font_size: "12.5", "{title}" }
+            if let Some(status) = node.status.clone() {
+                text { x: "{node.x + 12.0}", y: "{node.y + 68.0}", fill: status_color, font_family: "var(--font-mono)", font_size: "11.5",
+                    text_decoration: if node.superseded { "line-through" } else { "none" },
+                    "{mark}{status}"
+                }
             }
-            text { x: "{node.x + 12.0}", y: "{node.y + 36.0}", fill: text, opacity: "0.7", font_size: "12", "{title}" }
         }
     }
 }
@@ -683,6 +830,31 @@ mod tests {
                 to: "dec-a".into(),
                 kind: "supersedes".into()
             }]
+        );
+    }
+
+    #[test]
+    fn a_node_shows_its_effective_status_otherwise_the_declared_one() {
+        let mut entries = catalog();
+        entries[0].status = Some("accepted".into());
+        entries[0].effective = Some("superseded".into());
+        entries[1].status = Some("proposed".into());
+        let placed = layout(&entries, &Filter::default());
+        let status = |id: &str| {
+            placed
+                .nodes
+                .iter()
+                .find(|node| node.id == id)
+                .and_then(|node| node.status.clone())
+        };
+        assert_eq!(status("dec-a").as_deref(), Some("superseded"));
+        assert_eq!(status("dec-b").as_deref(), Some("proposed"));
+        assert_eq!(status("mod-a"), None);
+        assert!(
+            placed
+                .nodes
+                .iter()
+                .any(|node| node.id == "dec-a" && node.superseded)
         );
     }
 

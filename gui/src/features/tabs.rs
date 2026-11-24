@@ -181,7 +181,7 @@ fn TabContent(ticket: String, tab: Tab) -> Element {
         Tab::Code(target) => rsx! { CodeView { target } },
         Tab::Check => rsx! { super::check::NoRun { ticket } },
         Tab::Run(id) => rsx! { super::check::RunView { ticket, id } },
-        Tab::Graph => rsx! { super::graph::LinkGraph {} },
+        Tab::Graph => rsx! { super::graph::LinkGraph { ticket } },
         Tab::Events => rsx! { super::events::EventLog {} },
         Tab::Threads => rsx! { super::threads::Threads {} },
     }
