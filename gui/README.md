@@ -33,13 +33,13 @@ The window follows the mockups of GUI v2 (concept Section 12, "Desktop GUI"): a 
 | Check run tab                                      | `hone runs`; Run again: `hone check --ticket <tk> --source gui` with the run's `--step`, `--changed`, and `--class`                                                                                                                                                           |
 | Link graph, Threads tabs                           | `hone artifacts`, `hone events`, `hone thread open/reply/resolve/reopen`                                                                                                                                                                                                      |
 | Event log tab                                      | `hone log`                                                                                                                                                                                                                                                                    |
-| Assistant                                          | not connected yet: an agent over ACP with `hone mcp` (concept Section 12)                                                                                                                                                                                                     |
+| Assistant                                          | an agent over ACP, handed `hone mcp --root <root> --author <author> --role <role> [--packages <dir>]` (see below)                                                                                                                                                             |
 
 The **Tickets** view lists `hone ticket list` in the tabs Mine (started by the author or with an event of theirs), Open (not complete), Needs me (a reason in `waiting` names the author's role), Completed, and Tracker. A row shows the steps as squares (filled done, dashed skipped, accent the current step), the first reason the ticket waits (`your approval` when the role is the author's), and how long ago its newest event was written; a click shows the preview, a double click or Open ticket opens the workspace.
 
 The **Overview** shows the head (attributes, profile, external tickets, who started the ticket and when), the **Next** card, the steps, and the newest four entries of the Journal. The Next card names the current step and the first error finding of a gate of that step in the window's pure check; for `public-api/changed-without-decision` it offers Draft decision. Without such a finding it shows the first reason of `waiting`. A click on a step opens the panel that sets it (`hone step set`). The GUI runs `hone check --ticket <tk> --class pure --source gui` when a ticket opens and after every write, so no `exec` gate runs a command behind the user's back, and the run is stored. A gate whose only error is `changed-paths-missing` is shown as needing changed paths, not as failed, in the explorer, the step panel, and the status bar, because the GUI knows no change. The **Journal** tells the ticket's events and stored runs in sentences, newest first.
 
-The **Check run** tab shows a stored run of `hone runs`: the time, source, and device, the command line its arguments give, the exit code, the passed and failed gates, the time, and every gate (failed first) with its class, time, and findings. A finding's file opens as an artifact or code tab. **Run again** repeats the run's step, changed paths, and class with `--source gui` and shows the new run in the same tab; `--base` and `--lock` are left out, because they name paths of the caller that may be gone. Open finding on the Overview and Check run in the explorer open the newest run; without one, the tab runs every gate on demand. Ask assistant waits for the assistant.
+The **Check run** tab shows a stored run of `hone runs`: the time, source, and device, the command line its arguments give, the exit code, the passed and failed gates, the time, and every gate (failed first) with its class, time, and findings. A finding's file opens as an artifact or code tab. **Run again** repeats the run's step, changed paths, and class with `--source gui` and shows the new run in the same tab; `--base` and `--lock` are left out, because they name paths of the caller that may be gone. Open finding on the Overview and Check run in the explorer open the newest run; without one, the tab runs every gate on demand. **Ask assistant** on a finding adds the run and the finding's artifact or file to the assistant's context and puts a question about the finding into its message field, without sending it.
 
 The **Event log** tab shows the ticket's events of `hone log`, newest first: the time (the clock for today, otherwise the date, UTC), the device and `seq`, the type, and a summary of the payload. The type filter offers every type and, for two types or more with the same prefix, the family (`thread.*`). The selected event shows below in full, with Copy JSON. The Sync view shows the whole store the same way, with a filter by ticket.
 
@@ -64,6 +64,29 @@ Errors, failed gates, refused writes, and invalid fields use `bad`, never the ac
 Wherever the set of values is known, a field is a searchable list (`src/ui/combobox.rs`): tickets, steps, thread kinds (hone/standard's four plus the kinds in the log, or a new one), artifacts for an anchor, the event log's filters, the author (the context's author and the authors of the log, or a new handle) and the role (the roles of the open ticket's configuration). Arrow keys move, Enter selects, Escape closes.
 
 The source has one module per feature under `src/features/`, the command line client in `src/hone.rs`, the tracker in `src/tracker.rs`, and the components in `src/ui/`.
+
+## Assistant
+
+The assistant panel talks to an agent of the person's choice over the Agent Client Protocol, version 1 (concept Section 12, "Assistant"). The agent is set up in the panel and kept in `gui.json` for every project:
+
+```json
+{
+  "assistant": {
+    "argv": ["npx", "-y", "@google/gemini-cli@0.71.1", "--acp"],
+    "env": {},
+    "author": "assistant",
+    "role": "agent"
+  }
+}
+```
+
+The setup lists the agents of the [ACP Registry](https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json) that start through `npx` (as `npx -y <package> <args>`, `npx.cmd` on Windows) or `uvx` (`uvx <package> <args>`), at the version the registry names; a choice fills the command and the registry's environment variables, which stay editable, and nothing starts before Save. Without a network only the custom command remains.
+
+One agent runs per window. It is offered neither files nor a terminal, and every session gets one MCP server, `hone mcp` with the canonical root, the assistant's author and role, the packages directory, and the `HONE_…` variables of the window apart from `HONE_AUTHOR`, `HONE_ROLE`, and `HONE_BIN`. A ticket's session is opened at its first message and kept in `assistant.json` in the data directory (`HONE_DATA_DIR`) with the command that started it; reopening the ticket resumes it with `session/load` when the agent announces `loadSession` and the command is unchanged. New chat forgets it.
+
+A message carries context as chips: the ticket and its current step by default, and whatever **+** in the explorer (a step, an artifact, a module, a thread, the newest run) or the **+ context** list adds. The chips go to the agent as IDs and paths after the message, never as content. Answers are Markdown, rendered like an artifact's body; tool calls show their input, status, output, and diffs. A permission request shows the agent's options word for word; Stop, New chat, and closing the window answer an open request as cancelled. When the agent asks for a login, the panel offers the agent's own login methods.
+
+`tests/agent/acp_agent.rs` is a small ACP agent that calls the real `hone mcp` it is handed; `tests/assistant.rs` drives it through the client in `src/acp.rs`.
 
 ## Tracker
 
@@ -101,7 +124,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test               # needs the hone binary: cargo build -p hone-cli at the repository root
 ```
 
-`tests/cli.rs` runs the real command line against a copy of a gate test case, so a change to the JSON of the command line turns it red. The tracker's requests and answers are unit-tested without a network; no test talks to GitHub, Jira, or the OS keyring.
+`tests/cli.rs` runs the real command line against a copy of a gate test case, so a change to the JSON of the command line turns it red. `tests/assistant.rs` runs the test agent, which `cargo test` builds as the example `acp-test-agent`, against `hone mcp`. The tracker's requests and answers are unit-tested without a network; no test talks to GitHub, Jira, or the OS keyring.
 
 ## Components
 
