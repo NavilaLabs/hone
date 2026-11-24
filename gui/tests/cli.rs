@@ -7,8 +7,8 @@
 use std::path::{Path, PathBuf};
 
 use hone_gui::hone::{
-    Anchor, AttributeValue, ConfigView, GateScope, Hone, Peer, StepStatus, TicketStart, Write,
-    Writer,
+    Anchor, AttributeValue, CheckCall, ConfigView, GateScope, Hone, Peer, StepStatus, TicketStart,
+    Write, Writer,
 };
 
 const TICKET: &str = "tk-9f2x4a8m";
@@ -346,6 +346,44 @@ async fn the_gui_check_is_stored_and_the_ticket_list_reads_it() {
     assert_eq!(last.failed, failed);
     let log = hone.log().await.expect("readable");
     assert_eq!(log.device.as_deref(), Some(runs[0].device.as_str()));
+}
+
+#[tokio::test]
+async fn run_again_stores_the_step_the_changes_and_the_class_it_was_given() {
+    let scratch = Scratch::new("again").with_store();
+    let hone = scratch.hone();
+    let call = CheckCall {
+        ticket: TICKET.into(),
+        step: Some("implementation".into()),
+        changed: Some(vec!["src/fee.rs".into()]),
+        class: Some("pure".into()),
+    };
+    let run = hone.check_call(&call).await.expect("ran");
+    let id = run.run.clone().expect("a stored run");
+    assert!(
+        run.gates
+            .iter()
+            .all(|gate| !gate.name.contains('/') || gate.name.starts_with("implementation/")),
+        "{:?}",
+        run.gates
+    );
+    let empty = CheckCall {
+        changed: Some(Vec::new()),
+        class: None,
+        ..call.clone()
+    };
+    let second = hone.check_call(&empty).await.expect("ran");
+    let runs = hone.runs(TICKET).await.expect("readable");
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[1].id, id);
+    assert_eq!(
+        runs[1].arguments,
+        serde_json::json!({ "step": "implementation", "changed": ["src/fee.rs"], "class": "pure", "base": null, "lock": null })
+    );
+    assert_eq!(runs[0].id, second.run.expect("a stored run"));
+    assert_eq!(runs[0].source, "gui");
+    assert_eq!(runs[0].arguments["changed"], serde_json::json!([]));
+    assert_eq!(runs[0].arguments["class"], serde_json::Value::Null);
 }
 
 #[tokio::test]
