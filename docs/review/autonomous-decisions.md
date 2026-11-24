@@ -301,3 +301,19 @@ The maintainer decided with this slice that `hone artifact check` checks an unsa
 ## Confirmations (maintainer, 2026-11-24, artifact editor and check run)
 
 219. **Confirmed as built:** items 205 and 207 to 218. Decided: item 206. The MCP tool `check_artifact` returns the findings of `hone artifact check`, `links-resolve` for this file against the checked directory included, so that an agent sees a link to a missing artifact before it writes the draft; no second tool, so the command line and the MCP server cannot drift apart.
+
+## GUI v2: review inline (build-time rules)
+
+The maintainer decided with this slice that review inline replaces the Preview mode with the approvals below the threads and the anchors and links below the text, that an artifact with a binding status is read-only, that Supersede runs a new flag `hone artifact new --supersedes`, and that a thread anchored to an artifact opens in that artifact's review. These rules came up while building and are reported for confirmation.
+
+220. **`hone artifact new --supersedes <id>`** may repeat; each ID must name an artifact of the checked directory that is not a ticket record, otherwise the command refuses before it writes (`` `<id>` is no artifact of the project to supersede ``, exit 2). It writes `links: { supersedes: [...] }` in the order given, after `authors` and `name`. A living kind may take it too.
+221. **MCP `check_artifact` as built (item 206):** it returns the JSON of `hone artifact check --json` (`path`, `id`, `findings`) plus `status`, and refuses the same paths (not relative, a ticket record, no artifact pattern) as a result marked `isError`; before, it checked such a path by its content alone.
+222. **Quotes.** A thread's quote is marked where it first occurs in one piece of rendered text, outside tags, followed by the thread's number. A quote that spans formatting (a code span inside it), or that overlaps a quote marked before it, is not found, and the thread says "quote not found in the text". The match is exact; Open thread collapses the whitespace of the selection it takes.
+223. **The threads of an artifact** come from `hone log`: every `thread.opened` whose anchor names the artifact, from any ticket, numbered in the order of the log. A thread is open unless the last of its `thread.resolved` and `thread.reopened` is a resolution.
+224. **Outdated.** A thread whose anchor hash differs from the `hash` of `hone review show` says "on an older content". An artifact without a ticket has no review, so its threads show no such note.
+225. **The open thread** is the session's thread when it is on this artifact, otherwise the first open one. Resolved threads are hidden ("n resolved hidden") until asked for, unless one is the open thread; the quotes of hidden threads are not marked.
+226. **Open thread** in the review writes in the open ticket, otherwise in the artifact's ticket; without either it is not offered. It starts with the kind `question`, not blocking.
+227. **Read-only** follows the saved status, not unsaved text: the tab opens in Preview, Fields, Save, Discard, and Propose are gone, and the source editor takes no input. **Supersede** is offered for a kind with lifecycle `decided`, needs an open ticket, asks for a title, and writes as the chosen author.
+228. **Opening an artifact's review inside a workspace** keeps the open ticket; only on the Artifacts view does opening an artifact make its ticket the open ticket (before, it switched the workspace to the artifact's ticket).
+229. **The line over the text** shows ID, kind, and `reach`; the mockup's "approved by" is left out, because the approvals stand in the column beside it.
+230. **Not covered by tests:** the view of the review (checked by running the app against `examples/payments`). Its data is unit-tested: quote marking, the threads of an artifact with their state and numbers, the open thread, and Supersede and `--supersedes` run against the real binary.
