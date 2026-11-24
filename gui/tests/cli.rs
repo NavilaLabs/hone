@@ -614,6 +614,26 @@ async fn an_artifact_is_shown_saved_checked_and_created_through_the_command_line
     assert_eq!(codes, [("status", Some("/status"))]);
     assert_eq!(std::fs::read_to_string(&file).expect("readable"), original);
 
+    let unresolved = refused.replace("[\"mod-4t8w2n6c\"]", "[\"mod-9c3d6h4v\"]");
+    let checked = hone
+        .check_artifact(decision, &unresolved)
+        .await
+        .expect("ran");
+    assert_eq!(checked.path, decision);
+    let codes: Vec<(&str, Option<&str>)> = checked
+        .findings
+        .iter()
+        .map(|finding| (finding.code.as_str(), finding.pointer.as_deref()))
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            ("status", Some("/status")),
+            ("link-unresolved", Some("/links/affects/0"))
+        ]
+    );
+    assert_eq!(std::fs::read_to_string(&file).expect("readable"), original);
+
     let changed = original.replace("status: \"accepted\"", "status: \"proposed\"");
     let written = hone.save_artifact(decision, &changed).await.expect("ran");
     assert!(written.saved, "{:?}", written.findings);
