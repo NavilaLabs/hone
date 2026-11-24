@@ -250,3 +250,7 @@ Tool decisions for the maintainer's request to edit artifacts in the GUI, show t
 185. **Profiles screen.** Steps against profiles, both by name; a cell is `required`, `optional`, or `–`. A profile's head shows its layers, `retention`, and `review_summary`; a step shows its layers. Below, the selection rules in order and the default, with their layers. While `resolved.json` is out of date, an amber note and **Run hone resolve**.
 186. **Plugins screen.** One row per plugin of the configuration: its layers, its extensions, the capabilities it asks for beside the approved ones, and its hash. Below, the plugins the lockfile approves that the configuration does not use, and the approved commands of `exec` gates. While the resolution fails, the problems and the lockfile's plugin approvals.
 187. **Not covered by tests:** the two screens' views (checked by running the app; screenshots of this run). Their data (the matrix, the pairing with the lock entries, the capability line, the command line) is unit-tested, and `show_config` runs against the real binary.
+
+## Confirmations (maintainer, 2026-11-24)
+
+188. **Confirmed as built:** items 178 to 187. For items 185 and 186 the confirmation covers the screens' content; GUI v2 rebuilds their layout.
