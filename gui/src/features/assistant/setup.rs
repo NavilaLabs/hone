@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use super::Assistant;
 use crate::acp::AgentCommand;
+use crate::features::Project;
 use crate::features::common::{Field, ProblemAlert};
 use crate::settings::{AssistantSettings, Settings};
 use crate::ui::{Button, ButtonVariant, Choice, Combobox, Input, Textarea};
@@ -124,10 +125,19 @@ fn env_text(env: &BTreeMap<String, String>) -> String {
         .join("\n")
 }
 
+/// The note that `role` leaves the agent reading, when the open ticket's configuration is known
+/// and lacks it.
+pub(crate) fn read_only_note(role: &str, roles: &[Choice]) -> Option<String> {
+    (!roles.is_empty() && !roles.iter().any(|choice| choice.value == role)).then(|| {
+        format!("The open ticket's configuration has no role `{role}`, so the agent can read but not write.")
+    })
+}
+
 /// The form that sets up the agent.
 #[component]
 pub(crate) fn Setup(current: Option<AssistantSettings>) -> Element {
     let assistant = use_context::<Assistant>();
+    let project = use_context::<Project>();
     let current = current.unwrap_or_default();
     let mut argv = use_signal(|| current.argv.join("\n"));
     let mut env = use_signal(|| env_text(&current.env));
@@ -222,8 +232,12 @@ pub(crate) fn Setup(current: Option<AssistantSettings>) -> Element {
                     Input { class: "font-mono", value: role(), oninput: move |value| role.set(value) }
                 }
             }
-            p { class: "m-0 text-[13px] text-ink-muted",
-                "A role that the project's actors do not grant leaves the agent reading."
+            if let Some(note) = read_only_note(role().trim(), &project.role_choices()) {
+                p { class: "m-0 text-[13px] text-warn", "{note}" }
+            } else {
+                p { class: "m-0 text-[13px] text-ink-muted",
+                    "A role that the project's actors do not grant leaves the agent reading."
+                }
             }
             if let Some(problem) = shown_problem {
                 p { class: "m-0 text-[13px] text-bad", "✕ {problem}" }
@@ -246,6 +260,23 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn a_role_outside_the_configuration_reads_only() {
+        let roles = [Choice::plain("architect"), Choice::plain("developer")];
+        assert_eq!(read_only_note("developer", &roles), None);
+        assert_eq!(
+            read_only_note("agent", &roles).as_deref(),
+            Some(
+                "The open ticket's configuration has no role `agent`, so the agent can read but not write."
+            )
+        );
+        assert_eq!(
+            read_only_note("agent", &[]),
+            None,
+            "no open ticket, nothing known"
+        );
+    }
 
     #[test]
     fn registry_agents_start_through_npx_or_uvx() {

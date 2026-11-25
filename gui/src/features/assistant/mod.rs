@@ -545,6 +545,9 @@ pub(crate) fn AssistantPanel() -> Element {
         .cloned()
         .unwrap_or_default();
     let key = place.clone().and_then(Result::ok).map(|place| place.key);
+    let read_only = command
+        .as_ref()
+        .and_then(|(_, settings)| setup::read_only_note(&settings.role, &project.role_choices()));
     rsx! {
         aside { class: "w-[360px] shrink-0 border-l border-line flex flex-col min-h-0", "aria-label": "Assistant",
             div { class: "h-12 shrink-0 pl-4 pr-2 border-b border-line flex items-center gap-2",
@@ -578,6 +581,9 @@ pub(crate) fn AssistantPanel() -> Element {
                 } else if showing_setup {
                     setup::Setup { current: settings.clone().ok().flatten() }
                 } else {
+                    if let Some(note) = read_only {
+                        p { class: "m-0 text-[13px] text-warn", "{note}" }
+                    }
                     if chat.chat.entries.is_empty() && phase == Phase::Ready {
                         p { class: "m-0 text-ink-muted",
                             "Ask about this ticket. The agent reads it through hone mcp and writes only through the same commands and gates as you."
