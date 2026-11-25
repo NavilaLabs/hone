@@ -1,5 +1,5 @@
 acts: [developer]
-requires: [specify]
+requires: [interfaces]
 gates:
   binding:
     {
