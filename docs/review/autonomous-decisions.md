@@ -385,3 +385,11 @@ These rules came up while building the assistant and are reported for confirmati
 264. **Login.** Only methods of type `agent` are offered, because the GUI does not announce terminal login. A message refused for a missing login returns to the message field; after the login it is sent again by hand.
 265. **Ending.** A stop reason other than `end_turn` is noted under the answer. When the agent's process ends, the panel shows its last twenty lines of error output and Start again. Closing the window answers open requests as cancelled and stops the agent.
 266. **Not covered by tests:** the panel (checked against `examples/payments` with the test agent: setup, a resumed chat with tool call and diff, a live turn with its permission card; and the start of `@agentclientprotocol/claude-agent-acp` through `npx`). The client against the test agent and `hone mcp` (turn, resume, cancel, login, refused role, failed start), the registry entries, the settings, `assistant.json`, the chat model, the diff, and the context text are tested.
+
+## Confirmations (maintainer, 2026-11-25, assistant)
+
+267. **Confirmed as built:** items 254 to 266.
+
+## Decisions (maintainer, 2026-11-25, assistant role)
+
+268. **The default role stays `agent`** (concept Section 12, "Assistant"), so an agent set up without thought only reads. When the open ticket's configuration has no role of the assistant's name, the setup and the panel say so: "The open ticket's configuration has no role `agent`, so the agent can read but not write." Without an open ticket nothing is known and the general hint stays. Whether `actors` grants the role is not checked here.
